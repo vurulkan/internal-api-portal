@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: internal-api-portal
+  namespace: internal-api-portal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: internal-api-portal
+  template:
+    metadata:
+      labels:
+        app: internal-api-portal
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: portal
+          image: internal-api-portal:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: DATA_PATH
+              value: /data/app.db
+            - name: STATIC_DIR
+              value: /app/public
+            - name: TIMEZONE
+              value: Europe/Istanbul
+            - name: LOG_RETENTION_DAYS
+              value: "30"
+            - name: SESSION_MINUTES
+              value: "60"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: internal-api-portal-data

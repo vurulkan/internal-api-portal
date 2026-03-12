@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-api-portal
+  namespace: internal-api-portal
+spec:
+  selector:
+    app: internal-api-portal
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
