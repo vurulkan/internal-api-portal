@@ -193,7 +193,7 @@ Change it immediately.
 ### Frontend
 
 ```bash
-cd /Users/mustafav/Desktop/api-frontend/frontend
+cd (Project Root)/frontend
 npm install
 npm run dev
 ```
@@ -201,14 +201,14 @@ npm run dev
 ### Backend
 
 ```bash
-cd /Users/mustafav/Desktop/api-frontend/backend
+cd (Project Root)/backend
 go run ./cmd/server
 ```
 
 ### Production-style local run with Docker
 
 ```bash
-cd /Users/mustafav/Desktop/api-frontend
+cd (Project Root)
 docker build -t internal-api-portal:local .
 docker run --rm -p 8080:8080 \
   -e DATA_PATH=/data/app.db \
@@ -237,15 +237,15 @@ Runtime notes:
 
 ## Kubernetes Deployment
 
-Example manifests are provided under [deploy](/Users/mustafav/Desktop/api-frontend/deploy).
+Example manifests are provided under [deploy]((Project Root)/deploy).
 
 Apply:
 
 ```bash
-kubectl apply -f /Users/mustafav/Desktop/api-frontend/deploy/namespace.yaml
-kubectl apply -f /Users/mustafav/Desktop/api-frontend/deploy/pvc.yaml
-kubectl apply -f /Users/mustafav/Desktop/api-frontend/deploy/deployment.yaml
-kubectl apply -f /Users/mustafav/Desktop/api-frontend/deploy/service.yaml
+kubectl apply -f (Project Root)/deploy/namespace.yaml
+kubectl apply -f (Project Root)/deploy/pvc.yaml
+kubectl apply -f (Project Root)/deploy/deployment.yaml
+kubectl apply -f (Project Root)/deploy/service.yaml
 ```
 
 Deployment expectations:
