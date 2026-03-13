@@ -221,6 +221,24 @@ Open:
 
 - [http://localhost:8080](http://localhost:8080)
 
+## Ready Image
+
+If you want to use the prebuilt image directly, use:
+
+```text
+ghcr.io/vurulkan/internal-api-portal:latest
+```
+
+### Run the ready image locally
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e DATA_PATH=/data/app.db \
+  -e STATIC_DIR=/app/public \
+  -v internal-api-portal-data:/data \
+  ghcr.io/vurulkan/internal-api-portal:latest
+```
+
 ## Docker Build Pattern
 
 The Dockerfile uses a multi-stage build:
@@ -239,6 +257,14 @@ Runtime notes:
 
 Example manifests are provided under [deploy]((Project Root)/deploy).
 
+The default deployment manifest is already configured to use the ready image:
+
+```text
+ghcr.io/vurulkan/internal-api-portal:latest
+```
+
+If you want to deploy the ready image directly, apply the manifests as-is:
+
 Apply:
 
 ```bash
@@ -253,6 +279,8 @@ Deployment expectations:
 - a persistent volume is mounted at `/data`
 - probes call `/healthz`
 - the same container serves both frontend and backend
+
+If you prefer to build and publish your own image, replace the image reference in [deploy/deployment.yaml]((Project Root)/deploy/deployment.yaml).
 
 ## Health Check
 

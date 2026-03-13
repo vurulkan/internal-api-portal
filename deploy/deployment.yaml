@@ -17,8 +17,8 @@ spec:
         runAsNonRoot: true
       containers:
         - name: portal
-          image: internal-api-portal:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/vurulkan/internal-api-portal:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:
