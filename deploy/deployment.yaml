@@ -13,8 +13,6 @@ spec:
       labels:
         app: internal-api-portal
     spec:
-      securityContext:
-        runAsNonRoot: true
       containers:
         - name: portal
           image: ghcr.io/vurulkan/internal-api-portal:latest

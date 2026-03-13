@@ -279,6 +279,8 @@ Deployment expectations:
 - a persistent volume is mounted at `/data`
 - probes call `/healthz`
 - the same container serves both frontend and backend
+- the provided manifest defaults to the image's root startup path for maximum compatibility with mounted PVCs
+- if you want a strict non-root deployment, adjust the deployment security context and volume ownership strategy to match your cluster policy
 
 If you prefer to build and publish your own image, replace the image reference in [deploy/deployment.yaml]((Project Root)/deploy/deployment.yaml).
 
