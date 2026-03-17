@@ -68,6 +68,11 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models
 	return scanUser(row)
 }
 
+func (s *Store) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
+	row := s.conn.QueryRowContext(ctx, `SELECT id, username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at FROM users WHERE email = ?`, email)
+	return scanUser(row)
+}
+
 func (s *Store) GetUserByID(ctx context.Context, id int) (*models.User, error) {
 	row := s.conn.QueryRowContext(ctx, `SELECT id, username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at FROM users WHERE id = ?`, id)
 	return scanUser(row)
@@ -390,6 +395,40 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 	}
 	_, err = s.conn.ExecContext(ctx, `UPDATE ldap_config SET enabled = ?, url = ?, host = ?, port = ?, use_ssl = ?, start_tls = ?, skip_verify = ?, timeout_seconds = ?, bind_dn = ?, bind_password_enc = ?, user_base_dn = ?, user_base_dns = ?, user_filter = ?, username_attribute = ?, display_name_attribute = ?, email_attribute = ? WHERE id = 1`,
 		boolInt(cfg.Enabled), cfg.URL, cfg.Host, cfg.Port, boolInt(cfg.UseSSL), boolInt(cfg.StartTLS), boolInt(cfg.SkipVerify), cfg.TimeoutSeconds, cfg.BindDN, encoded, cfg.UserBaseDN, string(raw), cfg.UserFilter, cfg.UsernameAttribute, cfg.DisplayNameAttr, cfg.EmailAttr)
+	return err
+}
+
+func (s *Store) GetAzureADConfig(ctx context.Context) (*models.AzureADConfig, error) {
+	var cfg models.AzureADConfig
+	var enabled int
+	var clientSecretEnc string
+	err := s.conn.QueryRowContext(ctx, `SELECT enabled, tenant_id, client_id, client_secret_enc, redirect_url FROM azure_ad_config WHERE id = 1`).
+		Scan(&enabled, &cfg.TenantID, &cfg.ClientID, &clientSecretEnc, &cfg.RedirectURL)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Enabled = enabled == 1
+	cfg.PasswordConfigured = clientSecretEnc != ""
+	if clientSecretEnc != "" {
+		cfg.ClientSecret, _ = decrypt(s.key, clientSecretEnc)
+	}
+	return &cfg, nil
+}
+
+func (s *Store) UpdateAzureADConfig(ctx context.Context, cfg models.AzureADConfig) error {
+	clientSecret := cfg.ClientSecret
+	if clientSecret == "" {
+		existing, err := s.GetAzureADConfig(ctx)
+		if err == nil {
+			clientSecret = existing.ClientSecret
+		}
+	}
+	encoded, err := encrypt(s.key, clientSecret)
+	if err != nil {
+		return err
+	}
+	_, err = s.conn.ExecContext(ctx, `UPDATE azure_ad_config SET enabled = ?, tenant_id = ?, client_id = ?, client_secret_enc = ?, redirect_url = ? WHERE id = 1`,
+		boolInt(cfg.Enabled), cfg.TenantID, cfg.ClientID, encoded, cfg.RedirectURL)
 	return err
 }
 

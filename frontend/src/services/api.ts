@@ -85,6 +85,19 @@ export type LdapConfig = {
 };
 export type SessionSettings = { sessionMinutes: number };
 export type SystemSettings = { brandTitle: string; logoDataUrl: string };
+export type AzureADConfig = {
+  enabled: boolean;
+  tenantId: string;
+  clientId: string;
+  clientSecret?: string;
+  redirectUrl: string;
+  passwordConfigured: boolean;
+};
+export type AuthProviders = {
+  local: boolean;
+  ldap: boolean;
+  azureAd: boolean;
+};
 export type MeResponse = {
   user: User;
   permissions: string[];
@@ -200,6 +213,10 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string) =>
     request('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
   publicSettings: () => request<SystemSettings>('/api/system/public'),
+  authProviders: () => request<AuthProviders>('/api/auth/providers'),
+  startAzureLogin: () => {
+    window.location.assign('/api/auth/azure/start');
+  },
   catalog: () => request<ApiSummary[]>('/api/catalog'),
   apiDetails: (id: string) => request<ApiDefinition>(`/api/apis/${id}`),
   apiSpec: (id: string) => request<Record<string, unknown>>(`/api/apis/${id}/spec`),
@@ -230,6 +247,9 @@ export const api = {
   testLdap: (payload: LdapConfig) => request('/api/admin/ldap/test', { method: 'POST', body: JSON.stringify(payload) }),
   searchLdap: (query: string) => request<LdapUser[]>('/api/admin/ldap/search', { method: 'POST', body: JSON.stringify({ query }) }),
   importLdap: (payload: LdapUser[]) => request('/api/admin/ldap/import', { method: 'POST', body: JSON.stringify(payload) }),
+  azureAd: () => request<AzureADConfig>('/api/admin/azure-ad'),
+  updateAzureAd: (payload: AzureADConfig) => request('/api/admin/azure-ad', { method: 'PUT', body: JSON.stringify(payload) }),
+  testAzureAd: (payload: AzureADConfig) => request('/api/admin/azure-ad/test', { method: 'POST', body: JSON.stringify(payload) }),
   adminApis: () => request<ApiDefinition[]>('/api/admin/apis'),
   createApi: (payload: ApiDefinitionPayload) => request('/api/admin/apis', { method: 'POST', body: JSON.stringify(payload) }),
   updateApi: (id: number, payload: ApiDefinitionPayload) => request(`/api/admin/apis/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

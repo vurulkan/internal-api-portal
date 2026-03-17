@@ -1,5 +1,5 @@
-import { FormEvent, useState } from 'react';
-import { Alert, Box, Button, Card, CardContent, TextField, Typography } from '@mui/material';
+import { FormEvent, useEffect, useState } from 'react';
+import { Alert, Box, Button, Card, CardContent, Divider, TextField, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { api, setToken } from '../services/api';
 
@@ -15,6 +15,11 @@ export function LoginPage({ brandTitle, logoDataUrl, onLogin }: Props) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [azureEnabled, setAzureEnabled] = useState(false);
+
+  useEffect(() => {
+    api.authProviders().then((providers) => setAzureEnabled(Boolean(providers.azureAd))).catch(() => undefined);
+  }, []);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -48,6 +53,14 @@ export function LoginPage({ brandTitle, logoDataUrl, onLogin }: Props) {
             Sign in with your account.
           </Typography>
           {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
+          {azureEnabled ? (
+            <>
+              <Button variant="outlined" fullWidth sx={{ mb: 2 }} onClick={() => api.startAzureLogin()}>
+                Sign in with Microsoft
+              </Button>
+              <Divider sx={{ mb: 2 }}>or</Divider>
+            </>
+          ) : null}
           <Box component="form" onSubmit={onSubmit} display="flex" flexDirection="column" gap={2}>
             <TextField label="Username" value={username} onChange={(event) => setUsername(event.target.value)} fullWidth />
             <TextField label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />

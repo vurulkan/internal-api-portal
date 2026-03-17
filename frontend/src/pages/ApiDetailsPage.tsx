@@ -21,6 +21,7 @@ import {
   TextField,
   Typography
 } from '@mui/material';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import SwaggerUI from 'swagger-ui-react';
 import { api, ApiDefinition, InvokeResponse } from '../services/api';
 
@@ -62,9 +63,11 @@ export function ApiDetailsPage() {
   const [acceptType, setAcceptType] = useState('application/json');
   const [additionalHeaders, setAdditionalHeaders] = useState('');
   const [requestBody, setRequestBody] = useState('');
+  const [selectedOperationTag, setSelectedOperationTag] = useState('__all__');
   const [result, setResult] = useState<InvokeResponse | null>(null);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setError('');
@@ -75,13 +78,35 @@ export function ApiDetailsPage() {
 
   const operations = useMemo(() => parseOperations(spec), [spec]);
 
+  const operationTags = useMemo(() => {
+    const tags = new Set<string>();
+    operations.forEach((operation) => {
+      operation.tags.forEach((tag) => tags.add(tag));
+    });
+    return Array.from(tags).sort((left, right) => left.localeCompare(right));
+  }, [operations]);
+
+  const visibleOperations = useMemo(() => {
+    if (selectedOperationTag === '__all__') {
+      return operations;
+    }
+    return operations.filter((operation) => operation.tags.includes(selectedOperationTag));
+  }, [operations, selectedOperationTag]);
+
   const selectedOperation = useMemo(
-    () => operations.find((operation) => operation.id === selectedOperationId) ?? operations[0] ?? null,
-    [operations, selectedOperationId]
+    () => visibleOperations.find((operation) => operation.id === selectedOperationId) ?? visibleOperations[0] ?? null,
+    [visibleOperations, selectedOperationId]
   );
 
   useEffect(() => {
+    if (selectedOperationTag !== '__all__' && !operationTags.includes(selectedOperationTag)) {
+      setSelectedOperationTag('__all__');
+    }
+  }, [operationTags, selectedOperationTag]);
+
+  useEffect(() => {
     if (!selectedOperation) {
+      setSelectedOperationId('');
       return;
     }
     setSelectedOperationId(selectedOperation.id);
@@ -96,11 +121,8 @@ export function ApiDetailsPage() {
     if (!result) {
       return '';
     }
-    try {
-      return atob(result.bodyBase64);
-    } catch {
-      return result.bodyBase64;
-    }
+    const decoded = decodeBase64Utf8(result.bodyBase64);
+    return beautifyBody(decoded, result.contentType);
   }, [result]);
 
   const pathParams = selectedOperation?.parameters.filter((parameter) => parameter.in === 'path') ?? [];
@@ -199,12 +221,32 @@ export function ApiDetailsPage() {
               <Box component="form" display="flex" flexDirection="column" gap={3} onSubmit={submitInvoke}>
                 <TextField
                   select
+                  label="Operation Tag"
+                  value={selectedOperationTag}
+                  onChange={(event) => setSelectedOperationTag(event.target.value)}
+                  helperText="Filter operations by OpenAPI tag."
+                >
+                  <MenuItem value="__all__">All tags</MenuItem>
+                  {operationTags.map((tag) => (
+                    <MenuItem key={tag} value={tag}>
+                      {tag}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <TextField
+                  select
                   label="Operation"
                   value={selectedOperationId}
                   onChange={(event) => setSelectedOperationId(event.target.value)}
                   helperText="Select the path and method from the imported OpenAPI spec."
+                  disabled={visibleOperations.length === 0}
                 >
-                  {operations.map((operation) => (
+                  {visibleOperations.length === 0 ? (
+                    <MenuItem value="" disabled>
+                      No operations found for this tag
+                    </MenuItem>
+                  ) : null}
+                  {visibleOperations.map((operation) => (
                     <MenuItem key={operation.id} value={operation.id}>
                       {operation.method} {operation.path} {operation.summary ? `- ${operation.summary}` : ''}
                     </MenuItem>
@@ -310,7 +352,32 @@ export function ApiDetailsPage() {
                   </Table>
                 </TableContainer>
                 <Box sx={{ borderRadius: 2, background: '#0f1720', color: '#ebf2ff', p: 2 }}>
-                  <Box component="pre" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0 }}>
+                  <Box display="flex" justifyContent="flex-end" mb={1}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<ContentCopyIcon fontSize="small" />}
+                      sx={{ color: '#ebf2ff', borderColor: '#516179', minWidth: 'auto' }}
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(prettyBody);
+                        setCopied(true);
+                        window.setTimeout(() => setCopied(false), 1500);
+                      }}
+                    >
+                      {copied ? 'Copied' : 'Copy'}
+                    </Button>
+                  </Box>
+                  <Box
+                    component="pre"
+                    sx={{
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      m: 0,
+                      maxHeight: '22.5em',
+                      overflow: 'auto',
+                      lineHeight: 1.5
+                    }}
+                  >
                     {prettyBody}
                   </Box>
                 </Box>
@@ -649,6 +716,31 @@ function encodeBase64Utf8(value: string) {
     binary += String.fromCharCode(byte);
   });
   return btoa(binary);
+}
+
+function decodeBase64Utf8(value: string) {
+  try {
+    const binary = atob(value);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch {
+    return value;
+  }
+}
+
+function beautifyBody(body: string, contentType: string) {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2);
+    } catch {
+      return body;
+    }
+  }
+  return body;
 }
 
 function resolveRef(spec: SpecObject, value: unknown): unknown {

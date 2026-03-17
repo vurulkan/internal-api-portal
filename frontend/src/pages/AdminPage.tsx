@@ -29,6 +29,7 @@ import {
   TextField,
   Typography
 } from '@mui/material';
+import { createFilterOptions } from '@mui/material/Autocomplete';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
@@ -37,6 +38,7 @@ import {
   ApiDefinition,
   ApiDefinitionPayload,
   AuditLog,
+  AzureADConfig,
   Group,
   GroupPayload,
   LdapConfig,
@@ -50,7 +52,7 @@ import {
   UserPayload
 } from '../services/api';
 
-const tabs = ['Users', 'Groups', 'Roles', 'API Definitions', 'LDAP Settings', 'Session Settings', 'Audit Logs', 'System Settings'] as const;
+const tabs = ['Users', 'Groups', 'Roles', 'API Definitions', 'LDAP Settings', 'Azure AD', 'Session Settings', 'Audit Logs', 'System Settings'] as const;
 type Tab = (typeof tabs)[number];
 
 const globalPermissionOptions = [
@@ -98,6 +100,12 @@ type ApiForm = {
   allowedPathPrefixes: string[];
   ownerTeam: string;
   tags: string[];
+};
+
+type CreatableOption = {
+  label: string;
+  value: string;
+  isCreate?: boolean;
 };
 
 function emptyUserForm(): UserForm {
@@ -164,6 +172,7 @@ export function AdminPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [apis, setApis] = useState<ApiDefinition[]>([]);
   const [ldap, setLdap] = useState<LdapConfig | null>(null);
+  const [azureAd, setAzureAd] = useState<AzureADConfig | null>(null);
   const [session, setSession] = useState<SessionSettings>({ sessionMinutes: 60 });
   const [system, setSystem] = useState<SystemSettings>({ brandTitle: '', logoDataUrl: '' });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
@@ -190,12 +199,13 @@ export function AdminPage() {
     setLoading(true);
     setError('');
     try {
-      const [usersData, groupsData, rolesData, apisData, ldapData, sessionData, systemData, auditData] = await Promise.all([
+      const [usersData, groupsData, rolesData, apisData, ldapData, azureAdData, sessionData, systemData, auditData] = await Promise.all([
         api.users(),
         api.groups(),
         api.roles(),
         api.adminApis(),
         api.ldap(),
+        api.azureAd(),
         api.session(),
         api.system(),
         api.auditLogs(buildAuditQuery(auditUser, auditAction, auditPageSize, auditOffset))
@@ -211,6 +221,7 @@ export function AdminPage() {
       setRoles(nextRoles);
       setApis(nextApis);
       setLdap(ldapData);
+      setAzureAd(azureAdData);
       setSession(sessionData ?? { sessionMinutes: 60 });
       setSystem(systemData ?? { brandTitle: '', logoDataUrl: '' });
       setAuditLogs(auditData?.items ?? []);
@@ -275,6 +286,11 @@ export function AdminPage() {
   );
 
   const currentRoleScopes = useMemo(() => new Set(roleForm.scopes), [roleForm.scopes]);
+  const tagSuggestions = useMemo(() => Array.from(new Set(apis.flatMap((item) => item.tags ?? []))).sort((a, b) => a.localeCompare(b)), [apis]);
+  const pathPrefixSuggestions = useMemo(
+    () => Array.from(new Set(apis.flatMap((item) => item.allowedPathPrefixes ?? []))).sort((a, b) => a.localeCompare(b)),
+    [apis]
+  );
 
   function selectUser(user?: User) {
     if (!user) {
@@ -868,29 +884,27 @@ export function AdminPage() {
                         required
                       />
                       <TextField label="Owner Team" value={apiForm.ownerTeam} onChange={(event) => setApiForm({ ...apiForm, ownerTeam: event.target.value })} />
-                      <Autocomplete
-                        multiple
-                        freeSolo
+                      <CreatableChipSelect
+                        label="Allowed Methods"
+                        helperText="Optional allowlist. Type or choose a method, then click the add suggestion or press Enter."
                         options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE']}
                         value={apiForm.allowedMethods}
-                        onChange={(_, value) => setApiForm({ ...apiForm, allowedMethods: value.map((item) => item.toUpperCase()) })}
-                        renderInput={(params) => <TextField {...params} label="Allowed Methods" helperText="Optional allowlist" />}
+                        normalize={(value) => value.toUpperCase()}
+                        onChange={(value) => setApiForm({ ...apiForm, allowedMethods: value })}
                       />
-                      <Autocomplete
-                        multiple
-                        freeSolo
-                        options={[]}
+                      <CreatableChipSelect
+                        label="Allowed Path Prefixes"
+                        helperText="Optional allowlist. Type a documented path prefix like /v1/orders, then click the add suggestion."
+                        options={pathPrefixSuggestions}
                         value={apiForm.allowedPathPrefixes}
-                        onChange={(_, value) => setApiForm({ ...apiForm, allowedPathPrefixes: value })}
-                        renderInput={(params) => <TextField {...params} label="Allowed Path Prefixes" helperText="Optional allowlist" />}
+                        onChange={(value) => setApiForm({ ...apiForm, allowedPathPrefixes: value })}
                       />
-                      <Autocomplete
-                        multiple
-                        freeSolo
-                        options={[]}
+                      <CreatableChipSelect
+                        label="Tags"
+                        helperText="Type a tag name and pick the add suggestion, or reuse an existing tag."
+                        options={tagSuggestions}
                         value={apiForm.tags}
-                        onChange={(_, value) => setApiForm({ ...apiForm, tags: value })}
-                        renderInput={(params) => <TextField {...params} label="Tags" />}
+                        onChange={(value) => setApiForm({ ...apiForm, tags: value })}
                       />
                       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                         <FormControlLabel
@@ -1038,6 +1052,70 @@ export function AdminPage() {
                   </Stack>
                 </FormCard>
               </Stack>
+            </TabPanel>
+
+            <TabPanel active={activeTab} name="Azure AD">
+              <FormCard
+                title="Azure AD / Microsoft Entra ID"
+                actions={
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      onClick={() =>
+                        run(async () => {
+                          if (!azureAd) {
+                            return;
+                          }
+                          await api.testAzureAd(azureAd);
+                        }, 'Azure AD connection successful.')
+                      }
+                      disabled={!azureAd}
+                    >
+                      Test
+                    </Button>
+                    <Button
+                      variant="contained"
+                      startIcon={<SaveOutlinedIcon />}
+                      onClick={() =>
+                        run(async () => {
+                          if (!azureAd) {
+                            return;
+                          }
+                          await api.updateAzureAd(azureAd);
+                        }, 'Azure AD settings updated.')
+                      }
+                      disabled={!azureAd || busy}
+                    >
+                      Save
+                    </Button>
+                  </Stack>
+                }
+              >
+                {azureAd ? (
+                  <Stack spacing={2}>
+                    <FormControlLabel
+                      control={<Checkbox checked={azureAd.enabled} onChange={(event) => setAzureAd({ ...azureAd, enabled: event.target.checked })} />}
+                      label="Azure AD Enabled"
+                    />
+                    <TextField label="Tenant ID" value={azureAd.tenantId} onChange={(event) => setAzureAd({ ...azureAd, tenantId: event.target.value })} />
+                    <TextField label="Client ID" value={azureAd.clientId} onChange={(event) => setAzureAd({ ...azureAd, clientId: event.target.value })} />
+                    <TextField
+                      label={azureAd.passwordConfigured ? 'Client Secret (leave blank to keep current)' : 'Client Secret'}
+                      type="password"
+                      value={azureAd.clientSecret ?? ''}
+                      onChange={(event) => setAzureAd({ ...azureAd, clientSecret: event.target.value })}
+                    />
+                    <TextField
+                      label="Redirect URL"
+                      value={azureAd.redirectUrl}
+                      onChange={(event) => setAzureAd({ ...azureAd, redirectUrl: event.target.value })}
+                      helperText="Example: https://portal.example.com/api/auth/azure/callback"
+                    />
+                    <Alert severity="info">
+                      Existing app groups and roles continue to work locally. Azure AD is used only as an additional login method.
+                    </Alert>
+                  </Stack>
+                ) : null}
+              </FormCard>
             </TabPanel>
 
             <TabPanel active={activeTab} name="Session Settings">
@@ -1335,5 +1413,72 @@ function FormCard({
         {children}
       </CardContent>
     </Card>
+  );
+}
+
+const creatableFilter = createFilterOptions<CreatableOption>();
+
+function CreatableChipSelect({
+  label,
+  helperText,
+  options,
+  value,
+  onChange,
+  normalize
+}: {
+  label: string;
+  helperText: string;
+  options: string[];
+  value: string[];
+  onChange: (value: string[]) => void;
+  normalize?: (value: string) => string;
+}) {
+  const optionObjects = options.map((option) => ({ label: option, value: option }));
+  const selectedObjects = value.map((item) => ({ label: item, value: item }));
+
+  return (
+    <Autocomplete<CreatableOption, true, false, true>
+      multiple
+      freeSolo
+      selectOnFocus
+      clearOnBlur
+      handleHomeEndKeys
+      options={optionObjects}
+      value={selectedObjects}
+      filterOptions={(inputOptions, params) => {
+        const filtered = creatableFilter(inputOptions, params);
+        const inputValue = params.inputValue.trim();
+        if (!inputValue) {
+          return filtered;
+        }
+        const normalizedInput = normalize ? normalize(inputValue) : inputValue;
+        const exists = inputOptions.some((option) => (normalize ? normalize(option.value) : option.value) === normalizedInput);
+        if (!exists) {
+          filtered.push({
+            label: `Add "${normalizedInput}"`,
+            value: normalizedInput,
+            isCreate: true
+          });
+        }
+        return filtered;
+      }}
+      getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
+      onChange={(_, newValue) => {
+        const next = Array.from(
+          new Set(
+            newValue
+              .map((item) => {
+                if (typeof item === 'string') {
+                  return normalize ? normalize(item.trim()) : item.trim();
+                }
+                return normalize ? normalize(item.value.trim()) : item.value.trim();
+              })
+              .filter(Boolean)
+          )
+        );
+        onChange(next);
+      }}
+      renderInput={(params) => <TextField {...params} label={label} helperText={helperText} />}
+    />
   );
 }

@@ -72,6 +72,9 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Post("/api/auth/login", s.handleLogin)
+	r.Get("/api/auth/providers", s.handleAuthProviders)
+	r.Get("/api/auth/azure/start", s.handleAzureStart)
+	r.Get("/api/auth/azure/callback", s.handleAzureCallback)
 
 	r.Get("/api/system/public", s.handlePublicSettings)
 
@@ -115,6 +118,10 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/test", s.handleTestLDAP)
 		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/search", s.handleSearchLDAP)
 		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/import", s.handleImportLDAP)
+
+		r.With(s.requirePermission("user.manage")).Get("/api/admin/azure-ad", s.handleGetAzureAD)
+		r.With(s.requirePermission("user.manage")).Put("/api/admin/azure-ad", s.handleUpdateAzureAD)
+		r.With(s.requirePermission("user.manage")).Post("/api/admin/azure-ad/test", s.handleTestAzureAD)
 
 		r.With(s.requirePermission("api.manage")).Get("/api/admin/apis", s.handleAdminAPIs)
 		r.With(s.requirePermission("api.manage")).Post("/api/admin/apis", s.handleCreateAPI)
@@ -187,6 +194,88 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordAudit(r, models.AuditLog{User: user.Username, Action: "login.success", ResourceType: "auth", StatusCode: http.StatusOK})
 	writeJSON(w, http.StatusOK, map[string]any{"token": token})
+}
+
+func (s *Server) handleAuthProviders(w http.ResponseWriter, r *http.Request) {
+	ldapCfg, _ := s.store.GetLDAPConfig(r.Context())
+	azureCfg, _ := s.store.GetAzureADConfig(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"local":   true,
+		"ldap":    ldapCfg != nil && ldapCfg.Enabled,
+		"azureAd": azureCfg != nil && azureCfg.Enabled,
+	})
+}
+
+func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.GetAzureADConfig(r.Context())
+	if err != nil || cfg == nil || !cfg.Enabled {
+		http.Error(w, "azure ad not configured", http.StatusBadRequest)
+		return
+	}
+	state, err := auth.RandomState()
+	if err != nil {
+		http.Error(w, "failed to initialize azure login", http.StatusInternalServerError)
+		return
+	}
+	nonce, err := auth.RandomState()
+	if err != nil {
+		http.Error(w, "failed to initialize azure login", http.StatusInternalServerError)
+		return
+	}
+	authURL, err := auth.AzureADAuthURL(*cfg, state, nonce)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	setEphemeralCookie(w, "azuread_state", state)
+	setEphemeralCookie(w, "azuread_nonce", nonce)
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.GetAzureADConfig(r.Context())
+	if err != nil || cfg == nil || !cfg.Enabled {
+		http.Error(w, "azure ad not configured", http.StatusBadRequest)
+		return
+	}
+	if r.URL.Query().Get("state") == "" || r.URL.Query().Get("state") != cookieValue(r, "azuread_state") {
+		http.Error(w, "invalid azure ad state", http.StatusBadRequest)
+		return
+	}
+	if errText := r.URL.Query().Get("error"); errText != "" {
+		http.Error(w, errText, http.StatusBadRequest)
+		return
+	}
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	if code == "" {
+		http.Error(w, "missing azure ad code", http.StatusBadRequest)
+		return
+	}
+	azureUser, err := auth.AzureADExchangeCode(r.Context(), *cfg, code, cookieValue(r, "azuread_nonce"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	user, err := s.userForAzureLogin(r.Context(), azureUser)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	session, _ := s.store.GetSessionSettings(r.Context())
+	ttl := time.Duration(s.config.SessionMinutes) * time.Minute
+	if session != nil && session.SessionMinutes > 0 {
+		ttl = time.Duration(session.SessionMinutes) * time.Minute
+	}
+	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, ttl)
+	if err != nil {
+		http.Error(w, "token error", http.StatusInternalServerError)
+		return
+	}
+	clearCookie(w, "azuread_state")
+	clearCookie(w, "azuread_nonce")
+	s.recordAudit(r, models.AuditLog{User: user.Username, Action: "login.success", ResourceType: "auth", StatusCode: http.StatusOK})
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(fmt.Sprintf(`<!doctype html><html><body><script>localStorage.setItem("api_portal_token", %q); window.location.replace("/");</script></body></html>`, token)))
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -741,6 +830,49 @@ func (s *Server) handleImportLDAP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleGetAzureAD(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.GetAzureADConfig(r.Context())
+	if err != nil {
+		http.Error(w, "failed to load azure ad config", http.StatusInternalServerError)
+		return
+	}
+	cfg.ClientSecret = ""
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (s *Server) handleUpdateAzureAD(w http.ResponseWriter, r *http.Request) {
+	var payload models.AzureADConfig
+	if !decodeJSON(w, r, &payload) {
+		return
+	}
+	if err := s.store.UpdateAzureADConfig(r.Context(), payload); err != nil {
+		http.Error(w, "failed to update azure ad config", http.StatusBadRequest)
+		return
+	}
+	s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.azuread.update", ResourceType: "azuread", StatusCode: http.StatusOK})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleTestAzureAD(w http.ResponseWriter, r *http.Request) {
+	var payload models.AzureADConfig
+	if !decodeJSON(w, r, &payload) {
+		return
+	}
+	if payload.ClientSecret == "" {
+		existing, _ := s.store.GetAzureADConfig(r.Context())
+		if existing != nil {
+			payload.ClientSecret = existing.ClientSecret
+		}
+	}
+	if err := auth.TestAzureADConnection(r.Context(), payload); err != nil {
+		s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.azuread.test", ResourceType: "azuread", ErrorMessage: err.Error(), StatusCode: http.StatusBadRequest})
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.azuread.test", ResourceType: "azuread", StatusCode: http.StatusOK})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleAdminAPIs(w http.ResponseWriter, r *http.Request) {
 	apis, err := s.store.ListAPIDefinitions(r.Context())
 	if err != nil {
@@ -1015,6 +1147,38 @@ func (s *Server) usernameOrAnonymous(r *http.Request) string {
 	return "anonymous"
 }
 
+func (s *Server) userForAzureLogin(ctx context.Context, azureUser *auth.AzureADUser) (*models.User, error) {
+	if azureUser.Email != "" {
+		if user, err := s.store.GetUserByEmail(ctx, azureUser.Email); err == nil {
+			return user, nil
+		}
+	}
+	if user, err := s.store.GetUserByUsername(ctx, azureUser.Username); err == nil {
+		return user, nil
+	}
+	baseUsername := sanitizeUsername(azureUser.Username)
+	if baseUsername == "" {
+		baseUsername = sanitizeUsername(azureUser.Email)
+	}
+	if baseUsername == "" {
+		baseUsername = "azure-user"
+	}
+	username := uniqueUsername(ctx, s.store, baseUsername)
+	id, err := s.store.CreateUser(ctx, models.User{
+		Username:           username,
+		DisplayName:        azureUser.DisplayName,
+		Email:              azureUser.Email,
+		AuthSource:         "azuread",
+		MustChangePassword: false,
+		IsActive:           true,
+		IsAdmin:            false,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetUserByID(ctx, id)
+}
+
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(s.staticDir, filepath.Clean(r.URL.Path))
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
@@ -1030,6 +1194,36 @@ func requestLogger(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
 	})
+}
+
+func setEphemeralCookie(w http.ResponseWriter, name, value string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   600,
+	})
+}
+
+func clearCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
+
+func cookieValue(r *http.Request, name string) string {
+	cookie, err := r.Cookie(name)
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
 }
 
 func recoverMiddleware(next http.Handler) http.Handler {
@@ -1101,6 +1295,34 @@ func marshalJSON(value any) string {
 		return "{}"
 	}
 	return string(data)
+}
+
+func sanitizeUsername(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.ReplaceAll(value, " ", ".")
+	if strings.Contains(value, "@") {
+		value = strings.SplitN(value, "@", 2)[0]
+	}
+	value = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '-' || r == '_' {
+			return r
+		}
+		return -1
+	}, value)
+	return strings.Trim(value, "._-")
+}
+
+func uniqueUsername(ctx context.Context, store *store.Store, base string) string {
+	if _, err := store.GetUserByUsername(ctx, base); err != nil {
+		return base
+	}
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if _, err := store.GetUserByUsername(ctx, candidate); err != nil {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("%s-%d", base, time.Now().Unix())
 }
 
 func defaultString(value, fallback string) string {

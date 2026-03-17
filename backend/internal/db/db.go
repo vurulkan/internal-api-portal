@@ -103,6 +103,14 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			session_minutes INTEGER NOT NULL DEFAULT 60
 		);`,
+		`CREATE TABLE IF NOT EXISTS azure_ad_config (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			enabled INTEGER NOT NULL DEFAULT 0,
+			tenant_id TEXT NOT NULL DEFAULT '',
+			client_id TEXT NOT NULL DEFAULT '',
+			client_secret_enc TEXT NOT NULL DEFAULT '',
+			redirect_url TEXT NOT NULL DEFAULT ''
+		);`,
 		`CREATE TABLE IF NOT EXISTS system_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			brand_title TEXT NOT NULL DEFAULT 'Internal API Portal',
@@ -162,6 +170,9 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO session_settings (id, session_minutes) VALUES (1, 60)`); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO azure_ad_config (id) VALUES (1)`); err != nil {
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO system_settings (id) VALUES (1)`); err != nil {
