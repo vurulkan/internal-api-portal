@@ -24,6 +24,7 @@ This is not a Kubernetes resource dashboard. It does not manage pods, deployment
 - SQLite persistence with startup migrations
 - Local authentication with Argon2id password hashing
 - LDAP bind authentication with admin-managed LDAP settings
+- Azure AD login with admin-managed OIDC settings
 - App-layer RBAC with users, groups, roles, permissions
 - Per-API authorization with global and resource-scoped permissions
 - Backend-only OpenAPI fetch and cache
@@ -162,6 +163,15 @@ Recommended operational model:
 - Authentication uses LDAP bind on login.
 - LDAP users do not use the local password change screen.
 - The Change Password navigation item is hidden for LDAP users.
+
+### Azure AD Users
+
+- Azure AD is available as an additional login provider.
+- Authentication uses the Microsoft identity platform via OIDC.
+- On first successful Azure AD login, the portal can create the local user record just in time.
+- Existing local RBAC still applies because authorization remains inside the portal.
+- Azure AD users do not use the local password change screen.
+- Logout is application-local only and does not trigger global Microsoft sign-out.
 
 ## Default Bootstrap
 
@@ -485,6 +495,36 @@ LDAP search results depend heavily on:
 - `displayNameAttribute`
 - `emailAttribute`
 
+## Azure AD Setup
+
+Admin flow:
+
+1. Open `Admin -> Azure AD`
+2. Enable Azure AD
+3. Enter the tenant ID, client ID, redirect URL, and client secret
+4. Test the connection
+5. Save
+
+### Azure App Registration Requirements
+
+Use a single-tenant Azure AD app registration with:
+
+- Redirect URI: `https://<your-domain>/api/auth/azure/callback`
+- Scopes:
+  - `openid`
+  - `profile`
+  - `email`
+
+This first phase does not require Microsoft Graph permissions.
+
+### Azure AD Behavior
+
+- The login page shows `Sign in with Microsoft` only when Azure AD is enabled.
+- Users are matched to the local catalog by email first, then username.
+- If no local user exists, the portal creates one with `authSource = azuread`.
+- Group and role assignment still happens in the portal admin UI.
+- LDAP remains available and unchanged when Azure AD is configured.
+
 ## Audit Logging
 
 The portal logs:
@@ -569,6 +609,7 @@ Key protections:
 - hop-by-hop headers are removed
 - cookies are not blindly forwarded
 - audit trail for login, spec usage, and invocation
+- Azure AD client secrets are stored encrypted at rest
 
 ### Sensitive Header Handling
 
@@ -619,6 +660,23 @@ Check:
 - `displayNameAttribute`
 - `emailAttribute`
 
+### Azure AD login button does not appear
+
+Check:
+
+- Azure AD is enabled in `Admin -> Azure AD`
+- `tenantId`, `clientId`, and `redirectUrl` are saved
+- the login page can reach `GET /api/auth/providers`
+
+### Azure AD callback fails
+
+Check:
+
+- the Azure app registration redirect URI exactly matches `https://<your-domain>/api/auth/azure/callback`
+- the Azure app registration is single-tenant if that is how the portal is configured
+- the client secret is current
+- the portal is reachable at the same public URL configured in Azure AD
+
 ### API invocation returns `path not allowed`
 
 Most common reason:
@@ -643,6 +701,7 @@ This is a maintainable v1 internal product with:
 - app-layer auth and RBAC
 - same-origin frontend/backend delivery
 - LDAP support
+- Azure AD support
 - audit logging
 - OpenAPI-driven docs and invocation
 
