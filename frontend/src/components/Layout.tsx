@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
-import { AppBar, Box, Button, Drawer, List, ListItemButton, ListItemText, Toolbar, Typography } from '@mui/material';
+import { type ReactNode, useState } from 'react';
 import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
+import { LayoutGrid, KeyRound, ShieldCheck, Menu, X, LogOut } from 'lucide-react';
+import { cn } from './ui';
 
 type Props = {
   brandTitle: string;
@@ -12,87 +13,126 @@ type Props = {
   children: ReactNode;
 };
 
-const drawerWidth = 280;
-
 export function Layout({ brandTitle, logoDataUrl, username, isAdmin, canChangePassword, onLogout, children }: Props) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+
   const navItems = [
-    { label: 'API Catalog', path: '/' },
-    ...(canChangePassword ? [{ label: 'Change Password', path: '/change-password' }] : []),
-    ...(isAdmin ? [{ label: 'Admin', path: '/admin' }] : [])
+    { label: 'API Catalog', path: '/', Icon: LayoutGrid },
+    ...(canChangePassword ? [{ label: 'Change Password', path: '/change-password', Icon: KeyRound }] : []),
+    ...(isAdmin ? [{ label: 'Admin Console', path: '/admin', Icon: ShieldCheck }] : []),
   ];
 
+  function isActive(path: string) {
+    if (path === '/') return location.pathname === '/';
+    return location.pathname.startsWith(path);
+  }
+
+  function handleLogout() {
+    onLogout();
+    navigate('/', { replace: true });
+  }
+
+  const initials = username.charAt(0).toUpperCase();
+
+  const SidebarContent = () => (
+    <div className="flex h-full flex-col">
+      {/* Brand */}
+      <div className="flex items-center gap-2.5 border-b border-slate-800 px-4 py-4">
+        {logoDataUrl ? (
+          <img src={logoDataUrl} alt={brandTitle} className="h-7 w-7 shrink-0 rounded object-contain" />
+        ) : (
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-blue-600 text-xs font-bold text-white">
+            {initials}
+          </div>
+        )}
+        <span className="truncate text-sm font-semibold text-white">{brandTitle || 'API Portal'}</span>
+        <button
+          className="ml-auto text-slate-500 hover:text-slate-300 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
+        <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Menu</p>
+        {navItems.map(({ label, path, Icon }) => (
+          <RouterLink
+            key={path}
+            to={path}
+            onClick={() => setSidebarOpen(false)}
+            className={cn(
+              'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+              isActive(path)
+                ? 'bg-blue-600/20 text-blue-300'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            )}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            {label}
+          </RouterLink>
+        ))}
+      </nav>
+
+      {/* User */}
+      <div className="border-t border-slate-800 p-4">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-700 text-xs font-semibold text-slate-300">
+            {initials}
+          </div>
+          <span className="min-w-0 flex-1 truncate text-sm text-slate-300">{username}</span>
+          <button
+            onClick={handleLogout}
+            title="Sign out"
+            className="shrink-0 text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
-    <Box display="flex">
-      <AppBar position="fixed" sx={{ zIndex: 1201, background: '#fff', color: '#1a1a1a' }} elevation={1}>
-        <Toolbar sx={{ display: 'flex', justifyContent: 'space-between' }}>
-          <Box display="flex" gap={1.5} alignItems="center">
-            {logoDataUrl ? <Box component="img" src={logoDataUrl} alt={brandTitle} sx={{ width: 32, height: 32, objectFit: 'contain' }} /> : null}
-            <Typography variant="h6" fontWeight={600}>
-              {brandTitle}
-            </Typography>
-          </Box>
-          <Box display="flex" gap={2} alignItems="center">
-            <Typography variant="body2" color="text.secondary">
-              {username}
-            </Typography>
-            <Button
-              variant="contained"
-              size="small"
-              onClick={() => {
-                onLogout();
-                navigate('/', { replace: true });
-              }}
-            >
-              Sign out
-            </Button>
-          </Box>
-        </Toolbar>
-      </AppBar>
+    <div className="flex min-h-screen bg-slate-50">
+      {/* Desktop sidebar */}
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 bg-slate-900 md:flex md:flex-col">
+        <SidebarContent />
+      </aside>
 
-      <Drawer
-        variant="permanent"
-        sx={{
-          width: drawerWidth,
-          flexShrink: 0,
-          '& .MuiDrawer-paper': {
-            width: drawerWidth,
-            boxSizing: 'border-box',
-            backgroundColor: '#0f1733',
-            color: '#fff'
-          }
-        }}
-      >
-        <Toolbar />
-        <Box sx={{ overflow: 'auto', px: 2, py: 3 }}>
-          <Typography variant="caption" sx={{ textTransform: 'uppercase', color: '#9fb2ff' }}>
-            Navigation
-          </Typography>
-          <List>
-            {navItems.map((item) => (
-              <ListItemButton
-                key={item.path}
-                component={RouterLink}
-                to={item.path}
-                selected={location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path))}
-                sx={{
-                  borderRadius: 1,
-                  '&.Mui-selected': { backgroundColor: '#1b2d6b' },
-                  '&.Mui-selected:hover': { backgroundColor: '#1b2d6b' }
-                }}
-              >
-                <ListItemText primary={item.label} />
-              </ListItemButton>
-            ))}
-          </List>
-        </Box>
-      </Drawer>
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setSidebarOpen(false)} />
+          <aside className="relative flex h-full w-60 flex-col bg-slate-900">
+            <SidebarContent />
+          </aside>
+        </div>
+      )}
 
-      <Box component="main" sx={{ flexGrow: 1, p: 3, minHeight: '100vh' }}>
-        <Toolbar />
-        {children}
-      </Box>
-    </Box>
+      {/* Main */}
+      <div className="flex flex-1 flex-col md:pl-60">
+        {/* Mobile topbar */}
+        <header className="flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-3 md:hidden">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="text-slate-600 hover:text-slate-900"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          {logoDataUrl && (
+            <img src={logoDataUrl} alt={brandTitle} className="h-6 w-6 object-contain" />
+          )}
+          <span className="text-sm font-semibold text-slate-800">{brandTitle || 'API Portal'}</span>
+        </header>
+
+        <main className="flex-1 p-6">
+          {children}
+        </main>
+      </div>
+    </div>
   );
 }

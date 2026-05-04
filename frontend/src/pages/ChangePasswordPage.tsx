@@ -1,6 +1,6 @@
 import { FormEvent, useState } from 'react';
-import { Alert, Box, Button, Card, CardContent, TextField, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { Alert, Button, Input } from '../components/ui';
 import { api } from '../services/api';
 
 type Props = {
@@ -13,42 +13,68 @@ export function ChangePasswordPage({ onSuccess }: Props) {
   const [newPassword, setNewPassword] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setMessage('');
     setError('');
+    setLoading(true);
     try {
       await api.changePassword(currentPassword, newPassword);
       await onSuccess?.();
-      setMessage('Password updated.');
+      setMessage('Password updated successfully.');
       setCurrentPassword('');
       setNewPassword('');
       navigate('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Password update failed');
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
-    <Box display="flex" alignItems="center" justifyContent="center" minHeight="70vh">
-      <Card sx={{ width: '100%', maxWidth: 480, boxShadow: 4 }}>
-        <CardContent>
-          <Typography variant="h5" fontWeight={600} gutterBottom>
-            Update Your Password
-          </Typography>
-          <Typography variant="body2" color="text.secondary" gutterBottom>
+    <div className="flex min-h-[60vh] items-center justify-center">
+      <div className="w-full max-w-md">
+        <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+          <h1 className="mb-1 text-xl font-bold text-gray-900">Update Your Password</h1>
+          <p className="mb-6 text-sm text-gray-500">
             Your first login requires a password update.
-          </Typography>
-          {message ? <Alert severity="success" sx={{ mb: 2 }}>{message}</Alert> : null}
-          {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
-          <Box component="form" onSubmit={onSubmit} display="flex" flexDirection="column" gap={2}>
-            <TextField label="Current Password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} fullWidth />
-            <TextField label="New Password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} fullWidth />
-            <Button type="submit" variant="contained">Update Password</Button>
-          </Box>
-        </CardContent>
-      </Card>
-    </Box>
+          </p>
+
+          {message && (
+            <div className="mb-4">
+              <Alert variant="success">{message}</Alert>
+            </div>
+          )}
+          {error && (
+            <div className="mb-4">
+              <Alert variant="error">{error}</Alert>
+            </div>
+          )}
+
+          <form onSubmit={onSubmit} className="space-y-4">
+            <Input
+              label="Current Password"
+              type="password"
+              value={currentPassword}
+              onChange={setCurrentPassword}
+              required
+            />
+            <Input
+              label="New Password"
+              type="password"
+              value={newPassword}
+              onChange={setNewPassword}
+              required
+            />
+            <Button type="submit" variant="primary" disabled={loading} className="w-full justify-center py-2.5">
+              {loading ? 'Updating...' : 'Update Password'}
+            </Button>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }

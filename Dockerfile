@@ -2,7 +2,7 @@
 
 FROM node:20-alpine AS frontend-build
 WORKDIR /app
-COPY frontend/package.json frontend/tsconfig.json frontend/vite.config.ts frontend/index.html ./
+COPY frontend/package.json frontend/tsconfig.json frontend/vite.config.ts frontend/index.html frontend/tailwind.config.js frontend/postcss.config.js ./
 COPY frontend/src ./src
 RUN npm install
 RUN npm run build

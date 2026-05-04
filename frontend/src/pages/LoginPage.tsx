@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Alert, Box, Button, Card, CardContent, Divider, TextField, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { Alert, Button, Input } from '../components/ui';
 import { api, setToken } from '../services/api';
 
 type Props = {
@@ -18,7 +18,9 @@ export function LoginPage({ brandTitle, logoDataUrl, onLogin }: Props) {
   const [azureEnabled, setAzureEnabled] = useState(false);
 
   useEffect(() => {
-    api.authProviders().then((providers) => setAzureEnabled(Boolean(providers.azureAd))).catch(() => undefined);
+    api.authProviders()
+      .then((providers) => setAzureEnabled(Boolean(providers.azureAd)))
+      .catch(() => undefined);
   }, []);
 
   async function onSubmit(event: FormEvent) {
@@ -37,39 +39,86 @@ export function LoginPage({ brandTitle, logoDataUrl, onLogin }: Props) {
     }
   }
 
+  const title = brandTitle || 'Internal API Portal';
+
   return (
-    <Box display="flex" alignItems="center" justifyContent="center" minHeight="100vh">
-      <Card sx={{ width: '90vw', maxWidth: 420, boxShadow: 4 }}>
-        <CardContent>
-          {logoDataUrl ? (
-            <Box display="flex" justifyContent="center" mb={2}>
-              <Box component="img" src={logoDataUrl} alt={brandTitle} sx={{ width: '100%', maxWidth: 220, height: 'auto', objectFit: 'contain' }} />
-            </Box>
-          ) : null}
-          <Typography variant="h5" fontWeight={600} gutterBottom>
-            {brandTitle}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" gutterBottom>
-            Sign in with your account.
-          </Typography>
-          {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
-          {azureEnabled ? (
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100 px-4">
+      <div className="w-full max-w-sm">
+        {/* Card */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-xl shadow-gray-100/50">
+          {/* Branding */}
+          <div className="mb-7 text-center">
+            {logoDataUrl ? (
+              <img src={logoDataUrl} alt={title} className="mx-auto mb-4 h-16 object-contain" />
+            ) : (
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-xl font-bold text-white shadow-md shadow-blue-200">
+                {title.charAt(0).toUpperCase()}
+              </div>
+            )}
+            <h1 className="text-xl font-bold text-gray-900">{title}</h1>
+            <p className="mt-1 text-sm text-gray-500">Sign in to your account</p>
+          </div>
+
+          {error && (
+            <div className="mb-4">
+              <Alert variant="error">{error}</Alert>
+            </div>
+          )}
+
+          {azureEnabled && (
             <>
-              <Button variant="outlined" fullWidth sx={{ mb: 2 }} onClick={() => api.startAzureLogin()}>
+              <button
+                type="button"
+                onClick={() => api.startAzureLogin()}
+                className="mb-4 flex w-full items-center justify-center gap-2.5 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors"
+              >
+                {/* Microsoft logo */}
+                <svg className="h-5 w-5" viewBox="0 0 21 21" fill="none">
+                  <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                  <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                  <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                  <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+                </svg>
                 Sign in with Microsoft
-              </Button>
-              <Divider sx={{ mb: 2 }}>or</Divider>
+              </button>
+              <div className="relative mb-4">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-white px-3 text-xs text-gray-400">or continue with</span>
+                </div>
+              </div>
             </>
-          ) : null}
-          <Box component="form" onSubmit={onSubmit} display="flex" flexDirection="column" gap={2}>
-            <TextField label="Username" value={username} onChange={(event) => setUsername(event.target.value)} fullWidth />
-            <TextField label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />
-            <Button type="submit" variant="contained" disabled={loading}>
+          )}
+
+          <form onSubmit={onSubmit} className="space-y-4">
+            <Input
+              label="Username"
+              value={username}
+              onChange={setUsername}
+              placeholder="Enter your username"
+              required
+            />
+            <Input
+              label="Password"
+              type="password"
+              value={password}
+              onChange={setPassword}
+              placeholder="Enter your password"
+              required
+            />
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={loading}
+              className="w-full justify-center py-2.5"
+            >
               {loading ? 'Signing in...' : 'Sign in'}
             </Button>
-          </Box>
-        </CardContent>
-      </Card>
-    </Box>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }

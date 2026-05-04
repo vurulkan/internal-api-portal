@@ -1,38 +1,22 @@
-import type { ReactNode, SyntheticEvent } from 'react';
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
+import { RefreshCw, Save, Trash2 } from 'lucide-react';
 import {
   Alert,
-  Autocomplete,
-  Box,
+  Badge,
   Button,
-  Card,
-  CardContent,
   Checkbox,
-  Chip,
-  CircularProgress,
-  Divider,
-  FormControlLabel,
-  List,
-  ListItemButton,
-  ListItemText,
-  MenuItem,
-  Paper,
-  Stack,
-  Tab,
-  Tabs,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TextField,
-  Typography
-} from '@mui/material';
-import { createFilterOptions } from '@mui/material/Autocomplete';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
+  ChipInput,
+  FieldWrap,
+  Input,
+  MultiSelect,
+  MultiSelectOption,
+  NativeSelect,
+  Spinner,
+  Textarea,
+  cn,
+  fieldBase,
+} from '../components/ui';
 import {
   api,
   ApiDefinition,
@@ -49,16 +33,15 @@ import {
   SessionSettings,
   SystemSettings,
   User,
-  UserPayload
+  UserPayload,
 } from '../services/api';
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 const tabs = ['Users', 'Groups', 'Roles', 'API Definitions', 'LDAP Settings', 'Azure AD', 'Session Settings', 'Audit Logs', 'System Settings'] as const;
 type Tab = (typeof tabs)[number];
 
-const globalPermissionOptions = [
-  'api.view',
-  'api.invoke'
-];
+const globalPermissionOptions = ['api.view', 'api.invoke'];
 
 type UserForm = {
   id?: number;
@@ -73,20 +56,8 @@ type UserForm = {
   groupIds: number[];
 };
 
-type GroupForm = {
-  id?: number;
-  name: string;
-  description: string;
-  roleIds: number[];
-};
-
-type RoleForm = {
-  id?: number;
-  name: string;
-  description: string;
-  scopes: string[];
-};
-
+type GroupForm = { id?: number; name: string; description: string; roleIds: number[] };
+type RoleForm = { id?: number; name: string; description: string; scopes: string[] };
 type ApiForm = {
   id?: number;
   name: string;
@@ -102,63 +73,86 @@ type ApiForm = {
   tags: string[];
 };
 
-type CreatableOption = {
-  label: string;
-  value: string;
-  isCreate?: boolean;
-};
-
 function emptyUserForm(): UserForm {
-  return {
-    username: '',
-    displayName: '',
-    email: '',
-    password: '',
-    authSource: 'local',
-    mustChangePassword: true,
-    isActive: true,
-    isAdmin: false,
-    groupIds: []
-  };
+  return { username: '', displayName: '', email: '', password: '', authSource: 'local', mustChangePassword: true, isActive: true, isAdmin: false, groupIds: [] };
 }
-
-function emptyGroupForm(): GroupForm {
-  return { name: '', description: '', roleIds: [] };
-}
-
-function emptyRoleForm(): RoleForm {
-  return { name: '', description: '', scopes: [] };
-}
-
+function emptyGroupForm(): GroupForm { return { name: '', description: '', roleIds: [] }; }
+function emptyRoleForm(): RoleForm { return { name: '', description: '', scopes: [] }; }
 function emptyApiForm(): ApiForm {
-  return {
-    name: '',
-    slug: '',
-    description: '',
-    internalOpenapiUrl: '',
-    internalBaseUrl: '',
-    isActive: true,
-    tryItEnabled: true,
-    allowedMethods: [],
-    allowedPathPrefixes: [],
-    ownerTeam: '',
-    tags: []
-  };
+  return { name: '', slug: '', description: '', internalOpenapiUrl: '', internalBaseUrl: '', isActive: true, tryItEnabled: true, allowedMethods: [], allowedPathPrefixes: [], ownerTeam: '', tags: [] };
 }
 
 function splitList(value: string) {
-  return value
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
 }
 
-function TabPanel({ active, name, children }: { active: Tab; name: Tab; children: ReactNode }) {
-  if (active !== name) {
-    return null;
-  }
-  return <Box sx={{ mt: 3 }}>{children}</Box>;
+function buildAuditQuery(user: string, action: string, limit: number, offset: number) {
+  const params = new URLSearchParams();
+  if (user.trim()) params.set('user', user.trim());
+  if (action.trim()) params.set('action', action.trim());
+  params.set('limit', String(limit));
+  params.set('offset', String(offset));
+  const q = params.toString();
+  return q ? `?${q}` : '';
 }
+
+// ── Sub-layouts ────────────────────────────────────────────────────────────────
+
+function SplitLayout({ left, right }: { left: ReactNode; right: ReactNode }) {
+  return (
+    <div className="grid gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
+      {left}
+      {right}
+    </div>
+  );
+}
+
+function EntityList({ title, subtitle, action, children }: { title: string; subtitle: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div>
+          <p className="font-semibold text-gray-800">{title}</p>
+          <p className="text-xs text-gray-400">{subtitle}</p>
+        </div>
+        {action}
+      </div>
+      <hr className="mb-2 border-gray-100" />
+      <div className="max-h-[640px] overflow-y-auto space-y-0.5">{children}</div>
+    </div>
+  );
+}
+
+function EntityItem({ label, sub, selected, onClick }: { label: string; sub?: string; selected: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'w-full rounded-lg px-3 py-2 text-left transition-colors',
+        selected ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50 text-gray-700'
+      )}
+    >
+      <p className="text-sm font-medium">{label}</p>
+      {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+    </button>
+  );
+}
+
+function FormCard({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <p className="font-semibold text-gray-800">{title}</p>
+        {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+      </div>
+      <hr className="mb-4 border-gray-100" />
+      {children}
+    </div>
+  );
+}
+
+// ── AdminPage ──────────────────────────────────────────────────────────────────
 
 export function AdminPage() {
   const [activeTab, setActiveTab] = useState<Tab>('Users');
@@ -200,15 +194,9 @@ export function AdminPage() {
     setError('');
     try {
       const [usersData, groupsData, rolesData, apisData, ldapData, azureAdData, sessionData, systemData, auditData] = await Promise.all([
-        api.users(),
-        api.groups(),
-        api.roles(),
-        api.adminApis(),
-        api.ldap(),
-        api.azureAd(),
-        api.session(),
-        api.system(),
-        api.auditLogs(buildAuditQuery(auditUser, auditAction, auditPageSize, auditOffset))
+        api.users(), api.groups(), api.roles(), api.adminApis(),
+        api.ldap(), api.azureAd(), api.session(), api.system(),
+        api.auditLogs(buildAuditQuery(auditUser, auditAction, auditPageSize, auditOffset)),
       ]);
 
       const nextUsers = usersData ?? [];
@@ -231,21 +219,9 @@ export function AdminPage() {
       const nextGroupRoles: Record<number, number[]> = {};
       const nextRolePermissions: Record<number, Permission[]> = {};
 
-      await Promise.all(
-        nextUsers.map(async (user) => {
-          nextUserGroups[user.id] = (await api.userGroups(user.id)) ?? [];
-        })
-      );
-      await Promise.all(
-        nextGroups.map(async (group) => {
-          nextGroupRoles[group.id] = (await api.groupRoles(group.id)) ?? [];
-        })
-      );
-      await Promise.all(
-        nextRoles.map(async (role) => {
-          nextRolePermissions[role.id] = (await api.permissions(role.id)) ?? [];
-        })
-      );
+      await Promise.all(nextUsers.map(async (u) => { nextUserGroups[u.id] = (await api.userGroups(u.id)) ?? []; }));
+      await Promise.all(nextGroups.map(async (g) => { nextGroupRoles[g.id] = (await api.groupRoles(g.id)) ?? []; }));
+      await Promise.all(nextRoles.map(async (r) => { nextRolePermissions[r.id] = (await api.permissions(r.id)) ?? []; }));
 
       setUserGroupMap(nextUserGroups);
       setGroupRoleMap(nextGroupRoles);
@@ -257,9 +233,7 @@ export function AdminPage() {
     }
   }
 
-  useEffect(() => {
-    void loadAll();
-  }, [auditPageSize, auditOffset]);
+  useEffect(() => { void loadAll(); }, [auditPageSize, auditOffset]);
 
   async function run(task: () => Promise<void>, successMessage: string) {
     setBusy(true);
@@ -276,121 +250,41 @@ export function AdminPage() {
     }
   }
 
-  const groupOptions = useMemo(
-    () => groups.map((group) => ({ label: group.name, value: group.id })),
-    [groups]
-  );
-  const roleOptions = useMemo(
-    () => roles.map((role) => ({ label: role.name, value: role.id })),
-    [roles]
-  );
-
+  const groupOptions = useMemo(() => groups.map((g) => ({ label: g.name, value: g.id })), [groups]);
+  const roleOptions = useMemo(() => roles.map((r) => ({ label: r.name, value: r.id })), [roles]);
   const currentRoleScopes = useMemo(() => new Set(roleForm.scopes), [roleForm.scopes]);
-  const tagSuggestions = useMemo(() => Array.from(new Set(apis.flatMap((item) => item.tags ?? []))).sort((a, b) => a.localeCompare(b)), [apis]);
-  const pathPrefixSuggestions = useMemo(
-    () => Array.from(new Set(apis.flatMap((item) => item.allowedPathPrefixes ?? []))).sort((a, b) => a.localeCompare(b)),
-    [apis]
-  );
+  const tagSuggestions = useMemo(() => Array.from(new Set(apis.flatMap((a) => a.tags ?? []))).sort(), [apis]);
+  const pathPrefixSuggestions = useMemo(() => Array.from(new Set(apis.flatMap((a) => a.allowedPathPrefixes ?? []))).sort(), [apis]);
 
   function selectUser(user?: User) {
-    if (!user) {
-      setUserForm(emptyUserForm());
-      return;
-    }
-    setUserForm({
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName ?? '',
-      email: user.email ?? '',
-      password: '',
-      authSource: user.authSource,
-      mustChangePassword: user.mustChangePassword,
-      isActive: user.isActive,
-      isAdmin: user.isAdmin,
-      groupIds: userGroupMap[user.id] ?? []
-    });
+    if (!user) { setUserForm(emptyUserForm()); return; }
+    setUserForm({ id: user.id, username: user.username, displayName: user.displayName ?? '', email: user.email ?? '', password: '', authSource: user.authSource, mustChangePassword: user.mustChangePassword, isActive: user.isActive, isAdmin: user.isAdmin, groupIds: userGroupMap[user.id] ?? [] });
   }
-
   function selectGroup(group?: Group) {
-    if (!group) {
-      setGroupForm(emptyGroupForm());
-      return;
-    }
-    setGroupForm({
-      id: group.id,
-      name: group.name,
-      description: group.description ?? '',
-      roleIds: groupRoleMap[group.id] ?? []
-    });
+    if (!group) { setGroupForm(emptyGroupForm()); return; }
+    setGroupForm({ id: group.id, name: group.name, description: group.description ?? '', roleIds: groupRoleMap[group.id] ?? [] });
   }
-
   function selectRole(role?: Role) {
-    if (!role) {
-      setRoleForm(emptyRoleForm());
-      return;
-    }
-    setRoleForm({
-      id: role.id,
-      name: role.name,
-      description: role.description ?? '',
-      scopes: (rolePermissionMap[role.id] ?? []).map((permission) => permission.scope)
-    });
+    if (!role) { setRoleForm(emptyRoleForm()); return; }
+    setRoleForm({ id: role.id, name: role.name, description: role.description ?? '', scopes: (rolePermissionMap[role.id] ?? []).map((p) => p.scope) });
   }
-
   function selectApi(apiItem?: ApiDefinition) {
-    if (!apiItem) {
-      setApiForm(emptyApiForm());
-      return;
-    }
-    setApiForm({
-      id: apiItem.id,
-      name: apiItem.name,
-      slug: apiItem.slug,
-      description: apiItem.description ?? '',
-      internalOpenapiUrl: apiItem.internalOpenapiUrl ?? '',
-      internalBaseUrl: apiItem.internalBaseUrl ?? '',
-      isActive: apiItem.isActive,
-      tryItEnabled: apiItem.tryItEnabled,
-      allowedMethods: apiItem.allowedMethods ?? [],
-      allowedPathPrefixes: apiItem.allowedPathPrefixes ?? [],
-      ownerTeam: apiItem.ownerTeam ?? '',
-      tags: apiItem.tags ?? []
-    });
+    if (!apiItem) { setApiForm(emptyApiForm()); return; }
+    setApiForm({ id: apiItem.id, name: apiItem.name, slug: apiItem.slug, description: apiItem.description ?? '', internalOpenapiUrl: apiItem.internalOpenapiUrl ?? '', internalBaseUrl: apiItem.internalBaseUrl ?? '', isActive: apiItem.isActive, tryItEnabled: apiItem.tryItEnabled, allowedMethods: apiItem.allowedMethods ?? [], allowedPathPrefixes: apiItem.allowedPathPrefixes ?? [], ownerTeam: apiItem.ownerTeam ?? '', tags: apiItem.tags ?? [] });
   }
 
   function toggleScope(scope: string, enabled: boolean) {
-    setRoleForm((current) => {
-      const next = new Set(current.scopes);
-      if (enabled) {
-        next.add(scope);
-      } else {
-        next.delete(scope);
-      }
-      return { ...current, scopes: Array.from(next).sort() };
+    setRoleForm((prev) => {
+      const next = new Set(prev.scopes);
+      enabled ? next.add(scope) : next.delete(scope);
+      return { ...prev, scopes: Array.from(next).sort() };
     });
   }
 
   async function submitUser() {
-    if (!userForm.username.trim()) {
-      setError('Username zorunlu.');
-      return;
-    }
-    if (!userForm.id && !userForm.password.trim()) {
-      setError('Yeni local user için parola zorunlu.');
-      return;
-    }
-
-    const payload: UserPayload = {
-      username: userForm.username.trim(),
-      displayName: userForm.displayName.trim(),
-      email: userForm.email.trim(),
-      password: userForm.password.trim() || undefined,
-      authSource: userForm.authSource,
-      mustChangePassword: userForm.mustChangePassword,
-      isActive: userForm.isActive,
-      isAdmin: userForm.isAdmin
-    };
-
+    if (!userForm.username.trim()) { setError('Username is required.'); return; }
+    if (!userForm.id && !userForm.password.trim()) { setError('Password is required for a new local user.'); return; }
+    const payload: UserPayload = { username: userForm.username.trim(), displayName: userForm.displayName.trim(), email: userForm.email.trim(), password: userForm.password.trim() || undefined, authSource: userForm.authSource, mustChangePassword: userForm.mustChangePassword, isActive: userForm.isActive, isAdmin: userForm.isAdmin };
     await run(async () => {
       if (userForm.id) {
         await api.updateUser(userForm.id, payload);
@@ -404,10 +298,7 @@ export function AdminPage() {
   }
 
   async function submitGroup() {
-    if (!groupForm.name.trim()) {
-      setError('Group name zorunlu.');
-      return;
-    }
+    if (!groupForm.name.trim()) { setError('Group name is required.'); return; }
     const payload: GroupPayload = { name: groupForm.name.trim(), description: groupForm.description.trim() };
     await run(async () => {
       if (groupForm.id) {
@@ -422,64 +313,31 @@ export function AdminPage() {
   }
 
   async function submitRole() {
-    if (!roleForm.name.trim()) {
-      setError('Role name zorunlu.');
-      return;
-    }
+    if (!roleForm.name.trim()) { setError('Role name is required.'); return; }
     const payload: RolePayload = { name: roleForm.name.trim(), description: roleForm.description.trim() };
     await run(async () => {
       let roleId = roleForm.id;
-      if (roleId) {
-        await api.updateRole(roleId, payload);
-      } else {
-        const created = (await api.createRole(payload)) as { id: number };
-        roleId = created.id;
-      }
+      if (roleId) { await api.updateRole(roleId, payload); }
+      else { const created = (await api.createRole(payload)) as { id: number }; roleId = created.id; }
       await api.replacePermissions(roleId!, roleForm.scopes);
       setRoleForm(emptyRoleForm());
     }, roleForm.id ? 'Role updated.' : 'Role created.');
   }
 
   async function submitApi() {
-    if (!apiForm.name.trim() || !apiForm.slug.trim()) {
-      setError('API name ve slug zorunlu.');
-      return;
-    }
-    if (!apiForm.internalOpenapiUrl.trim() || !apiForm.internalBaseUrl.trim()) {
-      setError('Internal OpenAPI URL ve Internal Base URL zorunlu.');
-      return;
-    }
-    const payload: ApiDefinitionPayload = {
-      name: apiForm.name.trim(),
-      slug: apiForm.slug.trim(),
-      description: apiForm.description.trim(),
-      internalOpenapiUrl: apiForm.internalOpenapiUrl.trim(),
-      internalBaseUrl: apiForm.internalBaseUrl.trim(),
-      isActive: apiForm.isActive,
-      tryItEnabled: apiForm.tryItEnabled,
-      allowedMethods: apiForm.allowedMethods.map((item) => item.toUpperCase()),
-      allowedPathPrefixes: apiForm.allowedPathPrefixes,
-      ownerTeam: apiForm.ownerTeam.trim(),
-      tags: apiForm.tags
-    };
-
+    if (!apiForm.name.trim() || !apiForm.slug.trim()) { setError('API name and slug are required.'); return; }
+    if (!apiForm.internalOpenapiUrl.trim() || !apiForm.internalBaseUrl.trim()) { setError('Internal OpenAPI URL and Internal Base URL are required.'); return; }
+    const payload: ApiDefinitionPayload = { name: apiForm.name.trim(), slug: apiForm.slug.trim(), description: apiForm.description.trim(), internalOpenapiUrl: apiForm.internalOpenapiUrl.trim(), internalBaseUrl: apiForm.internalBaseUrl.trim(), isActive: apiForm.isActive, tryItEnabled: apiForm.tryItEnabled, allowedMethods: apiForm.allowedMethods.map((m) => m.toUpperCase()), allowedPathPrefixes: apiForm.allowedPathPrefixes, ownerTeam: apiForm.ownerTeam.trim(), tags: apiForm.tags };
     await run(async () => {
-      if (apiForm.id) {
-        await api.updateApi(apiForm.id, payload);
-      } else {
-        await api.createApi(payload);
-      }
+      if (apiForm.id) await api.updateApi(apiForm.id, payload);
+      else await api.createApi(payload);
       setApiForm(emptyApiForm());
     }, apiForm.id ? 'API updated.' : 'API created.');
   }
 
   async function saveLdap() {
-    if (!ldap) {
-      return;
-    }
-    await run(async () => {
-      await api.updateLdap({ ...ldap, userBaseDns: ldap.userBaseDns ?? [] });
-    }, 'LDAP settings updated.');
+    if (!ldap) return;
+    await run(async () => { await api.updateLdap({ ...ldap, userBaseDns: ldap.userBaseDns ?? [] }); }, 'LDAP settings updated.');
   }
 
   async function searchLdap() {
@@ -489,9 +347,7 @@ export function AdminPage() {
       const results = (await api.searchLdap(ldapQuery.trim())) ?? [];
       setLdapResults(results);
       setSelectedLdapUsers([]);
-      if (results.length === 0) {
-        setMessage('LDAP search returned no users. userFilter and attributes may need adjustment.');
-      }
+      if (results.length === 0) setMessage('LDAP search returned no users. userFilter and attributes may need adjustment.');
     } catch (ldapError) {
       setError(ldapError instanceof Error ? ldapError.message : 'LDAP search failed.');
       setLdapResults([]);
@@ -502,983 +358,617 @@ export function AdminPage() {
 
   async function importSelectedLdapUsers() {
     const payload = ldapResults.filter((item) => selectedLdapUsers.includes(item.username));
-    if (payload.length === 0) {
-      setError('Import için en az bir LDAP user seç.');
-      return;
-    }
-    await run(async () => {
-      await api.importLdap(payload);
-      setSelectedLdapUsers([]);
-    }, 'LDAP users imported.');
+    if (payload.length === 0) { setError('Select at least one LDAP user to import.'); return; }
+    await run(async () => { await api.importLdap(payload); setSelectedLdapUsers([]); }, 'LDAP users imported.');
   }
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" py={8}>
-        <CircularProgress />
-      </Box>
+      <div className="flex items-center justify-center py-20">
+        <Spinner size="lg" />
+      </div>
     );
   }
 
   return (
-    <Box>
-      <Typography variant="h4" fontWeight={700}>
-        Admin Console
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-        User, group, role, LDAP and API registry management is handled here. Browser-visible state stays limited to portal metadata.
-      </Typography>
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Admin Console</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          User, group, role, LDAP and API registry management. Browser-visible state stays limited to portal metadata.
+        </p>
+      </div>
 
-      <Stack spacing={2} sx={{ mt: 3 }}>
-        {error ? <Alert severity="error">{error}</Alert> : null}
-        {message ? <Alert severity="success">{message}</Alert> : null}
-      </Stack>
+      {error && <div className="mb-4"><Alert variant="error">{error}</Alert></div>}
+      {message && <div className="mb-4"><Alert variant="success">{message}</Alert></div>}
 
-      <Card sx={{ mt: 3 }}>
-        <CardContent sx={{ p: 0 }}>
-          <Tabs
-            value={activeTab}
-            onChange={(_: SyntheticEvent, value: Tab) => {
-              setActiveTab(value);
-              setMessage('');
-              setError('');
-            }}
-            variant="scrollable"
-            scrollButtons="auto"
-            sx={{ px: 2, pt: 2 }}
-          >
-            {tabs.map((tab) => (
-              <Tab key={tab} label={tab} value={tab} />
-            ))}
-          </Tabs>
-          <Divider />
-          <Box sx={{ p: 3 }}>
-            <TabPanel active={activeTab} name="Users">
-              <SplitLayout
-                left={
-                  <EntityList
-                    title="Users"
-                    subtitle="Select a user to edit, or start a new local account."
-                    action={<Button onClick={() => selectUser()} variant="outlined">New User</Button>}
-                  >
-                    {users.map((user) => (
-                      <ListItemButton key={user.id} selected={userForm.id === user.id} onClick={() => selectUser(user)}>
-                        <ListItemText
-                          primary={user.username}
-                          secondary={[user.authSource, user.isActive ? 'active' : 'disabled', user.isAdmin ? 'admin' : 'user'].join(' • ')}
-                        />
-                      </ListItemButton>
-                    ))}
-                  </EntityList>
-                }
-                right={
-                  <FormCard
-                    title={userForm.id ? `Edit User #${userForm.id}` : 'Create User'}
-                    actions={
-                      <Stack direction="row" spacing={1}>
-                        {userForm.id ? (
-                          <Button
-                            color="error"
-                            startIcon={<DeleteOutlineIcon />}
-                            onClick={() =>
-                              run(async () => {
-                                await api.deleteUser(userForm.id!);
-                                setUserForm(emptyUserForm());
-                              }, 'User deleted.')
-                            }
-                          >
-                            Delete
-                          </Button>
-                        ) : null}
-                        <Button startIcon={<SaveOutlinedIcon />} variant="contained" onClick={() => void submitUser()} disabled={busy}>
-                          Save
-                        </Button>
-                      </Stack>
-                    }
-                  >
-                    <Stack spacing={2}>
-                      <TextField label="Username" value={userForm.username} onChange={(event) => setUserForm({ ...userForm, username: event.target.value })} required />
-                      <TextField label="Display Name" value={userForm.displayName} onChange={(event) => setUserForm({ ...userForm, displayName: event.target.value })} />
-                      <TextField label="Email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} />
-                      <TextField
-                        label={userForm.id ? 'New Password (optional)' : 'Password'}
-                        type="password"
-                        value={userForm.password}
-                        onChange={(event) => setUserForm({ ...userForm, password: event.target.value })}
-                        required={!userForm.id}
-                      />
-                      <TextField label="Auth Source" value={userForm.authSource} disabled />
-                      <Autocomplete
-                        multiple
-                        options={groupOptions}
-                        value={groupOptions.filter((option) => userForm.groupIds.includes(option.value))}
-                        onChange={(_, value) => setUserForm({ ...userForm, groupIds: value.map((item) => item.value) })}
-                        renderInput={(params) => <TextField {...params} label="Groups" />}
-                      />
-                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                        <FormControlLabel
-                          control={<Checkbox checked={userForm.isActive} onChange={(event) => setUserForm({ ...userForm, isActive: event.target.checked })} />}
-                          label="Active"
-                        />
-                        <FormControlLabel
-                          control={<Checkbox checked={userForm.isAdmin} onChange={(event) => setUserForm({ ...userForm, isAdmin: event.target.checked })} />}
-                          label="Admin"
-                        />
-                        <FormControlLabel
-                          control={
-                            <Checkbox
-                              checked={userForm.mustChangePassword}
-                              onChange={(event) => setUserForm({ ...userForm, mustChangePassword: event.target.checked })}
-                            />
-                          }
-                          label="Force Password Change"
-                        />
-                      </Stack>
-                    </Stack>
-                  </FormCard>
-                }
-              />
-            </TabPanel>
+      {/* Tab bar */}
+      <div className="mb-5 overflow-x-auto">
+        <div className="flex min-w-max border-b border-gray-200">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => { setActiveTab(tab); setMessage(''); setError(''); }}
+              className={cn(
+                'px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors',
+                activeTab === tab
+                  ? 'border-b-2 border-blue-600 text-blue-600'
+                  : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              )}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      </div>
 
-            <TabPanel active={activeTab} name="Groups">
-              <SplitLayout
-                left={
-                  <EntityList title="Groups" subtitle="Groups aggregate users and receive roles.">
-                    {groups.map((group) => (
-                      <ListItemButton key={group.id} selected={groupForm.id === group.id} onClick={() => selectGroup(group)}>
-                        <ListItemText primary={group.name} secondary={group.description || 'No description'} />
-                      </ListItemButton>
-                    ))}
-                  </EntityList>
-                }
-                right={
-                  <FormCard
-                    title={groupForm.id ? `Edit Group #${groupForm.id}` : 'Create Group'}
-                    actions={
-                      <Stack direction="row" spacing={1}>
-                        <Button onClick={() => selectGroup()} variant="outlined">New Group</Button>
-                        {groupForm.id ? (
-                          <Button
-                            color="error"
-                            startIcon={<DeleteOutlineIcon />}
-                            onClick={() =>
-                              run(async () => {
-                                await api.deleteGroup(groupForm.id!);
-                                setGroupForm(emptyGroupForm());
-                              }, 'Group deleted.')
-                            }
-                          >
-                            Delete
-                          </Button>
-                        ) : null}
-                        <Button startIcon={<SaveOutlinedIcon />} variant="contained" onClick={() => void submitGroup()} disabled={busy}>
-                          Save
-                        </Button>
-                      </Stack>
-                    }
-                  >
-                    <Stack spacing={2}>
-                      <TextField label="Group Name" value={groupForm.name} onChange={(event) => setGroupForm({ ...groupForm, name: event.target.value })} required />
-                      <TextField
-                        label="Description"
-                        value={groupForm.description}
-                        multiline
-                        minRows={3}
-                        onChange={(event) => setGroupForm({ ...groupForm, description: event.target.value })}
-                      />
-                      <Autocomplete
-                        multiple
-                        options={roleOptions}
-                        value={roleOptions.filter((option) => groupForm.roleIds.includes(option.value))}
-                        onChange={(_, value) => setGroupForm({ ...groupForm, roleIds: value.map((item) => item.value) })}
-                        renderInput={(params) => <TextField {...params} label="Roles" />}
-                      />
-                    </Stack>
-                  </FormCard>
-                }
-              />
-            </TabPanel>
-
-            <TabPanel active={activeTab} name="Roles">
-              <SplitLayout
-                left={
-                  <EntityList title="Roles" subtitle="Permissions are assigned to roles, then inherited through groups.">
-                    {roles.map((role) => (
-                      <ListItemButton key={role.id} selected={roleForm.id === role.id} onClick={() => selectRole(role)}>
-                        <ListItemText primary={role.name} secondary={role.description || 'No description'} />
-                      </ListItemButton>
-                    ))}
-                  </EntityList>
-                }
-                right={
-                  <FormCard
-                    title={roleForm.id ? `Edit Role #${roleForm.id}` : 'Create Role'}
-                    actions={
-                      <Stack direction="row" spacing={1}>
-                        <Button onClick={() => selectRole()} variant="outlined">New Role</Button>
-                        {roleForm.id ? (
-                          <Button
-                            color="error"
-                            startIcon={<DeleteOutlineIcon />}
-                            onClick={() =>
-                              run(async () => {
-                                await api.deleteRole(roleForm.id!);
-                                setRoleForm(emptyRoleForm());
-                              }, 'Role deleted.')
-                            }
-                          >
-                            Delete
-                          </Button>
-                        ) : null}
-                        <Button startIcon={<SaveOutlinedIcon />} variant="contained" onClick={() => void submitRole()} disabled={busy}>
-                          Save
-                        </Button>
-                      </Stack>
-                    }
-                  >
-                    <Stack spacing={3}>
-                      <TextField label="Role Name" value={roleForm.name} onChange={(event) => setRoleForm({ ...roleForm, name: event.target.value })} required />
-                      <TextField
-                        label="Description"
-                        value={roleForm.description}
-                        multiline
-                        minRows={2}
-                        onChange={(event) => setRoleForm({ ...roleForm, description: event.target.value })}
-                      />
-
-                      <Box>
-                        <Typography variant="subtitle1" fontWeight={600} gutterBottom>
-                          Global Permissions
-                        </Typography>
-                        <Stack direction="row" flexWrap="wrap" gap={1}>
-                          {globalPermissionOptions.map((scope) => (
-                            <Chip
-                              key={scope}
-                              label={scope}
-                              color={currentRoleScopes.has(scope) ? 'primary' : 'default'}
-                              variant={currentRoleScopes.has(scope) ? 'filled' : 'outlined'}
-                              onClick={() => toggleScope(scope, !currentRoleScopes.has(scope))}
-                            />
-                          ))}
-                        </Stack>
-                      </Box>
-
-                      <Box>
-                        <Typography variant="subtitle1" fontWeight={600} gutterBottom>
-                          Per-API Permissions
-                        </Typography>
-                        <TableContainer component={Paper} variant="outlined">
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>API</TableCell>
-                                <TableCell>View</TableCell>
-                                <TableCell>Invoke</TableCell>
-                                <TableCell>Manage</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {apis.map((apiItem) => (
-                                <TableRow key={apiItem.id}>
-                                  <TableCell>
-                                    <Typography fontWeight={600}>{apiItem.name}</Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {apiItem.slug}
-                                    </Typography>
-                                  </TableCell>
-                                  {['view', 'invoke', 'manage'].map((action) => {
-                                    const scope = `api:${apiItem.id}:${action}`;
-                                    return (
-                                      <TableCell key={scope}>
-                                        <Checkbox checked={currentRoleScopes.has(scope)} onChange={(event) => toggleScope(scope, event.target.checked)} />
-                                      </TableCell>
-                                    );
-                                  })}
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      </Box>
-                    </Stack>
-                  </FormCard>
-                }
-              />
-            </TabPanel>
-
-            <TabPanel active={activeTab} name="API Definitions">
-              <SplitLayout
-                left={
-                  <EntityList
-                    title="Registered APIs"
-                    subtitle="Internal URLs remain server-side. Select an API to edit or refresh its cached spec."
-                    action={<Button onClick={() => selectApi()} variant="outlined">New API</Button>}
-                  >
-                    {apis.map((apiItem) => (
-                      <ListItemButton key={apiItem.id} selected={apiForm.id === apiItem.id} onClick={() => selectApi(apiItem)}>
-                        <ListItemText
-                          primary={apiItem.name}
-                          secondary={[apiItem.slug, apiItem.isActive ? 'active' : 'inactive', apiItem.lastSpecStatus || 'never refreshed'].join(' • ')}
-                        />
-                      </ListItemButton>
-                    ))}
-                  </EntityList>
-                }
-                right={
-                  <FormCard
-                    title={apiForm.id ? `Edit API #${apiForm.id}` : 'Create API'}
-                    actions={
-                      <Stack direction="row" spacing={1}>
-                        {apiForm.id ? (
-                          <>
-                            <Button
-                              startIcon={<RefreshIcon />}
-                              onClick={() =>
-                                run(async () => {
-                                  await api.refreshApiSpec(apiForm.id!);
-                                }, 'API spec refreshed.')
-                              }
-                            >
-                              Refresh Spec
-                            </Button>
-                            <Button
-                              color="error"
-                              startIcon={<DeleteOutlineIcon />}
-                              onClick={() =>
-                                run(async () => {
-                                  await api.deleteApi(apiForm.id!);
-                                  setApiForm(emptyApiForm());
-                                }, 'API deleted.')
-                              }
-                            >
-                              Delete
-                            </Button>
-                          </>
-                        ) : null}
-                        <Button startIcon={<SaveOutlinedIcon />} variant="contained" onClick={() => void submitApi()} disabled={busy}>
-                          Save
-                        </Button>
-                      </Stack>
-                    }
-                  >
-                    <Stack spacing={2}>
-                      <TextField label="Name" value={apiForm.name} onChange={(event) => setApiForm({ ...apiForm, name: event.target.value })} required />
-                      <TextField label="Slug" value={apiForm.slug} onChange={(event) => setApiForm({ ...apiForm, slug: event.target.value })} required />
-                      <TextField
-                        label="Description"
-                        value={apiForm.description}
-                        multiline
-                        minRows={3}
-                        onChange={(event) => setApiForm({ ...apiForm, description: event.target.value })}
-                      />
-                      <TextField
-                        label="Internal OpenAPI URL"
-                        value={apiForm.internalOpenapiUrl}
-                        onChange={(event) => setApiForm({ ...apiForm, internalOpenapiUrl: event.target.value })}
-                        required
-                      />
-                      <TextField
-                        label="Internal Base URL"
-                        value={apiForm.internalBaseUrl}
-                        onChange={(event) => setApiForm({ ...apiForm, internalBaseUrl: event.target.value })}
-                        required
-                      />
-                      <TextField label="Owner Team" value={apiForm.ownerTeam} onChange={(event) => setApiForm({ ...apiForm, ownerTeam: event.target.value })} />
-                      <CreatableChipSelect
-                        label="Allowed Methods"
-                        helperText="Optional allowlist. Type or choose a method, then click the add suggestion or press Enter."
-                        options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE']}
-                        value={apiForm.allowedMethods}
-                        normalize={(value) => value.toUpperCase()}
-                        onChange={(value) => setApiForm({ ...apiForm, allowedMethods: value })}
-                      />
-                      <CreatableChipSelect
-                        label="Allowed Path Prefixes"
-                        helperText="Optional allowlist. Type a documented path prefix like /v1/orders, then click the add suggestion."
-                        options={pathPrefixSuggestions}
-                        value={apiForm.allowedPathPrefixes}
-                        onChange={(value) => setApiForm({ ...apiForm, allowedPathPrefixes: value })}
-                      />
-                      <CreatableChipSelect
-                        label="Tags"
-                        helperText="Type a tag name and pick the add suggestion, or reuse an existing tag."
-                        options={tagSuggestions}
-                        value={apiForm.tags}
-                        onChange={(value) => setApiForm({ ...apiForm, tags: value })}
-                      />
-                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                        <FormControlLabel
-                          control={<Checkbox checked={apiForm.isActive} onChange={(event) => setApiForm({ ...apiForm, isActive: event.target.checked })} />}
-                          label="Active"
-                        />
-                        <FormControlLabel
-                          control={<Checkbox checked={apiForm.tryItEnabled} onChange={(event) => setApiForm({ ...apiForm, tryItEnabled: event.target.checked })} />}
-                          label="Try It Enabled"
-                        />
-                      </Stack>
-                    </Stack>
-                  </FormCard>
-                }
-              />
-            </TabPanel>
-
-            <TabPanel active={activeTab} name="LDAP Settings">
-              <Stack spacing={3}>
-                <FormCard
-                  title="LDAP Connection"
-                  actions={
-                    <Stack direction="row" spacing={1}>
-                      <Button
-                        onClick={() =>
-                          run(async () => {
-                            if (!ldap) {
-                              return;
-                            }
-                            await api.testLdap(ldap);
-                          }, 'LDAP connection successful.')
-                        }
-                      >
-                        Test Connection
-                      </Button>
-                      <Button variant="contained" startIcon={<SaveOutlinedIcon />} onClick={() => void saveLdap()} disabled={busy || !ldap}>
-                        Save
-                      </Button>
-                    </Stack>
-                  }
-                >
-                  {ldap ? (
-                    <Stack spacing={2}>
-                      <FormControlLabel
-                        control={<Checkbox checked={ldap.enabled} onChange={(event) => setLdap({ ...ldap, enabled: event.target.checked })} />}
-                        label="LDAP Enabled"
-                      />
-                      <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }} gap={2}>
-                        <TextField label="Host" value={ldap.host} onChange={(event) => setLdap({ ...ldap, host: event.target.value })} />
-                        <TextField label="Port" type="number" value={ldap.port} onChange={(event) => setLdap({ ...ldap, port: Number(event.target.value) })} />
-                        <TextField label="URL" value={ldap.url} onChange={(event) => setLdap({ ...ldap, url: event.target.value })} />
-                        <TextField label="Timeout Seconds" type="number" value={ldap.timeoutSeconds} onChange={(event) => setLdap({ ...ldap, timeoutSeconds: Number(event.target.value) })} />
-                        <TextField label="Bind DN" value={ldap.bindDn} onChange={(event) => setLdap({ ...ldap, bindDn: event.target.value })} />
-                        <TextField
-                          label={ldap.passwordConfigured ? 'Bind Password (leave blank to keep current)' : 'Bind Password'}
-                          type="password"
-                          value={ldap.bindPassword ?? ''}
-                          onChange={(event) => setLdap({ ...ldap, bindPassword: event.target.value })}
-                        />
-                        <TextField label="User Base DN" value={ldap.userBaseDn} onChange={(event) => setLdap({ ...ldap, userBaseDn: event.target.value })} />
-                        <TextField label="Username Attribute" value={ldap.usernameAttribute} onChange={(event) => setLdap({ ...ldap, usernameAttribute: event.target.value })} />
-                        <TextField label="Display Name Attribute" value={ldap.displayNameAttribute} onChange={(event) => setLdap({ ...ldap, displayNameAttribute: event.target.value })} />
-                        <TextField label="Email Attribute" value={ldap.emailAttribute} onChange={(event) => setLdap({ ...ldap, emailAttribute: event.target.value })} />
-                      </Box>
-                      <TextField
-                        label="User Base DNs"
-                        multiline
-                        minRows={2}
-                        helperText="Comma or newline separated values."
-                        value={(ldap.userBaseDns ?? []).join('\n')}
-                        onChange={(event) => setLdap({ ...ldap, userBaseDns: splitList(event.target.value) })}
-                      />
-                      <TextField
-                        label="User Filter"
-                        value={ldap.userFilter}
-                        onChange={(event) => setLdap({ ...ldap, userFilter: event.target.value })}
-                        helperText="Examples: (objectClass=user) or (&(objectClass=user)(objectCategory=person))"
-                      />
-                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                        <FormControlLabel
-                          control={<Checkbox checked={ldap.useSsl} onChange={(event) => setLdap({ ...ldap, useSsl: event.target.checked })} />}
-                          label="Use SSL"
-                        />
-                        <FormControlLabel
-                          control={<Checkbox checked={ldap.startTls} onChange={(event) => setLdap({ ...ldap, startTls: event.target.checked })} />}
-                          label="StartTLS"
-                        />
-                        <FormControlLabel
-                          control={<Checkbox checked={ldap.sslSkipVerify} onChange={(event) => setLdap({ ...ldap, sslSkipVerify: event.target.checked })} />}
-                          label="Skip TLS Verify"
-                        />
-                      </Stack>
-                    </Stack>
-                  ) : null}
-                </FormCard>
-
-                <FormCard
-                  title="LDAP User Import"
-                  actions={
-                    <Stack direction="row" spacing={1}>
-                      <Button onClick={() => void searchLdap()} startIcon={<RefreshIcon />} disabled={busy}>
-                        Search
-                      </Button>
-                      <Button variant="contained" onClick={() => void importSelectedLdapUsers()} disabled={busy || selectedLdapUsers.length === 0}>
-                        Import Selected
-                      </Button>
-                    </Stack>
-                  }
-                >
-                  <Stack spacing={2}>
-                    <TextField label="Search Query" value={ldapQuery} onChange={(event) => setLdapQuery(event.target.value)} />
-                    <TableContainer component={Paper} variant="outlined">
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell />
-                            <TableCell>Username</TableCell>
-                            <TableCell>Display Name</TableCell>
-                            <TableCell>Email</TableCell>
-                            <TableCell>DN</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {ldapResults.map((item) => (
-                            <TableRow key={item.username}>
-                              <TableCell padding="checkbox">
-                                <Checkbox
-                                  checked={selectedLdapUsers.includes(item.username)}
-                                  onChange={(event) =>
-                                    setSelectedLdapUsers((current) =>
-                                      event.target.checked ? [...current, item.username] : current.filter((value) => value !== item.username)
-                                    )
-                                  }
-                                />
-                              </TableCell>
-                              <TableCell>{item.username}</TableCell>
-                              <TableCell>{item.displayName || '-'}</TableCell>
-                              <TableCell>{item.email || '-'}</TableCell>
-                              <TableCell sx={{ maxWidth: 320, wordBreak: 'break-word' }}>{item.dn}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  </Stack>
-                </FormCard>
-              </Stack>
-            </TabPanel>
-
-            <TabPanel active={activeTab} name="Azure AD">
-              <FormCard
-                title="Azure AD / Microsoft Entra ID"
-                actions={
-                  <Stack direction="row" spacing={1}>
-                    <Button
-                      onClick={() =>
-                        run(async () => {
-                          if (!azureAd) {
-                            return;
-                          }
-                          await api.testAzureAd(azureAd);
-                        }, 'Azure AD connection successful.')
-                      }
-                      disabled={!azureAd}
-                    >
-                      Test
-                    </Button>
-                    <Button
-                      variant="contained"
-                      startIcon={<SaveOutlinedIcon />}
-                      onClick={() =>
-                        run(async () => {
-                          if (!azureAd) {
-                            return;
-                          }
-                          await api.updateAzureAd(azureAd);
-                        }, 'Azure AD settings updated.')
-                      }
-                      disabled={!azureAd || busy}
-                    >
-                      Save
-                    </Button>
-                  </Stack>
-                }
-              >
-                {azureAd ? (
-                  <Stack spacing={2}>
-                    <FormControlLabel
-                      control={<Checkbox checked={azureAd.enabled} onChange={(event) => setAzureAd({ ...azureAd, enabled: event.target.checked })} />}
-                      label="Azure AD Enabled"
-                    />
-                    <TextField label="Tenant ID" value={azureAd.tenantId} onChange={(event) => setAzureAd({ ...azureAd, tenantId: event.target.value })} />
-                    <TextField label="Client ID" value={azureAd.clientId} onChange={(event) => setAzureAd({ ...azureAd, clientId: event.target.value })} />
-                    <TextField
-                      label={azureAd.passwordConfigured ? 'Client Secret (leave blank to keep current)' : 'Client Secret'}
-                      type="password"
-                      value={azureAd.clientSecret ?? ''}
-                      onChange={(event) => setAzureAd({ ...azureAd, clientSecret: event.target.value })}
-                    />
-                    <TextField
-                      label="Redirect URL"
-                      value={azureAd.redirectUrl}
-                      onChange={(event) => setAzureAd({ ...azureAd, redirectUrl: event.target.value })}
-                      helperText="Example: https://portal.example.com/api/auth/azure/callback"
-                    />
-                    <Alert severity="info">
-                      Existing app groups and roles continue to work locally. Azure AD is used only as an additional login method.
-                    </Alert>
-                  </Stack>
-                ) : null}
-              </FormCard>
-            </TabPanel>
-
-            <TabPanel active={activeTab} name="Session Settings">
-              <FormCard
-                title="Session Configuration"
-                actions={
-                  <Button
-                    variant="contained"
-                    startIcon={<SaveOutlinedIcon />}
-                    onClick={() =>
-                      run(async () => {
-                        await api.updateSession(session);
-                      }, 'Session settings updated.')
-                    }
-                    disabled={busy}
-                  >
-                    Save
-                  </Button>
-                }
-              >
-                <TextField
-                  label="Session Minutes"
-                  type="number"
-                  value={session.sessionMinutes}
-                  onChange={(event) => setSession({ sessionMinutes: Number(event.target.value) })}
-                  helperText="Minimum 5 minutes."
+      {/* ── Users ── */}
+      {activeTab === 'Users' && (
+        <SplitLayout
+          left={
+            <EntityList
+              title="Users"
+              subtitle="Select a user to edit, or create a new local account."
+              action={<Button size="sm" onClick={() => selectUser()}>New User</Button>}
+            >
+              {users.map((user) => (
+                <EntityItem
+                  key={user.id}
+                  label={user.username}
+                  sub={[user.authSource, user.isActive ? 'active' : 'disabled', user.isAdmin ? 'admin' : 'user'].join(' · ')}
+                  selected={userForm.id === user.id}
+                  onClick={() => selectUser(user)}
                 />
-              </FormCard>
-            </TabPanel>
-
-            <TabPanel active={activeTab} name="Audit Logs">
-              <FormCard
-                title="Audit Logs"
-                actions={
-                  <Stack direction="row" spacing={1}>
-                    <Button onClick={() => void loadAll()} startIcon={<RefreshIcon />}>Refresh</Button>
-                    <Button
-                      onClick={async () => {
-                        const csv = await api.exportAuditLogs();
-                        const blob = new Blob([csv], { type: 'text/csv' });
-                        const url = window.URL.createObjectURL(blob);
-                        const link = document.createElement('a');
-                        link.href = url;
-                        link.download = 'audit-logs.csv';
-                        link.click();
-                        window.URL.revokeObjectURL(url);
-                      }}
-                    >
-                      Export CSV
+              ))}
+            </EntityList>
+          }
+          right={
+            <FormCard
+              title={userForm.id ? `Edit User #${userForm.id}` : 'Create User'}
+              actions={
+                <>
+                  {userForm.id && (
+                    <Button variant="danger" size="sm" onClick={() => run(async () => { await api.deleteUser(userForm.id!); setUserForm(emptyUserForm()); }, 'User deleted.')}>
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
                     </Button>
-                  </Stack>
-                }
-              >
-                <Stack spacing={2}>
-                  <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }} gap={2}>
-                    <TextField label="Filter by User" value={auditUser} onChange={(event) => setAuditUser(event.target.value)} />
-                    <TextField label="Filter by Action" value={auditAction} onChange={(event) => setAuditAction(event.target.value)} />
-                    <TextField
-                      select
-                      label="Rows per page"
-                      value={String(auditPageSize)}
-                      onChange={(event) => {
-                        setAuditPageSize(Number(event.target.value));
-                        setAuditOffset(0);
-                      }}
-                    >
-                      {[25, 50, 100].map((value) => (
-                        <MenuItem key={value} value={String(value)}>
-                          {value}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  </Box>
-                  <Button
-                    variant="outlined"
-                    onClick={() => {
-                      setAuditOffset(0);
-                      void loadAll();
-                    }}
-                    sx={{ alignSelf: 'flex-start' }}
-                  >
-                    Apply Filters
+                  )}
+                  <Button variant="primary" size="sm" onClick={() => void submitUser()} disabled={busy}>
+                    <Save className="h-3.5 w-3.5" /> Save
                   </Button>
-                  <TableContainer component={Paper} variant="outlined">
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>Timestamp</TableCell>
-                          <TableCell>User</TableCell>
-                          <TableCell>Action</TableCell>
-                          <TableCell>Resource</TableCell>
-                          <TableCell>Status</TableCell>
-                          <TableCell>Error</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {auditLogs.map((entry) => (
-                          <TableRow key={entry.id}>
-                            <TableCell>{new Date(entry.timestamp).toLocaleString()}</TableCell>
-                            <TableCell>{entry.user}</TableCell>
-                            <TableCell>{entry.action}</TableCell>
-                            <TableCell>{[entry.resourceType, entry.resourceName || entry.resourceId].filter(Boolean).join(' / ')}</TableCell>
-                            <TableCell>{entry.statusCode}</TableCell>
-                            <TableCell>{entry.errorMessage || '-'}</TableCell>
-                          </TableRow>
+                </>
+              }
+            >
+              <div className="space-y-4">
+                <Input label="Username" value={userForm.username} onChange={(v) => setUserForm({ ...userForm, username: v })} required />
+                <Input label="Display Name" value={userForm.displayName} onChange={(v) => setUserForm({ ...userForm, displayName: v })} />
+                <Input label="Email" value={userForm.email} onChange={(v) => setUserForm({ ...userForm, email: v })} />
+                <Input label={userForm.id ? 'New Password (optional)' : 'Password'} type="password" value={userForm.password} onChange={(v) => setUserForm({ ...userForm, password: v })} required={!userForm.id} />
+                <Input label="Auth Source" value={userForm.authSource} disabled />
+                <MultiSelect
+                  label="Groups"
+                  options={groupOptions}
+                  value={groupOptions.filter((o) => userForm.groupIds.includes(o.value))}
+                  onChange={(v: MultiSelectOption[]) => setUserForm({ ...userForm, groupIds: v.map((i) => i.value) })}
+                />
+                <div className="flex flex-wrap gap-4">
+                  <Checkbox label="Active" checked={userForm.isActive} onChange={(v) => setUserForm({ ...userForm, isActive: v })} />
+                  <Checkbox label="Admin" checked={userForm.isAdmin} onChange={(v) => setUserForm({ ...userForm, isAdmin: v })} />
+                  <Checkbox label="Force Password Change" checked={userForm.mustChangePassword} onChange={(v) => setUserForm({ ...userForm, mustChangePassword: v })} />
+                </div>
+              </div>
+            </FormCard>
+          }
+        />
+      )}
+
+      {/* ── Groups ── */}
+      {activeTab === 'Groups' && (
+        <SplitLayout
+          left={
+            <EntityList title="Groups" subtitle="Groups aggregate users and receive roles.">
+              {groups.map((group) => (
+                <EntityItem key={group.id} label={group.name} sub={group.description || 'No description'} selected={groupForm.id === group.id} onClick={() => selectGroup(group)} />
+              ))}
+            </EntityList>
+          }
+          right={
+            <FormCard
+              title={groupForm.id ? `Edit Group #${groupForm.id}` : 'Create Group'}
+              actions={
+                <>
+                  <Button size="sm" onClick={() => selectGroup()}>New Group</Button>
+                  {groupForm.id && (
+                    <Button variant="danger" size="sm" onClick={() => run(async () => { await api.deleteGroup(groupForm.id!); setGroupForm(emptyGroupForm()); }, 'Group deleted.')}>
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </Button>
+                  )}
+                  <Button variant="primary" size="sm" onClick={() => void submitGroup()} disabled={busy}>
+                    <Save className="h-3.5 w-3.5" /> Save
+                  </Button>
+                </>
+              }
+            >
+              <div className="space-y-4">
+                <Input label="Group Name" value={groupForm.name} onChange={(v) => setGroupForm({ ...groupForm, name: v })} required />
+                <Textarea label="Description" value={groupForm.description} onChange={(v) => setGroupForm({ ...groupForm, description: v })} rows={3} />
+                <MultiSelect
+                  label="Roles"
+                  options={roleOptions}
+                  value={roleOptions.filter((o) => groupForm.roleIds.includes(o.value))}
+                  onChange={(v: MultiSelectOption[]) => setGroupForm({ ...groupForm, roleIds: v.map((i) => i.value) })}
+                />
+              </div>
+            </FormCard>
+          }
+        />
+      )}
+
+      {/* ── Roles ── */}
+      {activeTab === 'Roles' && (
+        <SplitLayout
+          left={
+            <EntityList title="Roles" subtitle="Permissions are assigned to roles, then inherited through groups.">
+              {roles.map((role) => (
+                <EntityItem key={role.id} label={role.name} sub={role.description || 'No description'} selected={roleForm.id === role.id} onClick={() => selectRole(role)} />
+              ))}
+            </EntityList>
+          }
+          right={
+            <FormCard
+              title={roleForm.id ? `Edit Role #${roleForm.id}` : 'Create Role'}
+              actions={
+                <>
+                  <Button size="sm" onClick={() => selectRole()}>New Role</Button>
+                  {roleForm.id && (
+                    <Button variant="danger" size="sm" onClick={() => run(async () => { await api.deleteRole(roleForm.id!); setRoleForm(emptyRoleForm()); }, 'Role deleted.')}>
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </Button>
+                  )}
+                  <Button variant="primary" size="sm" onClick={() => void submitRole()} disabled={busy}>
+                    <Save className="h-3.5 w-3.5" /> Save
+                  </Button>
+                </>
+              }
+            >
+              <div className="space-y-5">
+                <Input label="Role Name" value={roleForm.name} onChange={(v) => setRoleForm({ ...roleForm, name: v })} required />
+                <Textarea label="Description" value={roleForm.description} onChange={(v) => setRoleForm({ ...roleForm, description: v })} rows={2} />
+
+                <div>
+                  <p className="mb-2 text-sm font-semibold text-gray-700">Global Permissions</p>
+                  <div className="flex flex-wrap gap-2">
+                    {globalPermissionOptions.map((scope) => (
+                      <button
+                        key={scope}
+                        type="button"
+                        onClick={() => toggleScope(scope, !currentRoleScopes.has(scope))}
+                        className={cn(
+                          'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                          currentRoleScopes.has(scope)
+                            ? 'border-blue-600 bg-blue-600 text-white'
+                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                        )}
+                      >
+                        {scope}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-sm font-semibold text-gray-700">Per-API Permissions</p>
+                  <div className="overflow-hidden rounded-lg border border-gray-200">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">API</th>
+                          <th className="px-3 py-2 text-center text-xs font-medium uppercase text-gray-500">View</th>
+                          <th className="px-3 py-2 text-center text-xs font-medium uppercase text-gray-500">Invoke</th>
+                          <th className="px-3 py-2 text-center text-xs font-medium uppercase text-gray-500">Manage</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {apis.map((apiItem) => (
+                          <tr key={apiItem.id} className="hover:bg-gray-50">
+                            <td className="px-3 py-2">
+                              <p className="font-medium text-gray-800">{apiItem.name}</p>
+                              <p className="text-xs text-gray-400">{apiItem.slug}</p>
+                            </td>
+                            {['view', 'invoke', 'manage'].map((action) => {
+                              const scope = `api:${apiItem.id}:${action}`;
+                              return (
+                                <td key={scope} className="px-3 py-2 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={currentRoleScopes.has(scope)}
+                                    onChange={(e) => toggleScope(scope, e.target.checked)}
+                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                  />
+                                </td>
+                              );
+                            })}
+                          </tr>
                         ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
-                    <Typography variant="body2" color="text.secondary">
-                      {auditTotal === 0 ? 'No audit records' : `${auditOffset + 1}-${Math.min(auditOffset + auditLogs.length, auditTotal)} of ${auditTotal}`}
-                    </Typography>
-                    <Stack direction="row" spacing={1}>
-                      <Button variant="outlined" disabled={auditOffset === 0} onClick={() => setAuditOffset((current) => Math.max(0, current - auditPageSize))}>
-                        Previous
-                      </Button>
-                      <Button
-                        variant="outlined"
-                        disabled={auditOffset + auditPageSize >= auditTotal}
-                        onClick={() => setAuditOffset((current) => current + auditPageSize)}
-                      >
-                        Next
-                      </Button>
-                    </Stack>
-                  </Stack>
-                </Stack>
-              </FormCard>
-            </TabPanel>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </FormCard>
+          }
+        />
+      )}
 
-            <TabPanel active={activeTab} name="System Settings">
-              <FormCard
-                title="Portal Branding"
-                actions={
-                  <Button
-                    variant="contained"
-                    startIcon={<SaveOutlinedIcon />}
-                    onClick={() =>
-                      run(async () => {
-                        await api.updateSystem(system);
-                      }, 'System settings updated.')
-                    }
-                    disabled={busy}
-                  >
-                    Save
+      {/* ── API Definitions ── */}
+      {activeTab === 'API Definitions' && (
+        <SplitLayout
+          left={
+            <EntityList
+              title="Registered APIs"
+              subtitle="Internal URLs remain server-side. Select an API to edit or refresh its cached spec."
+              action={<Button size="sm" onClick={() => selectApi()}>New API</Button>}
+            >
+              {apis.map((apiItem) => (
+                <EntityItem
+                  key={apiItem.id}
+                  label={apiItem.name}
+                  sub={[apiItem.slug, apiItem.isActive ? 'active' : 'inactive', apiItem.lastSpecStatus || 'never refreshed'].join(' · ')}
+                  selected={apiForm.id === apiItem.id}
+                  onClick={() => selectApi(apiItem)}
+                />
+              ))}
+            </EntityList>
+          }
+          right={
+            <FormCard
+              title={apiForm.id ? `Edit API #${apiForm.id}` : 'Create API'}
+              actions={
+                <>
+                  {apiForm.id && (
+                    <>
+                      <Button size="sm" onClick={() => run(async () => { await api.refreshApiSpec(apiForm.id!); }, 'API spec refreshed.')}>
+                        <RefreshCw className="h-3.5 w-3.5" /> Refresh Spec
+                      </Button>
+                      <Button variant="danger" size="sm" onClick={() => run(async () => { await api.deleteApi(apiForm.id!); setApiForm(emptyApiForm()); }, 'API deleted.')}>
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </>
+                  )}
+                  <Button variant="primary" size="sm" onClick={() => void submitApi()} disabled={busy}>
+                    <Save className="h-3.5 w-3.5" /> Save
                   </Button>
-                }
-              >
-                <Stack spacing={2}>
-                  <TextField label="Brand Title" value={system.brandTitle} onChange={(event) => setSystem({ ...system, brandTitle: event.target.value })} />
-                  <Stack spacing={1}>
-                    <Typography variant="subtitle2">Logo</Typography>
-                    {system.logoDataUrl ? (
-                      <Box
-                        component="img"
-                        src={system.logoDataUrl}
-                        alt={system.brandTitle || 'Portal logo'}
-                        sx={{ maxWidth: 220, maxHeight: 80, objectFit: 'contain', border: '1px solid #d7dce5', borderRadius: 1, p: 1 }}
-                      />
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        No custom logo uploaded.
-                      </Typography>
-                    )}
-                    <Button component="label" variant="outlined">
-                      Select Image
-                      <input
-                        hidden
-                        type="file"
-                        accept="image/png,image/jpeg,image/svg+xml,image/webp"
-                        onChange={(event) => setLogoFile(event.target.files?.[0] ?? null)}
-                      />
-                    </Button>
-                    <Stack direction="row" spacing={1}>
-                      <Button
-                        variant="contained"
-                        disabled={!logoFile || busy}
-                        onClick={() =>
-                          run(async () => {
-                            if (!logoFile) {
-                              return;
+                </>
+              }
+            >
+              <div className="space-y-4">
+                <Input label="Name" value={apiForm.name} onChange={(v) => setApiForm({ ...apiForm, name: v })} required />
+                <Input label="Slug" value={apiForm.slug} onChange={(v) => setApiForm({ ...apiForm, slug: v })} required />
+                <Textarea label="Description" value={apiForm.description} onChange={(v) => setApiForm({ ...apiForm, description: v })} rows={3} />
+                <Input label="Internal OpenAPI URL" value={apiForm.internalOpenapiUrl} onChange={(v) => setApiForm({ ...apiForm, internalOpenapiUrl: v })} required />
+                <Input label="Internal Base URL" value={apiForm.internalBaseUrl} onChange={(v) => setApiForm({ ...apiForm, internalBaseUrl: v })} required />
+                <Input label="Owner Team" value={apiForm.ownerTeam} onChange={(v) => setApiForm({ ...apiForm, ownerTeam: v })} />
+                <ChipInput
+                  label="Allowed Methods"
+                  helperText="Optional allowlist. Type or choose a method, then press Enter."
+                  options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE']}
+                  value={apiForm.allowedMethods}
+                  normalize={(v) => v.toUpperCase()}
+                  onChange={(v) => setApiForm({ ...apiForm, allowedMethods: v })}
+                />
+                <ChipInput
+                  label="Allowed Path Prefixes"
+                  helperText="Optional allowlist. Type a path prefix like /v1/orders."
+                  options={pathPrefixSuggestions}
+                  value={apiForm.allowedPathPrefixes}
+                  onChange={(v) => setApiForm({ ...apiForm, allowedPathPrefixes: v })}
+                />
+                <ChipInput
+                  label="Tags"
+                  helperText="Type a tag and press Enter, or reuse an existing tag."
+                  options={tagSuggestions}
+                  value={apiForm.tags}
+                  onChange={(v) => setApiForm({ ...apiForm, tags: v })}
+                />
+                <div className="flex flex-wrap gap-4">
+                  <Checkbox label="Active" checked={apiForm.isActive} onChange={(v) => setApiForm({ ...apiForm, isActive: v })} />
+                  <Checkbox label="Try It Enabled" checked={apiForm.tryItEnabled} onChange={(v) => setApiForm({ ...apiForm, tryItEnabled: v })} />
+                </div>
+              </div>
+            </FormCard>
+          }
+        />
+      )}
+
+      {/* ── LDAP Settings ── */}
+      {activeTab === 'LDAP Settings' && (
+        <div className="space-y-5">
+          <FormCard
+            title="LDAP Connection"
+            actions={
+              <>
+                <Button onClick={() => run(async () => { if (!ldap) return; await api.testLdap(ldap); }, 'LDAP connection successful.')}>
+                  Test Connection
+                </Button>
+                <Button variant="primary" onClick={() => void saveLdap()} disabled={busy || !ldap}>
+                  <Save className="h-3.5 w-3.5" /> Save
+                </Button>
+              </>
+            }
+          >
+            {ldap && (
+              <div className="space-y-4">
+                <Checkbox label="LDAP Enabled" checked={ldap.enabled} onChange={(v) => setLdap({ ...ldap, enabled: v })} />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Input label="Host" value={ldap.host} onChange={(v) => setLdap({ ...ldap, host: v })} />
+                  <FieldWrap label="Port">
+                    <input type="number" value={ldap.port} onChange={(e) => setLdap({ ...ldap, port: Number(e.target.value) })} className={fieldBase} />
+                  </FieldWrap>
+                  <Input label="URL" value={ldap.url} onChange={(v) => setLdap({ ...ldap, url: v })} />
+                  <FieldWrap label="Timeout Seconds">
+                    <input type="number" value={ldap.timeoutSeconds} onChange={(e) => setLdap({ ...ldap, timeoutSeconds: Number(e.target.value) })} className={fieldBase} />
+                  </FieldWrap>
+                  <Input label="Bind DN" value={ldap.bindDn} onChange={(v) => setLdap({ ...ldap, bindDn: v })} />
+                  <Input label={ldap.passwordConfigured ? 'Bind Password (leave blank to keep current)' : 'Bind Password'} type="password" value={ldap.bindPassword ?? ''} onChange={(v) => setLdap({ ...ldap, bindPassword: v })} />
+                  <Input label="User Base DN" value={ldap.userBaseDn} onChange={(v) => setLdap({ ...ldap, userBaseDn: v })} />
+                  <Input label="Username Attribute" value={ldap.usernameAttribute} onChange={(v) => setLdap({ ...ldap, usernameAttribute: v })} />
+                  <Input label="Display Name Attribute" value={ldap.displayNameAttribute} onChange={(v) => setLdap({ ...ldap, displayNameAttribute: v })} />
+                  <Input label="Email Attribute" value={ldap.emailAttribute} onChange={(v) => setLdap({ ...ldap, emailAttribute: v })} />
+                </div>
+                <Textarea label="User Base DNs" value={(ldap.userBaseDns ?? []).join('\n')} onChange={(v) => setLdap({ ...ldap, userBaseDns: splitList(v) })} helperText="Comma or newline separated values." rows={2} />
+                <Input label="User Filter" value={ldap.userFilter} onChange={(v) => setLdap({ ...ldap, userFilter: v })} helperText="Examples: (objectClass=user) or (&(objectClass=user)(objectCategory=person))" />
+                <div className="flex flex-wrap gap-4">
+                  <Checkbox label="Use SSL" checked={ldap.useSsl} onChange={(v) => setLdap({ ...ldap, useSsl: v })} />
+                  <Checkbox label="StartTLS" checked={ldap.startTls} onChange={(v) => setLdap({ ...ldap, startTls: v })} />
+                  <Checkbox label="Skip TLS Verify" checked={ldap.sslSkipVerify} onChange={(v) => setLdap({ ...ldap, sslSkipVerify: v })} />
+                </div>
+              </div>
+            )}
+          </FormCard>
+
+          <FormCard
+            title="LDAP User Import"
+            actions={
+              <>
+                <Button onClick={() => void searchLdap()} disabled={busy}>
+                  <RefreshCw className="h-3.5 w-3.5" /> Search
+                </Button>
+                <Button variant="primary" onClick={() => void importSelectedLdapUsers()} disabled={busy || selectedLdapUsers.length === 0}>
+                  Import Selected
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-3">
+              <Input label="Search Query" value={ldapQuery} onChange={setLdapQuery} />
+              <div className="overflow-hidden rounded-lg border border-gray-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="w-10 px-3 py-2" />
+                      <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">Username</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">Display Name</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">Email</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">DN</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {ldapResults.map((item) => (
+                      <tr key={item.username} className="hover:bg-gray-50">
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedLdapUsers.includes(item.username)}
+                            onChange={(e) =>
+                              setSelectedLdapUsers((prev) =>
+                                e.target.checked ? [...prev, item.username] : prev.filter((v) => v !== item.username)
+                              )
                             }
-                            const settings = await api.uploadSystemLogo(logoFile);
-                            setSystem(settings);
-                            setLogoFile(null);
-                          }, 'Logo uploaded.')
-                        }
-                      >
-                        Upload Logo
-                      </Button>
-                      <Button
-                        color="error"
-                        disabled={!system.logoDataUrl || busy}
-                        onClick={() =>
-                          run(async () => {
-                            const settings = await api.deleteSystemLogo();
-                            setSystem(settings);
-                            setLogoFile(null);
-                          }, 'Logo removed.')
-                        }
-                      >
-                        Remove Logo
-                      </Button>
-                    </Stack>
-                    <Typography variant="caption" color="text.secondary">
-                      PNG, JPEG, SVG or WEBP. Max 256 KB.
-                    </Typography>
-                  </Stack>
-                </Stack>
-              </FormCard>
-            </TabPanel>
-          </Box>
-        </CardContent>
-      </Card>
-    </Box>
-  );
-}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                          />
+                        </td>
+                        <td className="px-3 py-2 font-medium text-gray-800">{item.username}</td>
+                        <td className="px-3 py-2 text-gray-600">{item.displayName || '-'}</td>
+                        <td className="px-3 py-2 text-gray-600">{item.email || '-'}</td>
+                        <td className="max-w-xs break-all px-3 py-2 text-xs text-gray-400">{item.dn}</td>
+                      </tr>
+                    ))}
+                    {ldapResults.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-400">
+                          No LDAP search results. Run a search above.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </FormCard>
+        </div>
+      )}
 
-function buildAuditQuery(user: string, action: string, limit: number, offset: number) {
-  const params = new URLSearchParams();
-  if (user.trim()) {
-    params.set('user', user.trim());
-  }
-  if (action.trim()) {
-    params.set('action', action.trim());
-  }
-  params.set('limit', String(limit));
-  params.set('offset', String(offset));
-  const query = params.toString();
-  return query ? `?${query}` : '';
-}
+      {/* ── Azure AD ── */}
+      {activeTab === 'Azure AD' && (
+        <FormCard
+          title="Azure AD / Microsoft Entra ID"
+          actions={
+            <>
+              <Button onClick={() => run(async () => { if (!azureAd) return; await api.testAzureAd(azureAd); }, 'Azure AD connection successful.')} disabled={!azureAd}>
+                Test
+              </Button>
+              <Button variant="primary" onClick={() => run(async () => { if (!azureAd) return; await api.updateAzureAd(azureAd); }, 'Azure AD settings updated.')} disabled={!azureAd || busy}>
+                <Save className="h-3.5 w-3.5" /> Save
+              </Button>
+            </>
+          }
+        >
+          {azureAd && (
+            <div className="space-y-4">
+              <Checkbox label="Azure AD Enabled" checked={azureAd.enabled} onChange={(v) => setAzureAd({ ...azureAd, enabled: v })} />
+              <Input label="Tenant ID" value={azureAd.tenantId} onChange={(v) => setAzureAd({ ...azureAd, tenantId: v })} />
+              <Input label="Client ID" value={azureAd.clientId} onChange={(v) => setAzureAd({ ...azureAd, clientId: v })} />
+              <Input label={azureAd.passwordConfigured ? 'Client Secret (leave blank to keep current)' : 'Client Secret'} type="password" value={azureAd.clientSecret ?? ''} onChange={(v) => setAzureAd({ ...azureAd, clientSecret: v })} />
+              <Input label="Redirect URL" value={azureAd.redirectUrl} onChange={(v) => setAzureAd({ ...azureAd, redirectUrl: v })} helperText="Example: https://portal.example.com/api/auth/azure/callback" />
+              <Alert variant="info">
+                Existing app groups and roles continue to work locally. Azure AD is used only as an additional login method.
+              </Alert>
+            </div>
+          )}
+        </FormCard>
+      )}
 
-function SplitLayout({ left, right }: { left: ReactNode; right: ReactNode }) {
-  return (
-    <Box display="grid" gridTemplateColumns={{ xs: '1fr', lg: '320px minmax(0, 1fr)' }} gap={3}>
-      {left}
-      {right}
-    </Box>
-  );
-}
+      {/* ── Session Settings ── */}
+      {activeTab === 'Session Settings' && (
+        <FormCard
+          title="Session Configuration"
+          actions={
+            <Button variant="primary" onClick={() => run(async () => { await api.updateSession(session); }, 'Session settings updated.')} disabled={busy}>
+              <Save className="h-3.5 w-3.5" /> Save
+            </Button>
+          }
+        >
+          <div className="max-w-xs">
+            <FieldWrap label="Session Minutes" helperText="Minimum 5 minutes.">
+              <input
+                type="number"
+                value={session.sessionMinutes}
+                onChange={(e) => setSession({ sessionMinutes: Number(e.target.value) })}
+                className={fieldBase}
+              />
+            </FieldWrap>
+          </div>
+        </FormCard>
+      )}
 
-function EntityList({
-  title,
-  subtitle,
-  action,
-  children
-}: {
-  title: string;
-  subtitle: string;
-  action?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <Card>
-      <CardContent>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
-          <Box>
-            <Typography variant="h6" fontWeight={700}>
-              {title}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {subtitle}
-            </Typography>
-          </Box>
-          {action}
-        </Stack>
-        <Divider sx={{ my: 2 }} />
-        <List dense sx={{ maxHeight: 640, overflow: 'auto' }}>
-          {children}
-        </List>
-      </CardContent>
-    </Card>
-  );
-}
+      {/* ── Audit Logs ── */}
+      {activeTab === 'Audit Logs' && (
+        <FormCard
+          title="Audit Logs"
+          actions={
+            <>
+              <Button onClick={() => void loadAll()}>
+                <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              </Button>
+              <Button
+                onClick={async () => {
+                  const csv = await api.exportAuditLogs();
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = window.URL.createObjectURL(blob);
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.download = 'audit-logs.csv';
+                  link.click();
+                  window.URL.revokeObjectURL(url);
+                }}
+              >
+                Export CSV
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Input label="Filter by User" value={auditUser} onChange={setAuditUser} />
+              <Input label="Filter by Action" value={auditAction} onChange={setAuditAction} />
+              <NativeSelect
+                label="Rows per page"
+                value={String(auditPageSize)}
+                onChange={(v) => { setAuditPageSize(Number(v)); setAuditOffset(0); }}
+                options={[25, 50, 100].map((n) => ({ label: String(n), value: String(n) }))}
+              />
+            </div>
+            <Button variant="secondary" onClick={() => { setAuditOffset(0); void loadAll(); }}>
+              Apply Filters
+            </Button>
 
-function FormCard({
-  title,
-  actions,
-  children
-}: {
-  title: string;
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <Card>
-      <CardContent>
-        <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }} spacing={2}>
-          <Typography variant="h6" fontWeight={700}>
-            {title}
-          </Typography>
-          {actions}
-        </Stack>
-        <Divider sx={{ my: 2 }} />
-        {children}
-      </CardContent>
-    </Card>
-  );
-}
+            <div className="overflow-hidden rounded-lg border border-gray-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {['Timestamp', 'User', 'Action', 'Resource', 'Status', 'Error'].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {auditLogs.map((entry) => (
+                    <tr key={entry.id} className="hover:bg-gray-50">
+                      <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-600">{new Date(entry.timestamp).toLocaleString()}</td>
+                      <td className="px-3 py-2 font-medium text-gray-800">{entry.user}</td>
+                      <td className="px-3 py-2 text-gray-700">{entry.action}</td>
+                      <td className="px-3 py-2 text-gray-600">{[entry.resourceType, entry.resourceName || entry.resourceId].filter(Boolean).join(' / ')}</td>
+                      <td className="px-3 py-2">
+                        <Badge variant={entry.statusCode >= 200 && entry.statusCode < 300 ? 'green' : 'red'}>
+                          {entry.statusCode}
+                        </Badge>
+                      </td>
+                      <td className="max-w-xs break-all px-3 py-2 text-xs text-gray-400">{entry.errorMessage || '-'}</td>
+                    </tr>
+                  ))}
+                  {auditLogs.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-8 text-center text-sm text-gray-400">No audit records found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-const creatableFilter = createFilterOptions<CreatableOption>();
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-gray-500">
+                {auditTotal === 0 ? 'No audit records' : `${auditOffset + 1}–${Math.min(auditOffset + auditLogs.length, auditTotal)} of ${auditTotal}`}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="sm" disabled={auditOffset === 0} onClick={() => setAuditOffset((prev) => Math.max(0, prev - auditPageSize))}>
+                  Previous
+                </Button>
+                <Button variant="secondary" size="sm" disabled={auditOffset + auditPageSize >= auditTotal} onClick={() => setAuditOffset((prev) => prev + auditPageSize)}>
+                  Next
+                </Button>
+              </div>
+            </div>
+          </div>
+        </FormCard>
+      )}
 
-function CreatableChipSelect({
-  label,
-  helperText,
-  options,
-  value,
-  onChange,
-  normalize
-}: {
-  label: string;
-  helperText: string;
-  options: string[];
-  value: string[];
-  onChange: (value: string[]) => void;
-  normalize?: (value: string) => string;
-}) {
-  const optionObjects = options.map((option) => ({ label: option, value: option }));
-  const selectedObjects = value.map((item) => ({ label: item, value: item }));
-
-  return (
-    <Autocomplete<CreatableOption, true, false, true>
-      multiple
-      freeSolo
-      selectOnFocus
-      clearOnBlur
-      handleHomeEndKeys
-      options={optionObjects}
-      value={selectedObjects}
-      filterOptions={(inputOptions, params) => {
-        const filtered = creatableFilter(inputOptions, params);
-        const inputValue = params.inputValue.trim();
-        if (!inputValue) {
-          return filtered;
-        }
-        const normalizedInput = normalize ? normalize(inputValue) : inputValue;
-        const exists = inputOptions.some((option) => (normalize ? normalize(option.value) : option.value) === normalizedInput);
-        if (!exists) {
-          filtered.push({
-            label: `Add "${normalizedInput}"`,
-            value: normalizedInput,
-            isCreate: true
-          });
-        }
-        return filtered;
-      }}
-      getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
-      onChange={(_, newValue) => {
-        const next = Array.from(
-          new Set(
-            newValue
-              .map((item) => {
-                if (typeof item === 'string') {
-                  return normalize ? normalize(item.trim()) : item.trim();
-                }
-                return normalize ? normalize(item.value.trim()) : item.value.trim();
-              })
-              .filter(Boolean)
-          )
-        );
-        onChange(next);
-      }}
-      renderInput={(params) => <TextField {...params} label={label} helperText={helperText} />}
-    />
+      {/* ── System Settings ── */}
+      {activeTab === 'System Settings' && (
+        <FormCard
+          title="Portal Branding"
+          actions={
+            <Button variant="primary" onClick={() => run(async () => { await api.updateSystem(system); }, 'System settings updated.')} disabled={busy}>
+              <Save className="h-3.5 w-3.5" /> Save
+            </Button>
+          }
+        >
+          <div className="space-y-4">
+            <Input label="Brand Title" value={system.brandTitle} onChange={(v) => setSystem({ ...system, brandTitle: v })} />
+            <div>
+              <p className="mb-2 text-sm font-medium text-gray-700">Logo</p>
+              {system.logoDataUrl ? (
+                <img src={system.logoDataUrl} alt={system.brandTitle || 'Portal logo'} className="mb-2 max-h-20 max-w-[220px] rounded-lg border border-gray-200 object-contain p-2" />
+              ) : (
+                <p className="mb-2 text-sm text-gray-400">No custom logo uploaded.</p>
+              )}
+              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors">
+                Select Image
+                <input hidden type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
+              </label>
+              {logoFile && <span className="ml-2 text-xs text-gray-500">{logoFile.name}</span>}
+              <div className="mt-3 flex gap-2">
+                <Button variant="primary" disabled={!logoFile || busy} onClick={() => run(async () => { if (!logoFile) return; const settings = await api.uploadSystemLogo(logoFile); setSystem(settings); setLogoFile(null); }, 'Logo uploaded.')}>
+                  Upload Logo
+                </Button>
+                <Button variant="danger" disabled={!system.logoDataUrl || busy} onClick={() => run(async () => { const settings = await api.deleteSystemLogo(); setSystem(settings); setLogoFile(null); }, 'Logo removed.')}>
+                  Remove Logo
+                </Button>
+              </div>
+              <p className="mt-2 text-xs text-gray-400">PNG, JPEG, SVG or WEBP. Max 256 KB.</p>
+            </div>
+          </div>
+        </FormCard>
+      )}
+    </div>
   );
 }

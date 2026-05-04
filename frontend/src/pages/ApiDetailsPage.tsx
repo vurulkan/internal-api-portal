@@ -1,28 +1,9 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import {
-  Alert,
-  Box,
-  Button,
-  Card,
-  CardContent,
-  Chip,
-  Divider,
-  MenuItem,
-  Paper,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TextField,
-  Typography
-} from '@mui/material';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import { Copy, Check } from 'lucide-react';
 import SwaggerUI from 'swagger-ui-react';
+import { Alert, Badge, Button, FieldWrap, NativeSelect, Textarea, cn, fieldBase } from '../components/ui';
 import { api, ApiDefinition, InvokeResponse } from '../services/api';
 
 type SpecObject = Record<string, any>;
@@ -53,6 +34,86 @@ type OperationOption = {
 
 const supportedMethods = ['get', 'post', 'put', 'patch', 'delete', 'options', 'head'];
 
+const methodColors: Record<string, string> = {
+  GET:     'bg-green-50 text-green-700 border-green-200',
+  POST:    'bg-blue-50 text-blue-700 border-blue-200',
+  PUT:     'bg-amber-50 text-amber-700 border-amber-200',
+  PATCH:   'bg-amber-50 text-amber-700 border-amber-200',
+  DELETE:  'bg-red-50 text-red-700 border-red-200',
+  OPTIONS: 'bg-gray-50 text-gray-600 border-gray-200',
+  HEAD:    'bg-gray-50 text-gray-600 border-gray-200',
+};
+
+function MethodBadge({ method }: { method: string }) {
+  const cls = methodColors[method] ?? 'bg-gray-50 text-gray-600 border-gray-200';
+  return (
+    <span className={cn('inline-flex items-center rounded border px-1.5 py-0.5 text-xs font-mono font-bold', cls)}>
+      {method}
+    </span>
+  );
+}
+
+function MetaRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 py-2 border-b border-gray-100 last:border-0">
+      <span className="text-xs text-gray-400">{label}</span>
+      <span className="text-sm font-medium text-gray-800">{value}</span>
+    </div>
+  );
+}
+
+function OperationSummary({ operation }: { operation: OperationOption }) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <MethodBadge method={operation.method} />
+        <span className="font-mono text-xs text-gray-600">{operation.path}</span>
+        {operation.tags.map((tag) => (
+          <span key={tag} className="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-600">{tag}</span>
+        ))}
+      </div>
+      {operation.summary && <p className="text-sm font-medium text-gray-800">{operation.summary}</p>}
+      {operation.description && <p className="mt-0.5 text-xs text-gray-500">{operation.description}</p>}
+    </div>
+  );
+}
+
+function ParameterSection({
+  title,
+  parameters,
+  values,
+  onChange,
+}: {
+  title: string;
+  parameters: OperationParameter[];
+  values: Record<string, string>;
+  onChange: Dispatch<SetStateAction<Record<string, string>>>;
+}) {
+  return (
+    <div>
+      <p className="mb-2 text-sm font-semibold text-gray-700">{title}</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {parameters.map((param) => (
+          <FieldWrap
+            key={param.id}
+            label={param.name}
+            helperText={param.description || `${param.in} parameter${param.required ? ' • required' : ''}`}
+            required={param.required}
+          >
+            <input
+              type="text"
+              required={param.required}
+              value={values[param.id] ?? ''}
+              onChange={(e) => onChange((prev) => ({ ...prev, [param.id]: e.target.value }))}
+              className={fieldBase}
+            />
+          </FieldWrap>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ApiDetailsPage() {
   const { id = '' } = useParams();
   const [details, setDetails] = useState<ApiDefinition | null>(null);
@@ -80,21 +141,17 @@ export function ApiDetailsPage() {
 
   const operationTags = useMemo(() => {
     const tags = new Set<string>();
-    operations.forEach((operation) => {
-      operation.tags.forEach((tag) => tags.add(tag));
-    });
-    return Array.from(tags).sort((left, right) => left.localeCompare(right));
+    operations.forEach((op) => op.tags.forEach((t) => tags.add(t)));
+    return Array.from(tags).sort();
   }, [operations]);
 
   const visibleOperations = useMemo(() => {
-    if (selectedOperationTag === '__all__') {
-      return operations;
-    }
-    return operations.filter((operation) => operation.tags.includes(selectedOperationTag));
+    if (selectedOperationTag === '__all__') return operations;
+    return operations.filter((op) => op.tags.includes(selectedOperationTag));
   }, [operations, selectedOperationTag]);
 
   const selectedOperation = useMemo(
-    () => visibleOperations.find((operation) => operation.id === selectedOperationId) ?? visibleOperations[0] ?? null,
+    () => visibleOperations.find((op) => op.id === selectedOperationId) ?? visibleOperations[0] ?? null,
     [visibleOperations, selectedOperationId]
   );
 
@@ -118,16 +175,13 @@ export function ApiDetailsPage() {
   }, [selectedOperation?.id]);
 
   const prettyBody = useMemo(() => {
-    if (!result) {
-      return '';
-    }
-    const decoded = decodeBase64Utf8(result.bodyBase64);
-    return beautifyBody(decoded, result.contentType);
+    if (!result) return '';
+    return beautifyBody(decodeBase64Utf8(result.bodyBase64), result.contentType);
   }, [result]);
 
-  const pathParams = selectedOperation?.parameters.filter((parameter) => parameter.in === 'path') ?? [];
-  const queryParams = selectedOperation?.parameters.filter((parameter) => parameter.in === 'query') ?? [];
-  const headerParams = selectedOperation?.parameters.filter((parameter) => parameter.in === 'header') ?? [];
+  const pathParams = selectedOperation?.parameters.filter((p) => p.in === 'path') ?? [];
+  const queryParams = selectedOperation?.parameters.filter((p) => p.in === 'query') ?? [];
+  const headerParams = selectedOperation?.parameters.filter((p) => p.in === 'header') ?? [];
 
   async function submitInvoke(event: FormEvent) {
     event.preventDefault();
@@ -135,19 +189,16 @@ export function ApiDetailsPage() {
       setError('No documented operation available for this API.');
       return;
     }
-
     const missingRequired = selectedOperation.parameters.find(
-      (parameter) => parameter.required && !paramValues[parameter.id]?.trim()
+      (p) => p.required && !paramValues[p.id]?.trim()
     );
     if (missingRequired) {
       setError(`${missingRequired.name} is required.`);
       return;
     }
-
     setSubmitting(true);
     setError('');
     setResult(null);
-
     try {
       const headers = buildHeaders(headerParams, paramValues, additionalHeaders, acceptType, contentType, selectedOperation.hasRequestBody);
       const path = buildResolvedPath(selectedOperation.path, pathParams, paramValues);
@@ -157,7 +208,7 @@ export function ApiDetailsPage() {
         path,
         query,
         headers,
-        bodyBase64: requestBody ? encodeBase64Utf8(requestBody) : ''
+        bodyBase64: requestBody ? encodeBase64Utf8(requestBody) : '',
       });
       setResult(response);
     } catch (invokeError) {
@@ -168,306 +219,233 @@ export function ApiDetailsPage() {
   }
 
   if (!details) {
-    return <Typography>Loading API details...</Typography>;
+    return (
+      <div className="flex items-center justify-center py-20 text-sm text-gray-400">Loading API details…</div>
+    );
   }
 
   return (
-    <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={3} gap={2} flexWrap="wrap">
-        <Box>
-          <Typography variant="h4" fontWeight={700} gutterBottom>
-            {details.name}
-          </Typography>
-          <Typography color="text.secondary">{details.description}</Typography>
-        </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap">
-          <Chip color={details.permissions?.invoke ? 'success' : 'warning'} label={details.permissions?.invoke ? 'Invoke allowed' : 'View only'} />
-          <Chip variant="outlined" label={details.ownerTeam || 'No owner'} />
-          <Chip variant="outlined" label={details.lastSpecStatus || 'Spec status unknown'} />
-        </Stack>
-      </Box>
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">{details.name}</h1>
+          {details.description && <p className="mt-1 text-sm text-gray-500">{details.description}</p>}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant={details.permissions?.invoke ? 'green' : 'amber'}>
+            {details.permissions?.invoke ? 'Invoke allowed' : 'View only'}
+          </Badge>
+          {details.ownerTeam && <Badge variant="gray">{details.ownerTeam}</Badge>}
+          {details.lastSpecStatus && <Badge variant="blue">{details.lastSpecStatus}</Badge>}
+        </div>
+      </div>
 
-      <Box display="grid" gridTemplateColumns={{ xs: '1fr', xl: '340px minmax(0, 1fr)' }} gap={2} mb={2}>
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              API Profile
-            </Typography>
-            <MetaRow label="Slug" value={details.slug} />
-            <MetaRow label="Methods" value={details.allowedMethods?.length ? details.allowedMethods.join(', ') : 'All documented methods'} />
-            <MetaRow label="Paths" value={details.allowedPathPrefixes?.length ? details.allowedPathPrefixes.join(', ') : 'All documented paths'} />
-            <MetaRow label="Tags" value={details.tags?.length ? details.tags.join(', ') : 'No tags'} />
-            <MetaRow label="Try It Out" value={details.tryItEnabled ? 'Enabled' : 'Disabled'} />
-          </CardContent>
-        </Card>
+      {/* 2-col layout */}
+      <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
+        {/* API Profile */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold text-gray-700">API Profile</h2>
+          <MetaRow label="Slug" value={details.slug} />
+          <MetaRow label="Methods" value={details.allowedMethods?.length ? details.allowedMethods.join(', ') : 'All documented methods'} />
+          <MetaRow label="Paths" value={details.allowedPathPrefixes?.length ? details.allowedPathPrefixes.join(', ') : 'All documented paths'} />
+          <MetaRow label="Tags" value={details.tags?.length ? details.tags.join(', ') : 'No tags'} />
+          <MetaRow label="Try It Out" value={details.tryItEnabled ? 'Enabled' : 'Disabled'} />
+        </div>
 
-        <Card>
-          <CardContent>
-            <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2} mb={2}>
-              <Box>
-                <Typography variant="h6">Try It Out</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Choose a documented operation. Method and path are locked to the spec; you only fill the operation inputs.
-                </Typography>
-              </Box>
-              {selectedOperation ? <Chip color="primary" label={`${selectedOperation.method} ${selectedOperation.path}`} /> : null}
-            </Stack>
+        {/* Try It Out */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Try It Out</h2>
+              <p className="mt-0.5 text-xs text-gray-500">Choose a documented operation. Method and path are locked to the spec.</p>
+            </div>
+            {selectedOperation && (
+              <div className="flex items-center gap-1.5">
+                <MethodBadge method={selectedOperation.method} />
+                <span className="font-mono text-xs text-gray-500">{selectedOperation.path}</span>
+              </div>
+            )}
+          </div>
 
-            {!details.permissions?.invoke || !details.tryItEnabled ? (
-              <Typography color="text.secondary">Invocation is not enabled for your account or this API.</Typography>
-            ) : operations.length === 0 ? (
-              <Alert severity="warning">No operations were parsed from the OpenAPI document.</Alert>
-            ) : (
-              <Box component="form" display="flex" flexDirection="column" gap={3} onSubmit={submitInvoke}>
-                <TextField
-                  select
-                  label="Operation Tag"
-                  value={selectedOperationTag}
-                  onChange={(event) => setSelectedOperationTag(event.target.value)}
-                  helperText="Filter operations by OpenAPI tag."
-                >
-                  <MenuItem value="__all__">All tags</MenuItem>
-                  {operationTags.map((tag) => (
-                    <MenuItem key={tag} value={tag}>
-                      {tag}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  select
-                  label="Operation"
+          {!details.permissions?.invoke || !details.tryItEnabled ? (
+            <p className="text-sm text-gray-500">Invocation is not enabled for your account or this API.</p>
+          ) : operations.length === 0 ? (
+            <Alert variant="warning">No operations were parsed from the OpenAPI document.</Alert>
+          ) : (
+            <form onSubmit={submitInvoke} className="space-y-4">
+              {/* Tag filter */}
+              <NativeSelect
+                label="Operation Tag"
+                value={selectedOperationTag}
+                onChange={setSelectedOperationTag}
+                helperText="Filter operations by OpenAPI tag."
+                options={[
+                  { label: 'All tags', value: '__all__' },
+                  ...operationTags.map((t) => ({ label: t, value: t })),
+                ]}
+              />
+
+              {/* Operation selector */}
+              <FieldWrap label="Operation" helperText="Select the path and method from the imported OpenAPI spec.">
+                <select
                   value={selectedOperationId}
-                  onChange={(event) => setSelectedOperationId(event.target.value)}
-                  helperText="Select the path and method from the imported OpenAPI spec."
+                  onChange={(e) => setSelectedOperationId(e.target.value)}
                   disabled={visibleOperations.length === 0}
+                  className={cn(fieldBase, 'cursor-pointer')}
                 >
                   {visibleOperations.length === 0 ? (
-                    <MenuItem value="" disabled>
-                      No operations found for this tag
-                    </MenuItem>
+                    <option value="" disabled>No operations found for this tag</option>
                   ) : null}
-                  {visibleOperations.map((operation) => (
-                    <MenuItem key={operation.id} value={operation.id}>
-                      {operation.method} {operation.path} {operation.summary ? `- ${operation.summary}` : ''}
-                    </MenuItem>
+                  {visibleOperations.map((op) => (
+                    <option key={op.id} value={op.id}>
+                      {op.method} {op.path}{op.summary ? ` – ${op.summary}` : ''}
+                    </option>
                   ))}
-                </TextField>
+                </select>
+              </FieldWrap>
 
-                {selectedOperation ? (
-                  <>
-                    <OperationSummary operation={selectedOperation} />
+              {selectedOperation && (
+                <>
+                  <OperationSummary operation={selectedOperation} />
 
-                    <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }} gap={2}>
-                      <TextField
-                        select
-                        label="Accept"
-                        value={acceptType}
-                        onChange={(event) => setAcceptType(event.target.value)}
-                        helperText="Derived from documented responses."
-                      >
-                        {(selectedOperation.responseContentTypes.length ? selectedOperation.responseContentTypes : ['application/json']).map((value) => (
-                          <MenuItem key={value} value={value}>
-                            {value}
-                          </MenuItem>
-                        ))}
-                      </TextField>
-
-                      {selectedOperation.hasRequestBody ? (
-                        <TextField
-                          select
-                          label="Content-Type"
-                          value={contentType}
-                          onChange={(event) => setContentType(event.target.value)}
-                          helperText="Derived from documented request bodies."
-                        >
-                          {selectedOperation.requestContentTypes.map((value) => (
-                            <MenuItem key={value} value={value}>
-                              {value}
-                            </MenuItem>
-                          ))}
-                        </TextField>
-                      ) : (
-                        <TextField label="Content-Type" value="No request body" disabled />
-                      )}
-                    </Box>
-
-                    {pathParams.length > 0 ? <ParameterSection title="Path Parameters" parameters={pathParams} values={paramValues} onChange={setParamValues} /> : null}
-                    {queryParams.length > 0 ? <ParameterSection title="Query Parameters" parameters={queryParams} values={paramValues} onChange={setParamValues} /> : null}
-                    {headerParams.length > 0 ? <ParameterSection title="Header Parameters" parameters={headerParams} values={paramValues} onChange={setParamValues} /> : null}
-
-                    {selectedOperation.hasRequestBody ? (
-                      <TextField
-                        label="Request Body"
-                        multiline
-                        minRows={10}
-                        value={requestBody}
-                        onChange={(event) => setRequestBody(event.target.value)}
-                        helperText="Prefilled from the OpenAPI example when available."
-                      />
-                    ) : null}
-
-                    <TextField
-                      label="Additional Headers"
-                      multiline
-                      minRows={4}
-                      value={additionalHeaders}
-                      onChange={(event) => setAdditionalHeaders(event.target.value)}
-                      helperText="Optional extra headers as `Header-Name: value`, one per line."
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <NativeSelect
+                      label="Accept"
+                      value={acceptType}
+                      onChange={setAcceptType}
+                      helperText="Derived from documented responses."
+                      options={(selectedOperation.responseContentTypes.length ? selectedOperation.responseContentTypes : ['application/json']).map((v) => ({ label: v, value: v }))}
                     />
+                    {selectedOperation.hasRequestBody ? (
+                      <NativeSelect
+                        label="Content-Type"
+                        value={contentType}
+                        onChange={setContentType}
+                        helperText="Derived from documented request bodies."
+                        options={selectedOperation.requestContentTypes.map((v) => ({ label: v, value: v }))}
+                      />
+                    ) : (
+                      <FieldWrap label="Content-Type">
+                        <input disabled value="No request body" className={fieldBase} />
+                      </FieldWrap>
+                    )}
+                  </div>
 
-                    <Box>
-                      <Button type="submit" variant="contained" disabled={submitting}>
-                        {submitting ? 'Sending...' : 'Send Through Portal Proxy'}
-                      </Button>
-                    </Box>
-                  </>
-                ) : null}
-              </Box>
-            )}
+                  {pathParams.length > 0 && (
+                    <ParameterSection title="Path Parameters" parameters={pathParams} values={paramValues} onChange={setParamValues} />
+                  )}
+                  {queryParams.length > 0 && (
+                    <ParameterSection title="Query Parameters" parameters={queryParams} values={paramValues} onChange={setParamValues} />
+                  )}
+                  {headerParams.length > 0 && (
+                    <ParameterSection title="Header Parameters" parameters={headerParams} values={paramValues} onChange={setParamValues} />
+                  )}
 
-            {error ? <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert> : null}
-            {result ? (
-              <Box sx={{ mt: 2 }}>
-                <Stack direction="row" spacing={1} mb={1} flexWrap="wrap">
-                  <Chip color={result.statusCode >= 200 && result.statusCode < 300 ? 'success' : 'warning'} label={`HTTP ${result.statusCode}`} />
-                  <Chip variant="outlined" label={result.contentType || 'unknown content type'} />
-                  {result.truncated ? <Chip color="warning" label="Body truncated" /> : null}
-                </Stack>
-                <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Response Header</TableCell>
-                        <TableCell>Value</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {Object.entries(result.headers ?? {}).map(([name, value]) => (
-                        <TableRow key={name}>
-                          <TableCell>{name}</TableCell>
-                          <TableCell sx={{ wordBreak: 'break-word' }}>{value}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-                <Box sx={{ borderRadius: 2, background: '#0f1720', color: '#ebf2ff', p: 2 }}>
-                  <Box display="flex" justifyContent="flex-end" mb={1}>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<ContentCopyIcon fontSize="small" />}
-                      sx={{ color: '#ebf2ff', borderColor: '#516179', minWidth: 'auto' }}
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(prettyBody);
-                        setCopied(true);
-                        window.setTimeout(() => setCopied(false), 1500);
-                      }}
-                    >
-                      {copied ? 'Copied' : 'Copy'}
-                    </Button>
-                  </Box>
-                  <Box
-                    component="pre"
-                    sx={{
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      m: 0,
-                      maxHeight: '22.5em',
-                      overflow: 'auto',
-                      lineHeight: 1.5
+                  {selectedOperation.hasRequestBody && (
+                    <Textarea
+                      label="Request Body"
+                      value={requestBody}
+                      onChange={setRequestBody}
+                      rows={10}
+                      helperText="Prefilled from the OpenAPI example when available."
+                    />
+                  )}
+
+                  <Textarea
+                    label="Additional Headers"
+                    value={additionalHeaders}
+                    onChange={setAdditionalHeaders}
+                    rows={4}
+                    helperText="Optional extra headers as Header-Name: value, one per line."
+                  />
+
+                  <Button type="submit" variant="primary" disabled={submitting}>
+                    {submitting ? 'Sending…' : 'Send Through Portal Proxy'}
+                  </Button>
+                </>
+              )}
+            </form>
+          )}
+
+          {error && (
+            <div className="mt-4">
+              <Alert variant="error">{error}</Alert>
+            </div>
+          )}
+
+          {result && (
+            <div className="mt-4 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant={result.statusCode >= 200 && result.statusCode < 300 ? 'green' : 'amber'}>
+                  HTTP {result.statusCode}
+                </Badge>
+                {result.contentType && <Badge variant="blue">{result.contentType}</Badge>}
+                {result.truncated && <Badge variant="amber">Body truncated</Badge>}
+              </div>
+
+              {/* Response headers */}
+              <div className="overflow-hidden rounded-lg border border-gray-200">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium text-gray-500">Response Header</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-500">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {Object.entries(result.headers ?? {}).map(([name, value]) => (
+                      <tr key={name}>
+                        <td className="px-3 py-2 font-mono text-gray-700">{name}</td>
+                        <td className="px-3 py-2 break-all text-gray-600">{value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Response body */}
+              <div className="rounded-lg bg-slate-900 p-4">
+                <div className="mb-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(prettyBody);
+                      setCopied(true);
+                      window.setTimeout(() => setCopied(false), 1500);
                     }}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-600 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-400 hover:text-slate-100 transition-colors"
                   >
-                    {prettyBody}
-                  </Box>
-                </Box>
-              </Box>
-            ) : null}
-          </CardContent>
-        </Card>
-      </Box>
+                    {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-200">
+                  {prettyBody}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
-      <Card>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>
-            Documentation
-          </Typography>
-          {spec ? <SwaggerUI spec={spec} supportedSubmitMethods={[]} /> : <Typography>Loading spec...</Typography>}
-        </CardContent>
-      </Card>
-    </Box>
+      {/* Documentation */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-4 text-sm font-semibold text-gray-700">Documentation</h2>
+        {spec ? (
+          <SwaggerUI spec={spec} supportedSubmitMethods={[]} />
+        ) : (
+          <p className="text-sm text-gray-400">Loading spec…</p>
+        )}
+      </div>
+    </div>
   );
 }
 
-function MetaRow({ label, value }: { label: string; value: string }) {
-  return (
-    <Box mb={1.5}>
-      <Typography variant="body2" color="text.secondary">
-        {label}
-      </Typography>
-      <Typography>{value}</Typography>
-    </Box>
-  );
-}
-
-function OperationSummary({ operation }: { operation: OperationOption }) {
-  return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
-      <Stack spacing={1}>
-        <Box display="flex" gap={1} flexWrap="wrap">
-          <Chip color="primary" size="small" label={operation.method} />
-          <Chip variant="outlined" size="small" label={operation.path} />
-          {operation.tags.map((tag) => (
-            <Chip key={tag} variant="outlined" size="small" label={tag} />
-          ))}
-        </Box>
-        <Typography fontWeight={600}>{operation.summary || 'Untitled operation'}</Typography>
-        {operation.description ? (
-          <Typography variant="body2" color="text.secondary">
-            {operation.description}
-          </Typography>
-        ) : null}
-      </Stack>
-    </Paper>
-  );
-}
-
-function ParameterSection({
-  title,
-  parameters,
-  values,
-  onChange
-}: {
-  title: string;
-  parameters: OperationParameter[];
-  values: Record<string, string>;
-  onChange: Dispatch<SetStateAction<Record<string, string>>>;
-}) {
-  return (
-    <Box>
-      <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-        {title}
-      </Typography>
-      <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }} gap={2}>
-        {parameters.map((parameter) => (
-          <TextField
-            key={parameter.id}
-            label={parameter.name}
-            value={values[parameter.id] ?? ''}
-            required={parameter.required}
-            onChange={(event) => onChange((current) => ({ ...current, [parameter.id]: event.target.value }))}
-            helperText={parameter.description || `${parameter.in} parameter${parameter.required ? ' • required' : ''}`}
-          />
-        ))}
-      </Box>
-    </Box>
-  );
-}
+// ── Utility functions (unchanged) ─────────────────────────────────────────────
 
 function parseOperations(spec: SpecObject | null): OperationOption[] {
-  if (!spec?.paths || typeof spec.paths !== 'object') {
-    return [];
-  }
+  if (!spec?.paths || typeof spec.paths !== 'object') return [];
 
   const isOpenAPI3 = typeof spec.openapi === 'string';
   const globalConsumes = listStrings(spec.consumes);
@@ -475,17 +453,12 @@ function parseOperations(spec: SpecObject | null): OperationOption[] {
   const operations: OperationOption[] = [];
 
   Object.entries(spec.paths).forEach(([path, pathItem]) => {
-    if (!pathItem || typeof pathItem !== 'object') {
-      return;
-    }
-
+    if (!pathItem || typeof pathItem !== 'object') return;
     const pathParameters = extractParameters((pathItem as SpecObject).parameters, spec);
 
     supportedMethods.forEach((methodKey) => {
       const operation = (pathItem as SpecObject)[methodKey];
-      if (!operation || typeof operation !== 'object') {
-        return;
-      }
+      if (!operation || typeof operation !== 'object') return;
 
       const operationParameters = mergeParameters(pathParameters, extractParameters((operation as SpecObject).parameters, spec));
       const requestContentTypes = isOpenAPI3
@@ -509,36 +482,36 @@ function parseOperations(spec: SpecObject | null): OperationOption[] {
         requestContentTypes: uniq(requestContentTypes).filter(Boolean),
         responseContentTypes: uniq(responseContentTypes).filter(Boolean),
         requestBodyExample: bodyExample,
-        hasRequestBody: isOpenAPI3 ? Boolean((operation as SpecObject).requestBody) : requestContentTypes.length > 0 || ['POST', 'PUT', 'PATCH'].includes(methodKey.toUpperCase())
+        hasRequestBody:
+          isOpenAPI3
+            ? Boolean((operation as SpecObject).requestBody)
+            : requestContentTypes.length > 0 || ['POST', 'PUT', 'PATCH'].includes(methodKey.toUpperCase()),
       });
     });
   });
 
-  return operations.sort((left, right) => left.path.localeCompare(right.path) || left.method.localeCompare(right.method));
+  return operations.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
 }
 
 function buildParamDefaults(operation: OperationOption) {
-  return operation.parameters.reduce<Record<string, string>>((acc, parameter) => {
-    acc[parameter.id] = parameter.defaultValue;
+  return operation.parameters.reduce<Record<string, string>>((acc, p) => {
+    acc[p.id] = p.defaultValue;
     return acc;
   }, {});
 }
 
 function buildResolvedPath(template: string, parameters: OperationParameter[], values: Record<string, string>) {
   return parameters.reduce(
-    (path, parameter) => path.split(`{${parameter.name}}`).join(encodeURIComponent(values[parameter.id] ?? '')),
+    (path, p) => path.split(`{${p.name}}`).join(encodeURIComponent(values[p.id] ?? '')),
     template
   );
 }
 
 function buildQueryString(parameters: OperationParameter[], values: Record<string, string>) {
   const query = new URLSearchParams();
-  parameters.forEach((parameter) => {
-    const value = values[parameter.id]?.trim();
-    if (!value) {
-      return;
-    }
-    query.append(parameter.name, value);
+  parameters.forEach((p) => {
+    const value = values[p.id]?.trim();
+    if (value) query.append(p.name, value);
   });
   return query.toString();
 }
@@ -552,17 +525,11 @@ function buildHeaders(
   hasRequestBody: boolean
 ) {
   const headers: Record<string, string> = {};
-  if (acceptType) {
-    headers.Accept = acceptType;
-  }
-  if (hasRequestBody && contentType) {
-    headers['Content-Type'] = contentType;
-  }
-  headerParams.forEach((parameter) => {
-    const value = values[parameter.id]?.trim();
-    if (value) {
-      headers[parameter.name] = value;
-    }
+  if (acceptType) headers.Accept = acceptType;
+  if (hasRequestBody && contentType) headers['Content-Type'] = contentType;
+  headerParams.forEach((p) => {
+    const value = values[p.id]?.trim();
+    if (value) headers[p.name] = value;
   });
   additionalHeaders
     .split('\n')
@@ -570,31 +537,22 @@ function buildHeaders(
     .filter(Boolean)
     .forEach((line) => {
       const [name, ...rest] = line.split(':');
-      if (name && rest.length > 0) {
-        headers[name.trim()] = rest.join(':').trim();
-      }
+      if (name && rest.length > 0) headers[name.trim()] = rest.join(':').trim();
     });
   return headers;
 }
 
 function extractParameters(raw: unknown, spec: SpecObject): OperationParameter[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw
-    .map((item, index) => normalizeParameter(item as SpecObject, index, spec))
-    .filter((item): item is OperationParameter => Boolean(item));
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item, i) => normalizeParameter(item as SpecObject, i, spec)).filter((p): p is OperationParameter => Boolean(p));
 }
 
 function mergeParameters(pathParameters: OperationParameter[], operationParameters: OperationParameter[]) {
   const merged = [...pathParameters];
-  operationParameters.forEach((parameter) => {
-    const index = merged.findIndex((item) => item.name === parameter.name && item.in === parameter.in);
-    if (index >= 0) {
-      merged[index] = parameter;
-    } else {
-      merged.push(parameter);
-    }
+  operationParameters.forEach((p) => {
+    const idx = merged.findIndex((m) => m.name === p.name && m.in === p.in);
+    if (idx >= 0) merged[idx] = p;
+    else merged.push(p);
   });
   return merged;
 }
@@ -602,9 +560,7 @@ function mergeParameters(pathParameters: OperationParameter[], operationParamete
 function normalizeParameter(rawParameter: SpecObject, index: number, spec: SpecObject): OperationParameter | null {
   const parameter = resolveRef(spec, rawParameter) as SpecObject;
   const location = parameter?.in;
-  if (location !== 'path' && location !== 'query' && location !== 'header') {
-    return null;
-  }
+  if (location !== 'path' && location !== 'query' && location !== 'header') return null;
 
   const schema = (resolveRef(spec, parameter.schema) as SpecObject) ?? {};
   const defaultValue =
@@ -614,6 +570,7 @@ function normalizeParameter(rawParameter: SpecObject, index: number, spec: SpecO
     resolveExampleValue(spec, schema.default) ??
     generateExampleFromSchema(schema, spec) ??
     '';
+
   return {
     id: `${location}:${String(parameter.name ?? index)}`,
     name: String(parameter.name ?? `param_${index}`),
@@ -621,7 +578,7 @@ function normalizeParameter(rawParameter: SpecObject, index: number, spec: SpecO
     description: String(parameter.description ?? ''),
     required: Boolean(parameter.required),
     defaultValue: defaultValue == null ? '' : stringifyExample(defaultValue),
-    type: String(schema.type ?? parameter.type ?? 'string')
+    type: String(schema.type ?? parameter.type ?? 'string'),
   };
 }
 
@@ -631,55 +588,36 @@ function openAPI3BodyExample(requestBody: unknown, spec: SpecObject) {
   for (const entry of Object.values(content)) {
     const media = resolveRef(spec, entry) as SpecObject;
     const directExample = resolveExampleValue(spec, media.example);
-    if (directExample !== undefined) {
-      return stringifyExample(directExample);
-    }
+    if (directExample !== undefined) return stringifyExample(directExample);
     if (media.examples && typeof media.examples === 'object') {
       const first = resolveRef(spec, Object.values(media.examples as SpecObject)[0]) as SpecObject | undefined;
-      if (first?.value !== undefined) {
-        return stringifyExample(resolveExampleValue(spec, first.value));
-      }
+      if (first?.value !== undefined) return stringifyExample(resolveExampleValue(spec, first.value));
     }
     const schema = resolveRef(spec, media.schema) as SpecObject | undefined;
     const schemaExample = resolveExampleValue(spec, schema?.example) ?? generateExampleFromSchema(schema, spec);
-    if (schemaExample !== undefined) {
-      return stringifyExample(schemaExample);
-    }
+    if (schemaExample !== undefined) return stringifyExample(schemaExample);
   }
   return '';
 }
 
 function swagger2BodyExample(rawParameters: unknown, spec: SpecObject) {
-  if (!Array.isArray(rawParameters)) {
-    return '';
-  }
-  const parameter = rawParameters
-    .map((item) => resolveRef(spec, item) as SpecObject)
-    .find((item) => item?.in === 'body');
-  if (!parameter) {
-    return '';
-  }
+  if (!Array.isArray(rawParameters)) return '';
+  const parameter = rawParameters.map((item) => resolveRef(spec, item) as SpecObject).find((item) => item?.in === 'body');
+  if (!parameter) return '';
   const schema = resolveRef(spec, parameter.schema) as SpecObject | undefined;
   const example =
     resolveExampleValue(spec, parameter['x-example']) ??
     resolveExampleValue(spec, parameter.example) ??
     resolveExampleValue(spec, schema?.example) ??
     generateExampleFromSchema(schema, spec);
-  if (example !== undefined) {
-    return stringifyExample(example);
-  }
-  return '';
+  return example !== undefined ? stringifyExample(example) : '';
 }
 
 function extractResponseContentTypes(responses: unknown, spec: SpecObject) {
   const out: string[] = [];
-  if (!responses || typeof responses !== 'object') {
-    return out;
-  }
+  if (!responses || typeof responses !== 'object') return out;
   Object.entries(responses as SpecObject).forEach(([status, response]) => {
-    if (!status.startsWith('2') && status !== 'default') {
-      return;
-    }
+    if (!status.startsWith('2') && status !== 'default') return;
     const content = ((resolveRef(spec, response) as SpecObject | undefined)?.content as SpecObject) ?? {};
     out.push(...Object.keys(content));
   });
@@ -699,9 +637,7 @@ function uniq(values: string[]) {
 }
 
 function stringifyExample(value: unknown) {
-  if (typeof value === 'string') {
-    return value;
-  }
+  if (typeof value === 'string') return value;
   try {
     return JSON.stringify(value, null, 2);
   } catch {
@@ -712,9 +648,7 @@ function stringifyExample(value: unknown) {
 function encodeBase64Utf8(value: string) {
   const bytes = new TextEncoder().encode(value);
   let binary = '';
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
   return btoa(binary);
 }
 
@@ -730,36 +664,21 @@ function decodeBase64Utf8(value: string) {
 
 function beautifyBody(body: string, contentType: string) {
   const trimmed = body.trim();
-  if (!trimmed) {
-    return '';
-  }
+  if (!trimmed) return '';
   if (contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      return JSON.stringify(JSON.parse(trimmed), null, 2);
-    } catch {
-      return body;
-    }
+    try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch { return body; }
   }
   return body;
 }
 
 function resolveRef(spec: SpecObject, value: unknown): unknown {
-  if (!value || typeof value !== 'object') {
-    return value;
-  }
+  if (!value || typeof value !== 'object') return value;
   const ref = (value as SpecObject).$ref;
-  if (typeof ref !== 'string' || !ref.startsWith('#/')) {
-    return value;
-  }
-  const parts = ref
-    .slice(2)
-    .split('/')
-    .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'));
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return value;
+  const parts = ref.slice(2).split('/').map((p) => p.replace(/~1/g, '/').replace(/~0/g, '~'));
   let current: unknown = spec;
   for (const part of parts) {
-    if (!current || typeof current !== 'object') {
-      return value;
-    }
+    if (!current || typeof current !== 'object') return value;
     current = (current as SpecObject)[part];
   }
   if (current && typeof current === 'object' && (current as SpecObject).$ref && current !== value) {
@@ -777,30 +696,18 @@ function resolveExampleValue(spec: SpecObject, value: unknown): unknown {
 }
 
 function generateExampleFromSchema(schema: SpecObject | undefined, spec: SpecObject): unknown {
-  if (!schema) {
-    return undefined;
-  }
+  if (!schema) return undefined;
   const resolved = resolveRef(spec, schema) as SpecObject | undefined;
-  if (!resolved) {
-    return undefined;
-  }
-  if (resolved.example !== undefined) {
-    return resolveExampleValue(spec, resolved.example);
-  }
-  if (resolved.default !== undefined) {
-    return resolveExampleValue(spec, resolved.default);
-  }
-  if (Array.isArray(resolved.enum) && resolved.enum.length > 0) {
-    return resolved.enum[0];
-  }
+  if (!resolved) return undefined;
+  if (resolved.example !== undefined) return resolveExampleValue(spec, resolved.example);
+  if (resolved.default !== undefined) return resolveExampleValue(spec, resolved.default);
+  if (Array.isArray(resolved.enum) && resolved.enum.length > 0) return resolved.enum[0];
   const schemaType = resolved.type;
   if (schemaType === 'object' || resolved.properties) {
     const out: Record<string, unknown> = {};
     Object.entries((resolved.properties as SpecObject) ?? {}).forEach(([key, value]) => {
       const example = generateExampleFromSchema(value as SpecObject, spec);
-      if (example !== undefined) {
-        out[key] = example;
-      }
+      if (example !== undefined) out[key] = example;
     });
     return out;
   }
@@ -808,27 +715,15 @@ function generateExampleFromSchema(schema: SpecObject | undefined, spec: SpecObj
     const itemExample = generateExampleFromSchema((resolved.items as SpecObject) ?? {}, spec);
     return itemExample === undefined ? [] : [itemExample];
   }
-  if (schemaType === 'integer' || schemaType === 'number') {
-    return 0;
-  }
-  if (schemaType === 'boolean') {
-    return false;
-  }
-  if (schemaType === 'string' && resolved.format === 'date-time') {
-    return new Date().toISOString();
-  }
-  if (schemaType === 'string' && resolved.format === 'date') {
-    return new Date().toISOString().slice(0, 10);
-  }
-  if (schemaType === 'string') {
-    return '';
-  }
+  if (schemaType === 'integer' || schemaType === 'number') return 0;
+  if (schemaType === 'boolean') return false;
+  if (schemaType === 'string' && resolved.format === 'date-time') return new Date().toISOString();
+  if (schemaType === 'string' && resolved.format === 'date') return new Date().toISOString().slice(0, 10);
+  if (schemaType === 'string') return '';
   if (Array.isArray(resolved.allOf) && resolved.allOf.length > 0) {
     return resolved.allOf.reduce<Record<string, unknown>>((acc, item) => {
       const value = generateExampleFromSchema(item as SpecObject, spec);
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        return { ...acc, ...(value as Record<string, unknown>) };
-      }
+      if (value && typeof value === 'object' && !Array.isArray(value)) return { ...acc, ...(value as Record<string, unknown>) };
       return acc;
     }, {});
   }
