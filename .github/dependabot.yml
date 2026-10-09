@@ -11,10 +11,33 @@ updates:
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
-  # Base image digests in the Dockerfile.
+    ignore:
+      # Major upgrades of the build toolchain and UI framework are planned work
+      # (milestone M6: design system / app shell), not drive-by bumps.
+      - dependency-name: tailwindcss
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: vite
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: react
+        update-types: ["version-update:semver-major"]
+      - dependency-name: react-dom
+        update-types: ["version-update:semver-major"]
+      - dependency-name: react-router-dom
+        update-types: ["version-update:semver-major"]
+  # Base image digests in the Dockerfile. Node majors are moved by hand from one
+  # LTS to the next; odd (non-LTS) majors are skipped.
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
