@@ -30,8 +30,16 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: go vet
         run: go vet ./...
+      # staticcheck v0.8.1 vendors an x/tools whose importer can't read Go 1.27.2's
+      # export data ("export data version 5"); build it against a newer x/tools until
+      # a staticcheck release does.
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+        run: |
+          tools="$(mktemp -d)"
+          (cd "$tools" && go mod init sc >/dev/null 2>&1 \
+            && go get honnef.co/go/tools/cmd/staticcheck@v0.8.1 golang.org/x/tools@v0.51.0 \
+            && go build -o "$RUNNER_TEMP/staticcheck" honnef.co/go/tools/cmd/staticcheck)
+          "$RUNNER_TEMP/staticcheck" ./...
       - name: go test -race
         run: go test -race -count=1 ./...
       - name: govulncheck
