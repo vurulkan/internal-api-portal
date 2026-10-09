@@ -20,11 +20,12 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-      # Latest stable Go (not the go.mod minimum), so govulncheck sees a patched
-      # standard library and the tests run on the toolchain the image is built with.
+      # The newest patch of the Go line the image is built with (Dockerfile:
+      # golang:1.27-alpine), not the go.mod minimum: govulncheck then sees a patched
+      # standard library, and tests run on the toolchain that ships.
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version: "1.27"
           check-latest: true
           cache-dependency-path: backend/go.sum
       - name: go vet
