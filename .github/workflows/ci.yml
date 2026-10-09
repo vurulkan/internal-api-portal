@@ -106,7 +106,7 @@ jobs:
           else echo "value=main-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"; fi
       - name: log in to GHCR
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
