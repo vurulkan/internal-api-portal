@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Save, Trash2 } from 'lucide-react';
+import { CheckCircle2, KeyRound, LogOut, RefreshCw, Save, Trash2, XCircle } from 'lucide-react';
 import {
   Alert,
   Badge,
@@ -26,8 +26,10 @@ import {
   Group,
   GroupPayload,
   LdapConfig,
+  LdapLoginStep,
   LdapUser,
   Permission,
+  Session,
   Role,
   RolePayload,
   SessionSettings,
@@ -38,7 +40,7 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-const tabs = ['Users', 'Groups', 'Roles', 'API Definitions', 'LDAP Settings', 'Azure AD', 'Session Settings', 'Audit Logs', 'System Settings'] as const;
+const tabs = ['Users', 'Groups', 'Roles', 'API Definitions', 'LDAP Settings', 'Azure AD', 'Session Settings', 'Sessions', 'Audit Logs', 'System Settings'] as const;
 type Tab = (typeof tabs)[number];
 
 const globalPermissionOptions = ['api.view', 'api.invoke'];
@@ -167,7 +169,13 @@ export function AdminPage() {
   const [apis, setApis] = useState<ApiDefinition[]>([]);
   const [ldap, setLdap] = useState<LdapConfig | null>(null);
   const [azureAd, setAzureAd] = useState<AzureADConfig | null>(null);
-  const [session, setSession] = useState<SessionSettings>({ sessionMinutes: 60 });
+  const [session, setSession] = useState<SessionSettings>({ sessionMinutes: 60, maxHours: 12 });
+  const [activeSessions, setActiveSessions] = useState<Session[]>([]);
+  // A temporary password from "Reset password", shown once until another user is selected.
+  const [issuedPassword, setIssuedPassword] = useState<{ username: string; password: string } | null>(null);
+  const [ldapTestUser, setLdapTestUser] = useState('');
+  const [ldapTestPassword, setLdapTestPassword] = useState('');
+  const [ldapTestSteps, setLdapTestSteps] = useState<LdapLoginStep[] | null>(null);
   const [system, setSystem] = useState<SystemSettings>({ brandTitle: '', logoDataUrl: '' });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditUser, setAuditUser] = useState('');
@@ -193,10 +201,11 @@ export function AdminPage() {
     setLoading(true);
     setError('');
     try {
-      const [usersData, groupsData, rolesData, apisData, ldapData, azureAdData, sessionData, systemData, auditData] = await Promise.all([
+      const [usersData, groupsData, rolesData, apisData, ldapData, azureAdData, sessionData, systemData, auditData, sessionsData] = await Promise.all([
         api.users(), api.groups(), api.roles(), api.adminApis(),
         api.ldap(), api.azureAd(), api.session(), api.system(),
         api.auditLogs(buildAuditQuery(auditUser, auditAction, auditPageSize, auditOffset)),
+        api.sessions(),
       ]);
 
       const nextUsers = usersData ?? [];
@@ -210,7 +219,8 @@ export function AdminPage() {
       setApis(nextApis);
       setLdap(ldapData);
       setAzureAd(azureAdData);
-      setSession(sessionData ?? { sessionMinutes: 60 });
+      setSession(sessionData ?? { sessionMinutes: 60, maxHours: 12 });
+      setActiveSessions(sessionsData?.items ?? []);
       setSystem(systemData ?? { brandTitle: '', logoDataUrl: '' });
       setAuditLogs(auditData?.items ?? []);
       setAuditTotal(auditData?.total ?? 0);
@@ -235,13 +245,13 @@ export function AdminPage() {
 
   useEffect(() => { void loadAll(); }, [auditPageSize, auditOffset]);
 
-  async function run(task: () => Promise<void>, successMessage: string) {
+  async function run(task: () => Promise<void>, successMessage: string | (() => string)) {
     setBusy(true);
     setError('');
     setMessage('');
     try {
       await task();
-      setMessage(successMessage);
+      setMessage(typeof successMessage === 'function' ? successMessage() : successMessage);
       await loadAll();
     } catch (taskError) {
       setError(taskError instanceof Error ? taskError.message : 'Operation failed.');
@@ -257,6 +267,7 @@ export function AdminPage() {
   const pathPrefixSuggestions = useMemo(() => Array.from(new Set(apis.flatMap((a) => a.allowedPathPrefixes ?? []))).sort(), [apis]);
 
   function selectUser(user?: User) {
+    setIssuedPassword(null);
     if (!user) { setUserForm(emptyUserForm()); return; }
     setUserForm({ id: user.id, username: user.username, displayName: user.displayName ?? '', email: user.email ?? '', password: '', authSource: user.authSource, mustChangePassword: user.mustChangePassword, isActive: user.isActive, isAdmin: user.isAdmin, groupIds: userGroupMap[user.id] ?? [] });
   }
@@ -359,7 +370,13 @@ export function AdminPage() {
   async function importSelectedLdapUsers() {
     const payload = ldapResults.filter((item) => selectedLdapUsers.includes(item.username));
     if (payload.length === 0) { setError('Select at least one LDAP user to import.'); return; }
-    await run(async () => { await api.importLdap(payload); setSelectedLdapUsers([]); }, 'LDAP users imported.');
+    let summary = 'LDAP users imported.';
+    await run(async () => {
+      const result = await api.importLdap(payload);
+      setSelectedLdapUsers([]);
+      summary = `Imported ${result.imported} LDAP user${result.imported === 1 ? '' : 's'}.` +
+        (result.skipped?.length ? ` Skipped (already a local or Azure AD account): ${result.skipped.join(', ')}.` : '');
+    }, () => summary);
   }
 
   if (loading) {
@@ -428,8 +445,28 @@ export function AdminPage() {
               title={userForm.id ? `Edit User #${userForm.id}` : 'Create User'}
               actions={
                 <>
+                  {userForm.id && userForm.authSource === 'local' && (
+                    <Button size="sm" disabled={busy} onClick={() => {
+                      const target = userForm.username;
+                      if (!window.confirm(`Reset the password of ${target}? They will be signed out and must set a new password.`)) return;
+                      void run(async () => {
+                        const result = await api.resetPassword(userForm.id!);
+                        setIssuedPassword({ username: target, password: result.temporaryPassword });
+                      }, `Password of ${target} reset.`);
+                    }}>
+                      <KeyRound className="h-3.5 w-3.5" aria-hidden="true" /> Reset password
+                    </Button>
+                  )}
                   {userForm.id && (
-                    <Button variant="danger" size="sm" onClick={() => run(async () => { await api.deleteUser(userForm.id!); setUserForm(emptyUserForm()); }, 'User deleted.')}>
+                    <Button size="sm" disabled={busy} onClick={() => run(async () => { await api.revokeUserSessions(userForm.id!); }, `Sessions of ${userForm.username} ended.`)}>
+                      <LogOut className="h-3.5 w-3.5" aria-hidden="true" /> Sign out sessions
+                    </Button>
+                  )}
+                  {userForm.id && (
+                    <Button variant="danger" size="sm" onClick={() => {
+                      if (!window.confirm(`Delete user ${userForm.username}? This can't be undone.`)) return;
+                      void run(async () => { await api.deleteUser(userForm.id!); setUserForm(emptyUserForm()); }, 'User deleted.');
+                    }}>
                       <Trash2 className="h-3.5 w-3.5" /> Delete
                     </Button>
                   )}
@@ -440,10 +477,24 @@ export function AdminPage() {
               }
             >
               <div className="space-y-4">
-                <Input label="Username" value={userForm.username} onChange={(v) => setUserForm({ ...userForm, username: v })} required />
-                <Input label="Display Name" value={userForm.displayName} onChange={(v) => setUserForm({ ...userForm, displayName: v })} />
-                <Input label="Email" value={userForm.email} onChange={(v) => setUserForm({ ...userForm, email: v })} />
-                <Input label={userForm.id ? 'New Password (optional)' : 'Password'} type="password" value={userForm.password} onChange={(v) => setUserForm({ ...userForm, password: v })} required={!userForm.id} />
+                {issuedPassword && (
+                  <Alert variant="warning">
+                    <div>
+                      Temporary password for <strong>{issuedPassword.username}</strong>:{' '}
+                      <code className="select-all rounded bg-white px-1.5 py-0.5 font-mono">{issuedPassword.password}</code>
+                      <p className="mt-1 text-xs">Shown only now. Hand it over securely; it must be changed at the next sign-in.</p>
+                    </div>
+                  </Alert>
+                )}
+                {userForm.id && userForm.authSource !== 'local' && (
+                  <Alert variant="info">Username, display name and e-mail come from {userForm.authSource === 'ldap' ? 'LDAP' : 'Azure AD'} and can't be edited here.</Alert>
+                )}
+                <Input label="Username" value={userForm.username} onChange={(v) => setUserForm({ ...userForm, username: v })} required disabled={!!userForm.id && userForm.authSource !== 'local'} />
+                <Input label="Display Name" value={userForm.displayName} onChange={(v) => setUserForm({ ...userForm, displayName: v })} disabled={!!userForm.id && userForm.authSource !== 'local'} />
+                <Input label="Email" value={userForm.email} onChange={(v) => setUserForm({ ...userForm, email: v })} disabled={!!userForm.id && userForm.authSource !== 'local'} />
+                {userForm.authSource === 'local' && (
+                  <Input label={userForm.id ? 'New Password (optional)' : 'Password'} type="password" autoComplete="new-password" value={userForm.password} onChange={(v) => setUserForm({ ...userForm, password: v })} required={!userForm.id} />
+                )}
                 <Input label="Auth Source" value={userForm.authSource} disabled />
                 <MultiSelect
                   label="Groups"
@@ -732,6 +783,35 @@ export function AdminPage() {
           </FormCard>
 
           <FormCard
+            title="Test a sign-in"
+            actions={
+              <Button disabled={busy || !ldapTestUser} onClick={() => run(async () => {
+                const result = await api.testLdapLogin(ldapTestUser, ldapTestPassword);
+                setLdapTestSteps(result.steps);
+                setLdapTestPassword('');
+              }, 'LDAP test sign-in finished.')}>
+                Test sign-in
+              </Button>
+            }
+          >
+            <p className="mb-3 text-sm text-gray-500">Runs the LDAP login steps with the saved settings and shows where a sign-in fails. Nothing is changed.</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input label="Username" autoComplete="off" value={ldapTestUser} onChange={setLdapTestUser} />
+              <Input label="Password" type="password" autoComplete="off" value={ldapTestPassword} onChange={setLdapTestPassword} helperText="Leave empty to test only the search." />
+            </div>
+            {ldapTestSteps && (
+              <ol className="mt-4 space-y-2 text-sm">
+                {ldapTestSteps.map((step) => (
+                  <li key={step.name} className="flex items-start gap-2">
+                    {step.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" aria-hidden="true" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" aria-hidden="true" />}
+                    <span><strong>{step.name}</strong>{step.ok ? '' : ' (failed)'}: <span className="break-words font-mono text-xs">{step.detail}</span></span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </FormCard>
+
+          <FormCard
             title="LDAP User Import"
             actions={
               <>
@@ -815,6 +895,13 @@ export function AdminPage() {
               <Input label="Client ID" value={azureAd.clientId} onChange={(v) => setAzureAd({ ...azureAd, clientId: v })} />
               <Input label={azureAd.passwordConfigured ? 'Client Secret (leave blank to keep current)' : 'Client Secret'} type="password" value={azureAd.clientSecret ?? ''} onChange={(v) => setAzureAd({ ...azureAd, clientSecret: v })} />
               <Input label="Redirect URL" value={azureAd.redirectUrl} onChange={(v) => setAzureAd({ ...azureAd, redirectUrl: v })} helperText="Example: https://portal.example.com/api/auth/azure/callback" />
+              <Textarea
+                label="Allowed groups (optional)"
+                value={(azureAd.allowedGroups ?? []).join('\n')}
+                onChange={(v) => setAzureAd({ ...azureAd, allowedGroups: v.split(/[\n,]/).map((g) => g.trim()).filter(Boolean) })}
+                helperText="Azure AD group object IDs, one per line. When set, only members may sign in. Requires the groups claim in the app registration's token configuration."
+                rows={3}
+              />
               <Alert variant="info">
                 Existing app groups and roles continue to work locally. Azure AD is used only as an additional login method.
               </Alert>
@@ -833,15 +920,73 @@ export function AdminPage() {
             </Button>
           }
         >
-          <div className="max-w-xs">
-            <FieldWrap label="Session Minutes" helperText="Minimum 5 minutes.">
+          <div className="grid max-w-xl gap-4 sm:grid-cols-2">
+            <FieldWrap label="Idle timeout (minutes)" helperText="A session ends after this long without activity. 5 minutes to 24 hours.">
               <input
                 type="number"
-                value={session.sessionMinutes}
-                onChange={(e) => setSession({ sessionMinutes: Number(e.target.value) })}
+                min={5}
+                max={1440}
+                value={Number.isFinite(session.sessionMinutes) ? session.sessionMinutes : ''}
+                onChange={(e) => setSession({ ...session, sessionMinutes: e.target.valueAsNumber })}
                 className={fieldBase}
               />
             </FieldWrap>
+            <FieldWrap label="Maximum session age (hours)" helperText="A session ends this long after sign-in, even when active. 1 hour to 30 days.">
+              <input
+                type="number"
+                min={1}
+                max={720}
+                value={Number.isFinite(session.maxHours) ? session.maxHours : ''}
+                onChange={(e) => setSession({ ...session, maxHours: e.target.valueAsNumber })}
+                className={fieldBase}
+              />
+            </FieldWrap>
+          </div>
+        </FormCard>
+      )}
+
+      {/* ── Sessions ── */}
+      {activeTab === 'Sessions' && (
+        <FormCard
+          title="Active sessions"
+          actions={<Button size="sm" onClick={() => void loadAll()} disabled={loading}><RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Refresh</Button>}
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-gray-200 text-xs uppercase text-gray-500">
+                <tr>
+                  <th scope="col" className="py-2 pr-4">User</th>
+                  <th scope="col" className="py-2 pr-4">Source</th>
+                  <th scope="col" className="py-2 pr-4">Address</th>
+                  <th scope="col" className="py-2 pr-4">Last active</th>
+                  <th scope="col" className="py-2 pr-4">Signed in</th>
+                  <th scope="col" className="py-2 pr-4">Expires</th>
+                  <th scope="col" className="py-2"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {activeSessions.map((s) => (
+                  <tr key={s.id}>
+                    <td className="py-2 pr-4 font-mono" title={s.userAgent}>{s.username}{s.current && <Badge variant="green" className="ml-2">you</Badge>}</td>
+                    <td className="py-2 pr-4">{s.authSource}</td>
+                    <td className="py-2 pr-4 font-mono">{s.ip}</td>
+                    <td className="py-2 pr-4">{new Date(s.lastUsedAt).toLocaleString()}</td>
+                    <td className="py-2 pr-4">{new Date(s.createdAt).toLocaleString()}</td>
+                    <td className="py-2 pr-4">{new Date(s.expiresAt).toLocaleString()}</td>
+                    <td className="py-2 text-right">
+                      {!s.current && (
+                        <Button size="sm" variant="ghost" onClick={() => run(async () => { await api.revokeSession(s.id); }, `Session of ${s.username} ended.`)}>
+                          End session
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {activeSessions.length === 0 && (
+                  <tr><td colSpan={7} className="py-6 text-center text-gray-500">No active sessions.</td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </FormCard>
       )}

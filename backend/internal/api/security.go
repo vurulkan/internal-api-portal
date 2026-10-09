@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net"
 	"net/http"
 	"strconv"
@@ -10,7 +9,6 @@ import (
 	"time"
 	"unicode"
 
-	"api-portal/backend/internal/auth"
 	"api-portal/backend/internal/models"
 	"api-portal/backend/internal/rbac"
 )
@@ -85,7 +83,8 @@ func (s *Server) secureRequest(r *http.Request) bool {
 //     fonts are self-hosted (M6).
 //   - img-src data:: the brand logo is stored as a data URL.
 //
-// Scripts are 'self' only; the Azure AD callback page sets its own nonce-based policy.
+// Scripts are 'self' only: no inline script anywhere (the Azure AD callback sets the
+// session cookie and redirects; it no longer renders a page).
 const contentSecurityPolicy = "default-src 'self'; " +
 	"base-uri 'self'; " +
 	"object-src 'none'; " +
@@ -210,50 +209,6 @@ func retryAfterSeconds(wait time.Duration) string {
 // ─── Identity ────────────────────────────────────────────────────────────────
 
 type identityKey struct{}
-
-// requireSession runs after auth.AuthMiddleware. It loads the user once per request,
-// rejects deleted or deactivated accounts (a valid token is not enough), and keeps
-// local users who must change their password away from everything except /me and
-// change-password.
-func (s *Server) requireSession(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		identity, ok := s.loadIdentity(r)
-		if !ok || !identity.User.IsActive {
-			writeError(w, r, http.StatusUnauthorized, "session is no longer valid")
-			return
-		}
-		if identity.User.MustChangePassword && identity.User.AuthSource == "local" && !allowedBeforePasswordChange(r) {
-			writeError(w, r, http.StatusForbidden, "password change required")
-			return
-		}
-		setRequestUser(r.Context(), identity.User.Username)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), identityKey{}, identity)))
-	})
-}
-
-func allowedBeforePasswordChange(r *http.Request) bool {
-	switch {
-	case r.Method == http.MethodGet && r.URL.Path == "/api/auth/me":
-		return true
-	case r.Method == http.MethodPost && r.URL.Path == "/api/auth/change-password":
-		return true
-	}
-	return false
-}
-
-func (s *Server) loadIdentity(r *http.Request) (*models.Identity, bool) {
-	claims, ok := auth.FromContext(r.Context())
-	if !ok {
-		return nil, false
-	}
-	user, err := s.store.GetUserByID(r.Context(), claims.UserID)
-	if err != nil {
-		return nil, false
-	}
-	groupIDs, _ := s.store.GetUserGroupIDs(r.Context(), user.ID)
-	permissions, _ := s.store.ResolvePermissions(r.Context(), user.ID)
-	return &models.Identity{User: *user, Permissions: permissions, GroupIDs: groupIDs}, true
-}
 
 // identityForRequest returns the identity requireSession stored on the request.
 func (s *Server) identityForRequest(r *http.Request) (*models.Identity, bool) {

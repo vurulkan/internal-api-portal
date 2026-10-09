@@ -253,3 +253,49 @@ func firstValue(entry *ldap.Entry, attrs ...string) string {
 	}
 	return ""
 }
+
+// LDAPStep is one stage of LDAPTestLogin.
+type LDAPStep struct {
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail"`
+}
+
+// LDAPTestLogin runs the login sequence for username / password and reports each
+// stage (connect, service bind, user search, user bind), so an administrator can
+// see where a sign-in fails. It does not check whether the user is imported.
+func LDAPTestLogin(cfg models.LDAPConfig, username, password string) []LDAPStep {
+	var steps []LDAPStep
+	add := func(name string, err error, okDetail string) bool {
+		if err != nil {
+			steps = append(steps, LDAPStep{Name: name, OK: false, Detail: err.Error()})
+			return false
+		}
+		steps = append(steps, LDAPStep{Name: name, OK: true, Detail: okDetail})
+		return true
+	}
+	conn, err := dialLDAP(cfg)
+	if !add("connect", err, "connected") {
+		return steps
+	}
+	defer conn.Close()
+	if cfg.BindDN != "" {
+		if !add("service bind", conn.Bind(cfg.BindDN, cfg.BindPassword), "bound as "+cfg.BindDN) {
+			return steps
+		}
+	} else {
+		add("service bind", nil, "anonymous (no bind DN configured)")
+	}
+	filter := UserLoginFilter(cfg, username)
+	userDN, _, err := findLDAPUser(conn, cfg, username)
+	if !add("user search", err, "filter "+filter+" matched "+userDN) {
+		steps[len(steps)-1].Detail += " (filter " + filter + ")"
+		return steps
+	}
+	if strings.TrimSpace(password) == "" {
+		steps = append(steps, LDAPStep{Name: "user bind", OK: false, Detail: "no password given; skipped"})
+		return steps
+	}
+	add("user bind", conn.Bind(userDN, password), "password accepted")
+	return steps
+}

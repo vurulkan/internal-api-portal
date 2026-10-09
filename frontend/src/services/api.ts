@@ -83,7 +83,20 @@ export type LdapConfig = {
   emailAttribute: string;
   passwordConfigured: boolean;
 };
-export type SessionSettings = { sessionMinutes: number };
+export type SessionSettings = { sessionMinutes: number; maxHours: number };
+export type Session = {
+  id: number;
+  userId: number;
+  username?: string;
+  authSource: string;
+  createdAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+  ip: string;
+  userAgent: string;
+  current?: boolean;
+};
+export type LdapLoginStep = { name: string; ok: boolean; detail: string };
 export type SystemSettings = { brandTitle: string; logoDataUrl: string };
 export type AzureADConfig = {
   enabled: boolean;
@@ -92,6 +105,7 @@ export type AzureADConfig = {
   clientSecret?: string;
   redirectUrl: string;
   passwordConfigured: boolean;
+  allowedGroups: string[];
 };
 export type AuthProviders = {
   local: boolean;
@@ -103,6 +117,10 @@ export type MeResponse = {
   permissions: string[];
   groupIds: number[];
   branding: SystemSettings;
+  passwordPolicy?: { minLength: number };
+  session?: { expiresAt: string; idleMinutes: number };
+  // e.g. "encryption_key_in_database" (administrators only)
+  warnings?: string[];
 };
 export type InvokeResponse = {
   statusCode: number;
@@ -156,19 +174,17 @@ export type ApiDefinitionPayload = {
   tags: string[];
 };
 
-const TOKEN_KEY = 'api_portal_token';
-
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+// Sessions live in an HttpOnly cookie the page can't read. Tokens kept in
+// localStorage by 1.3.0 and older are removed.
+try {
+  localStorage.removeItem('api_portal_token');
+} catch {
+  // storage unavailable (private mode): nothing to clean up
 }
 
-export function setToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-}
+// Every request carries this header; the backend refuses state-changing API
+// requests without it (CSRF protection, see backend/internal/api/session.go).
+const CSRF_HEADER = 'X-CSRF-Protection';
 
 // ApiError carries the backend's error body: {"error", "code", "requestId"}.
 // message is the human-readable text; requestId lets support find the log lines.
@@ -203,11 +219,8 @@ async function toApiError(response: Response): Promise<ApiError> {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers ?? {});
   headers.set('Content-Type', 'application/json');
-  const token = getToken();
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  const response = await fetch(path, { ...options, headers });
+  headers.set(CSRF_HEADER, '1');
+  const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
   if (!response.ok) {
     throw await toApiError(response);
   }
@@ -222,11 +235,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
   const headers = new Headers();
-  const token = getToken();
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  const response = await fetch(path, { method: 'POST', body: formData, headers });
+  headers.set(CSRF_HEADER, '1');
+  const response = await fetch(path, { method: 'POST', body: formData, headers, credentials: 'same-origin' });
   if (!response.ok) {
     throw await toApiError(response);
   }
@@ -238,7 +248,18 @@ async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
 
 export const api = {
   login: (username: string, password: string) =>
-    request<{ token: string }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+    request<{ ok: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  logout: () => request('/api/auth/logout', { method: 'POST' }),
+  mySessions: () => request<{ items: Session[] }>('/api/auth/sessions'),
+  revokeMySession: (id: number) => request(`/api/auth/sessions/${id}`, { method: 'DELETE' }),
+  revokeMyOtherSessions: () => request<{ sessionsRevoked: number }>('/api/auth/sessions/revoke-others', { method: 'POST' }),
+  sessions: () => request<{ items: Session[] }>('/api/admin/sessions'),
+  revokeSession: (id: number) => request(`/api/admin/sessions/${id}`, { method: 'DELETE' }),
+  revokeUserSessions: (id: number) => request<{ sessionsRevoked: number }>(`/api/admin/users/${id}/revoke-sessions`, { method: 'POST' }),
+  resetPassword: (id: number) =>
+    request<{ temporaryPassword: string; sessionsRevoked: number }>(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
+  testLdapLogin: (username: string, password: string) =>
+    request<{ ok: boolean; steps: LdapLoginStep[] }>('/api/admin/ldap/test-login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   me: () => request<MeResponse>('/api/auth/me'),
   changePassword: (currentPassword: string, newPassword: string) =>
     request('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
@@ -276,7 +297,9 @@ export const api = {
   updateLdap: (payload: LdapConfig) => request('/api/admin/ldap', { method: 'PUT', body: JSON.stringify(payload) }),
   testLdap: (payload: LdapConfig) => request('/api/admin/ldap/test', { method: 'POST', body: JSON.stringify(payload) }),
   searchLdap: (query: string) => request<LdapUser[]>('/api/admin/ldap/search', { method: 'POST', body: JSON.stringify({ query }) }),
-  importLdap: (payload: LdapUser[]) => request('/api/admin/ldap/import', { method: 'POST', body: JSON.stringify(payload) }),
+  // skipped: usernames that already belong to a local or Azure AD account (left unchanged).
+  importLdap: (payload: LdapUser[]) =>
+    request<{ imported: number; skipped: string[] }>('/api/admin/ldap/import', { method: 'POST', body: JSON.stringify(payload) }),
   azureAd: () => request<AzureADConfig>('/api/admin/azure-ad'),
   updateAzureAd: (payload: AzureADConfig) => request('/api/admin/azure-ad', { method: 'PUT', body: JSON.stringify(payload) }),
   testAzureAd: (payload: AzureADConfig) => request('/api/admin/azure-ad/test', { method: 'POST', body: JSON.stringify(payload) }),
@@ -287,10 +310,7 @@ export const api = {
   refreshApiSpec: (id: number) => request(`/api/admin/apis/${id}/refresh`, { method: 'POST' }),
   auditLogs: (query = '') => request<PaginatedAuditLogs>(`/api/admin/audit-logs${query}`),
   exportAuditLogs: async () => {
-    const token = getToken();
-    const response = await fetch('/api/admin/audit-logs/export', {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    });
+    const response = await fetch('/api/admin/audit-logs/export', { credentials: 'same-origin' });
     if (!response.ok) {
       throw await toApiError(response);
     }

@@ -143,6 +143,7 @@ export function Input({
   onChange,
   placeholder,
   className,
+  autoComplete,
 }: {
   label?: string;
   helperText?: string;
@@ -153,11 +154,13 @@ export function Input({
   onChange?: (v: string) => void;
   placeholder?: string;
   className?: string;
+  autoComplete?: string;
 }) {
   return (
     <FieldWrap label={label} helperText={helperText} required={required}>
       <input
         type={type}
+        autoComplete={autoComplete}
         required={required}
         disabled={disabled}
         value={value}

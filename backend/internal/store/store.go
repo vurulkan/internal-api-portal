@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"strings"
 	"time"
@@ -10,15 +9,21 @@ import (
 
 type Store struct {
 	conn *sql.DB
-	key  []byte
+	keys *Keyring
 }
 
-func New(conn *sql.DB) (*Store, error) {
-	key, err := ensureKey(context.Background(), conn)
+// Keys configures encryption at rest; both may be empty (legacy mode, see crypto.go).
+type Keys struct {
+	Current  []byte
+	Previous [][]byte
+}
+
+func New(conn *sql.DB, keys Keys) (*Store, error) {
+	keyring, err := newKeyring(context.Background(), conn, keys.Current, keys.Previous)
 	if err != nil {
 		return nil, err
 	}
-	return &Store{conn: conn, key: key}, nil
+	return &Store{conn: conn, keys: keyring}, nil
 }
 
 // Ping checks that the database answers a query (used by /readyz).
@@ -40,45 +45,28 @@ func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	return tx.Commit()
 }
 
-func (s *Store) SigningKey() []byte {
-	return s.key
-}
-
-func ensureKey(ctx context.Context, conn *sql.DB) ([]byte, error) {
-	var key []byte
-	err := conn.QueryRowContext(ctx, `SELECT signing_key FROM app_secrets WHERE id = 1`).Scan(&key)
-	if err == nil && len(key) > 0 {
-		return key, nil
-	}
-	if err != nil && err != sql.ErrNoRows {
-		return nil, err
-	}
-	key = make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, err
-	}
-	if _, err := conn.ExecContext(ctx, `INSERT OR REPLACE INTO app_secrets (id, signing_key) VALUES (1, ?)`, key); err != nil {
-		return nil, err
-	}
-	return key, nil
-}
-
-func (s *Store) EnsureDefaultAdmin(ctx context.Context, passwordHash string, sessionMinutes int) error {
+// EnsureBootstrapAdmin creates the first administrator when there are no users and
+// reports whether it did. The account must change its password at first sign-in.
+func (s *Store) EnsureBootstrapAdmin(ctx context.Context, username, passwordHash string, sessionMinutes int) (bool, error) {
 	var count int
 	if err := s.conn.QueryRowContext(ctx, `SELECT COUNT(1) FROM users`).Scan(&count); err != nil {
-		return err
+		return false, err
+	}
+	if count > 0 {
+		return false, nil
 	}
 	now := time.Now().UTC()
-	if count > 0 {
-		return nil
-	}
-	// First boot only: seed the session length from SESSION_MINUTES. Afterwards the
-	// value set in Admin → Session wins (it used to be reset on every restart).
-	if _, err := s.conn.ExecContext(ctx, `UPDATE session_settings SET session_minutes = ? WHERE id = 1`, sessionMinutes); err != nil {
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		// First boot only: seed the idle timeout from SESSION_MINUTES. Afterwards the
+		// value set in Admin → Session wins.
+		if _, err := tx.ExecContext(ctx, `UPDATE session_settings SET session_minutes = ? WHERE id = 1`, sessionMinutes); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO users (username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at) VALUES (?, ?, '', ?, 'local', 1, 1, 1, ?, ?)`,
+			username, "Administrator", passwordHash, now, now)
 		return err
-	}
-	_, err := s.conn.ExecContext(ctx, `INSERT INTO users (username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at) VALUES (?, ?, ?, ?, 'local', 1, 1, 1, ?, ?)`, "admin", "Administrator", "", passwordHash, now, now)
-	return err
+	})
+	return err == nil, err
 }
 
 func placeholders(n int) string {

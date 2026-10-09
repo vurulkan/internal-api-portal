@@ -35,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: portal
-          image: ghcr.io/vurulkan/internal-api-portal:1.3.0
+          image: ghcr.io/vurulkan/internal-api-portal:1.4.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -49,6 +49,18 @@ spec:
               value: 24h
             - name: BACKUP_KEEP
               value: "7"
+            # ── Secrets (from the optional Secret "internal-api-portal-secrets",
+            #    see secret.example.yaml; a missing key or Secret is treated as unset)
+            # Encrypts stored LDAP / Azure AD secrets. Without it the key is kept in
+            # the database and the admin UI shows a warning.
+            - name: DATA_ENCRYPTION_KEY_FILE
+              value: /etc/portal-secrets/data-encryption-key
+            - name: DATA_ENCRYPTION_KEY_PREVIOUS_FILE
+              value: /etc/portal-secrets/data-encryption-key-previous
+            # First start only: password of the initial "admin" account. Without it a
+            # random password is generated and written to the pod log once.
+            - name: BOOTSTRAP_ADMIN_PASSWORD_FILE
+              value: /etc/portal-secrets/bootstrap-admin-password
             # ── Behaviour ─────────────────────────────────────────────────────
             - name: TIMEZONE
               value: Europe/Istanbul
@@ -109,6 +121,9 @@ spec:
             # The root filesystem is read-only; SQLite and Go may need a temp dir.
             - name: tmp
               mountPath: /tmp
+            - name: secrets
+              mountPath: /etc/portal-secrets
+              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -116,3 +131,8 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
+        - name: secrets
+          secret:
+            secretName: internal-api-portal-secrets
+            optional: true
+            defaultMode: 0440

@@ -139,3 +139,9 @@ func scanUser(scanner interface{ Scan(...any) error }) (*models.User, error) {
 	user.IsAdmin = isAdmin == 1
 	return &user, nil
 }
+
+func (s *Store) CountUsers(ctx context.Context) (int, error) {
+	var count int
+	err := s.conn.QueryRowContext(ctx, `SELECT COUNT(1) FROM users`).Scan(&count)
+	return count, err
+}

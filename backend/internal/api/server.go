@@ -21,6 +21,7 @@ import (
 	"api-portal/backend/internal/models"
 	"api-portal/backend/internal/netguard"
 	"api-portal/backend/internal/openapi"
+	"api-portal/backend/internal/password"
 	"api-portal/backend/internal/proxy"
 	"api-portal/backend/internal/store"
 )
@@ -32,7 +33,7 @@ type Server struct {
 	proxy      *proxy.Service
 	config     config.Config
 	staticDir  string
-	jwtKey     []byte
+	passwords  password.Policy
 	timezone   *time.Location
 	limiters   map[int]*userLimiter
 	limitersMu sync.Mutex
@@ -42,10 +43,6 @@ type Server struct {
 	// same time either way and doesn't reveal which usernames exist.
 	dummyHash string
 }
-
-// minPasswordLength applies to every password set through the API. A full password
-// policy (configurable length, common-password list) is planned for M4.
-const minPasswordLength = 8
 
 func NewServer(store *store.Store, auditLogger *audit.Logger, cfg config.Config) *Server {
 	tz, err := time.LoadLocation(cfg.TimeZone)
@@ -62,7 +59,7 @@ func NewServer(store *store.Store, auditLogger *audit.Logger, cfg config.Config)
 		proxy:     proxy.New(guard.Client(cfg.ProxyTimeout, false), cfg.MaxRequestBytes, cfg.MaxResponseBytes),
 		config:    cfg,
 		staticDir: cfg.StaticDir,
-		jwtKey:    store.SigningKey(),
+		passwords: password.NewPolicy(cfg.PasswordMinLength),
 		timezone:  tz,
 		limiters:  map[int]*userLimiter{},
 		metrics:   metrics.NewPortal(),
@@ -73,7 +70,7 @@ func NewServer(store *store.Store, auditLogger *audit.Logger, cfg config.Config)
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Use(requestContext, s.requestLogger, recoverMiddleware, s.securityHeaders)
+	r.Use(requestContext, s.requestLogger, recoverMiddleware, s.securityHeaders, s.csrfProtect)
 
 	// Probes. /livez only says the process serves HTTP; /readyz also needs the
 	// database. /healthz is the pre-1.2.0 name, kept as an alias of /livez.
@@ -92,9 +89,13 @@ func (s *Server) Router() http.Handler {
 	r.Get("/api/system/public", s.handlePublicSettings)
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey), s.requireSession)
+		r.Use(s.requireSession)
 		r.Get("/api/auth/me", s.handleMe)
 		r.Post("/api/auth/change-password", s.handleChangePassword)
+		r.Post("/api/auth/logout", s.handleLogout)
+		r.Get("/api/auth/sessions", s.handleMySessions)
+		r.Delete("/api/auth/sessions/{id}", s.handleRevokeMySession)
+		r.Post("/api/auth/sessions/revoke-others", s.handleRevokeMyOtherSessions)
 		r.Get("/api/catalog", s.handleCatalog)
 		r.Get("/api/apis/{id}", s.handleAPIDetails)
 		r.Get("/api/apis/{id}/spec", s.handleAPISpec)
@@ -102,13 +103,18 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey), s.requireSession)
+		r.Use(s.requireSession)
 		r.With(s.requirePermission("user.manage")).Get("/api/admin/users", s.handleListUsers)
 		r.With(s.requirePermission("user.manage")).Post("/api/admin/users", s.handleCreateUser)
 		r.With(s.requirePermission("user.manage")).Put("/api/admin/users/{id}", s.handleUpdateUser)
 		r.With(s.requirePermission("user.manage")).Delete("/api/admin/users/{id}", s.handleDeleteUser)
 		r.With(s.requirePermission("user.manage")).Get("/api/admin/users/{id}/groups", s.handleGetUserGroups)
 		r.With(s.requirePermission("user.manage")).Put("/api/admin/users/{id}/groups", s.handleSetUserGroups)
+		r.With(s.requirePermission("user.manage")).Post("/api/admin/users/{id}/reset-password", s.handleResetPassword)
+		r.With(s.requirePermission("user.manage")).Post("/api/admin/users/{id}/revoke-sessions", s.handleRevokeUserSessions)
+
+		r.With(s.requireAdmin).Get("/api/admin/sessions", s.handleListSessions)
+		r.With(s.requireAdmin).Delete("/api/admin/sessions/{id}", s.handleRevokeSession)
 
 		r.With(s.requirePermission("group.manage")).Get("/api/admin/groups", s.handleListGroups)
 		r.With(s.requirePermission("group.manage")).Post("/api/admin/groups", s.handleCreateGroup)
@@ -129,6 +135,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission("ldap.manage")).Get("/api/admin/ldap", s.handleGetLDAP)
 		r.With(s.requirePermission("ldap.manage")).Put("/api/admin/ldap", s.handleUpdateLDAP)
 		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/test", s.handleTestLDAP)
+		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/test-login", s.handleTestLDAPLogin)
 		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/search", s.handleSearchLDAP)
 		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/import", s.handleImportLDAP)
 

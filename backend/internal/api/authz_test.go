@@ -42,6 +42,10 @@ var authzTable = []routeRule{
 
 	{"GET", "/api/auth/me", signedIn, ""},
 	{"POST", "/api/auth/change-password", signedIn, ""},
+	{"POST", "/api/auth/logout", signedIn, ""},
+	{"GET", "/api/auth/sessions", signedIn, ""},
+	{"DELETE", "/api/auth/sessions/{id}", signedIn, ""},
+	{"POST", "/api/auth/sessions/revoke-others", signedIn, ""},
 	{"GET", "/api/catalog", signedIn, ""},
 	{"GET", "/api/apis/{id}", signedIn, ""},
 	{"GET", "/api/apis/{id}/spec", signedIn, ""},
@@ -53,6 +57,10 @@ var authzTable = []routeRule{
 	{"DELETE", "/api/admin/users/{id}", signedIn, "user.manage"},
 	{"GET", "/api/admin/users/{id}/groups", signedIn, "user.manage"},
 	{"PUT", "/api/admin/users/{id}/groups", signedIn, "user.manage"},
+	{"POST", "/api/admin/users/{id}/reset-password", signedIn, "user.manage"},
+	{"POST", "/api/admin/users/{id}/revoke-sessions", signedIn, "user.manage"},
+	{"GET", "/api/admin/sessions", adminOnly, ""},
+	{"DELETE", "/api/admin/sessions/{id}", adminOnly, ""},
 
 	{"GET", "/api/admin/groups", signedIn, "group.manage"},
 	{"POST", "/api/admin/groups", signedIn, "group.manage"},
@@ -73,6 +81,7 @@ var authzTable = []routeRule{
 	{"GET", "/api/admin/ldap", signedIn, "ldap.manage"},
 	{"PUT", "/api/admin/ldap", signedIn, "ldap.manage"},
 	{"POST", "/api/admin/ldap/test", signedIn, "ldap.manage"},
+	{"POST", "/api/admin/ldap/test-login", signedIn, "ldap.manage"},
 	{"POST", "/api/admin/ldap/search", signedIn, "ldap.manage"},
 	{"POST", "/api/admin/ldap/import", signedIn, "ldap.manage"},
 
@@ -157,6 +166,11 @@ func TestAuthzMatrix(t *testing.T) {
 			continue // need an identity provider; covered by the Azure tests
 		}
 		t.Run(name, func(t *testing.T) {
+			rootToken, plainToken, managerToken := rootToken, plainToken, managerToken
+			if rule.pattern == "/api/auth/logout" {
+				// Logging out ends the session; don't spend the shared ones.
+				rootToken, plainToken, managerToken = e.login("root"), e.login("plain"), e.login("manager")
+			}
 			if rule.access == public {
 				if code, body := e.do(rule.method, path, "", nil); code == http.StatusUnauthorized {
 					t.Fatalf("public route answered 401: %s", body)

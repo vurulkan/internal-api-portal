@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"api-portal/backend/internal/auth"
 	"api-portal/backend/internal/models"
@@ -137,4 +138,29 @@ func (s *Server) handleTestAzureAD(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.azuread.test", ResourceType: "azuread", StatusCode: http.StatusOK})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleTestLDAPLogin runs the LDAP login steps for a username / password with the
+// saved configuration and reports each step. Nothing is created or changed.
+func (s *Server) handleTestLDAPLogin(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &payload) {
+		return
+	}
+	if strings.TrimSpace(payload.Username) == "" {
+		writeError(w, r, http.StatusBadRequest, "username is required")
+		return
+	}
+	cfg, err := s.store.GetLDAPConfig(r.Context())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "failed to load ldap config")
+		return
+	}
+	steps := auth.LDAPTestLogin(*cfg, payload.Username, payload.Password)
+	ok := len(steps) > 0 && steps[len(steps)-1].OK && steps[len(steps)-1].Name == "user bind"
+	s.recordAudit(r, models.AuditLog{Action: "admin.ldap.test_login", ResourceType: "ldap", ResourceName: auditUsername(payload.Username), StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]bool{"ok": ok})})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "steps": steps})
 }

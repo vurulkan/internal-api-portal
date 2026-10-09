@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"api-portal/backend/internal/models"
 )
@@ -19,19 +20,34 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
-	var session models.SessionSettings
-	if !decodeJSON(w, r, &session) {
+	var payload models.SessionSettings
+	if !decodeJSON(w, r, &payload) {
 		return
 	}
-	if session.SessionMinutes < 5 {
-		writeError(w, r, http.StatusBadRequest, "session timeout too low")
+	current, err := s.store.GetSessionSettings(r.Context())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "failed to load session settings")
 		return
 	}
-	if err := s.store.UpdateSessionSettings(r.Context(), session); err != nil {
+	if payload.MaxHours == 0 {
+		payload.MaxHours = current.MaxHours // older clients only send sessionMinutes
+	}
+	switch {
+	case payload.SessionMinutes < 5 || payload.SessionMinutes > 24*60:
+		writeError(w, r, http.StatusBadRequest, "idle timeout must be between 5 minutes and 24 hours")
+		return
+	case payload.MaxHours < 1 || payload.MaxHours > 30*24:
+		writeError(w, r, http.StatusBadRequest, "maximum session age must be between 1 hour and 30 days")
+		return
+	case time.Duration(payload.SessionMinutes)*time.Minute > time.Duration(payload.MaxHours)*time.Hour:
+		writeError(w, r, http.StatusBadRequest, "the idle timeout can't be longer than the maximum session age")
+		return
+	}
+	if err := s.store.UpdateSessionSettings(r.Context(), payload); err != nil {
 		writeError(w, r, http.StatusBadRequest, "failed to update session settings")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.session.update", ResourceType: "settings", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(session)})
+	s.recordAudit(r, models.AuditLog{Action: "admin.session.update", ResourceType: "settings", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(payload)})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

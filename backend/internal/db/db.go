@@ -215,6 +215,31 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_users_external_id ON users(external_id) WHERE external_id <> ''`,
 		)
 	}},
+	{6, "server-side sessions, session max age, azure allowed groups (1.4.0)", false, func(ctx context.Context, tx *sql.Tx) error {
+		// token_hash is SHA-256 of the cookie value: a database copy holds no usable
+		// session tokens.
+		if err := execAll(ctx, tx,
+			`CREATE TABLE IF NOT EXISTS sessions (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				token_hash TEXT NOT NULL UNIQUE,
+				user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				auth_source TEXT NOT NULL DEFAULT '',
+				created_at DATETIME NOT NULL,
+				last_used_at DATETIME NOT NULL,
+				expires_at DATETIME NOT NULL,
+				revoked_at DATETIME,
+				ip TEXT NOT NULL DEFAULT '',
+				user_agent TEXT NOT NULL DEFAULT ''
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+		); err != nil {
+			return err
+		}
+		if err := addColumn(ctx, tx, `ALTER TABLE session_settings ADD COLUMN max_hours INTEGER NOT NULL DEFAULT 12`); err != nil {
+			return err
+		}
+		return addColumn(ctx, tx, `ALTER TABLE azure_ad_config ADD COLUMN allowed_groups TEXT NOT NULL DEFAULT '[]'`)
+	}},
 }
 
 // Migrate applies every pending migration.

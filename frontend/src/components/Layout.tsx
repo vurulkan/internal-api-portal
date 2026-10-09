@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from 'react';
 import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, KeyRound, ShieldCheck, Menu, X, LogOut } from 'lucide-react';
+import { LayoutGrid, UserRound, ShieldCheck, Menu, X, LogOut, TriangleAlert } from 'lucide-react';
 import { cn } from './ui';
 
 type Props = {
@@ -8,19 +8,24 @@ type Props = {
   logoDataUrl?: string;
   username: string;
   isAdmin: boolean;
-  canChangePassword: boolean;
+  warnings?: string[];
   onLogout: () => void;
   children: ReactNode;
 };
 
-export function Layout({ brandTitle, logoDataUrl, username, isAdmin, canChangePassword, onLogout, children }: Props) {
+const WARNING_TEXT: Record<string, string> = {
+  encryption_key_in_database:
+    'Stored LDAP and Azure AD secrets are encrypted with a key kept in the database itself. Set DATA_ENCRYPTION_KEY (or DATA_ENCRYPTION_KEY_FILE) from a secret store; see the README.',
+};
+
+export function Layout({ brandTitle, logoDataUrl, username, isAdmin, warnings = [], onLogout, children }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
   const navItems = [
     { label: 'API Catalog', path: '/', Icon: LayoutGrid },
-    ...(canChangePassword ? [{ label: 'Change Password', path: '/change-password', Icon: KeyRound }] : []),
+    { label: 'Account', path: '/account', Icon: UserRound },
     ...(isAdmin ? [{ label: 'Admin Console', path: '/admin', Icon: ShieldCheck }] : []),
   ];
 
@@ -130,6 +135,12 @@ export function Layout({ brandTitle, logoDataUrl, username, isAdmin, canChangePa
         </header>
 
         <main className="flex-1 p-6">
+          {warnings.map((code) => (
+            <div key={code} role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{WARNING_TEXT[code] ?? code}</span>
+            </div>
+          ))}
           {children}
         </main>
       </div>

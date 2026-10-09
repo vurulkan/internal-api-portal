@@ -163,40 +163,54 @@ Delegation rules (since 1.1.0):
 
 ## Authentication
 
-### Local Users
+### Sessions
 
-- Passwords are hashed with Argon2id and must be at least 8 characters (taken as typed, not trimmed).
-- Local users can be forced to change password on first login. Until they do, every API call except `GET /api/auth/me` and `POST /api/auth/change-password` is refused.
-- Local users can use the Change Password flow.
+- Signing in (password or Microsoft) creates a **server-side session**. The browser holds only an opaque random token in an `HttpOnly`, `SameSite=Strict` cookie (`__Host-portal_session` over HTTPS, `portal_session` over plain HTTP); page scripts can't read it, and the database stores only its SHA-256.
+- A session ends after the **idle timeout** (Admin → Session Settings, default 60 minutes, seeded from `SESSION_MINUTES` on first start) or the **maximum session age** (default 12 hours), whichever comes first. Every request checks the session, so ending one takes effect immediately.
+- Sessions end on sign-out, when a user changes their password (other sessions), when an administrator resets the password, deactivates the user, removes admin rights or deletes the user, and when ended from **Account → Active sessions** (own) or **Admin → Sessions** (anyone's, administrators only). Ended and expired sessions are purged after a day.
+- If the session store can't be read, requests fail with `503` rather than being let through.
+- **CSRF**: besides `SameSite=Strict`, every state-changing API request must send the `X-CSRF-Protection` header (any value); requests whose `Origin` is another site, or that the browser marks `Sec-Fetch-Site: cross-site`, are refused. A cross-site page can't add the header without a CORS preflight, which the portal never answers.
+- Scripts: there are no bearer tokens. Sign in with a cookie jar and send the header, e.g. `curl -c jar -H 'X-CSRF-Protection: 1' -d '{"username":"…","password":"…"}' https://portal/api/auth/login`, then `curl -b jar -H 'X-CSRF-Protection: 1' …`.
+
+### Passwords (local users)
+
+- Hashed with Argon2id; taken as typed (no trimming).
+- Policy on create, change and admin reset: at least `PASSWORD_MIN_LENGTH` characters (default 12, minimum 8), at most 128, must not contain the username, and must not be one of ~2,000 commonly used passwords (SecLists, MIT licence).
+- A local user with a pending forced change can only call `GET /api/auth/me`, `POST /api/auth/change-password` and `POST /api/auth/logout` until they set a new password.
+- **Reset password** (Admin → Users, local users only) generates a 16-character temporary password, shown once to the administrator, ends the user's sessions and forces a change at the next sign-in. It is never logged or audited.
 - After 5 failed sign-ins for the same username from the same address within 15 minutes, that pair is locked for 5 minutes (`429` + `Retry-After`, audited as `login.locked`).
-- Deactivating a user ends their access on their next request; existing tokens stop working.
 
 ### LDAP Users
 
-- LDAP users are imported into the local catalog.
-- Authentication uses LDAP bind on login.
-- LDAP users do not use the local password change screen.
-- The Change Password navigation item is hidden for LDAP users.
+- LDAP users are imported into the local catalog; sign-in is an LDAP bind.
+- Username, display name and e-mail come from the directory and can't be edited in the portal; the password is changed in the directory.
+- **Admin → LDAP → Test a sign-in** runs the login steps (connect, service bind, user search with the effective filter, user bind) for a username / password and shows where it fails, without changing anything.
 
 ### Azure AD Users
 
-- Azure AD is available as an additional login provider.
-- Authentication uses the Microsoft identity platform via OIDC.
-- On first successful Azure AD login, the portal creates the local user record just in time and binds it to the Azure identity (tenant id + object id).
-- Existing local RBAC still applies because authorization remains inside the portal.
-- Azure AD users do not use the local password change screen.
-- Logout is application-local only and does not trigger global Microsoft sign-out.
+- Azure AD is an additional sign-in method (OIDC authorization code flow with state, nonce and **PKCE**; the ID token signature is verified).
+- On first sign-in the portal creates the user and binds it to the Azure identity (tenant id + object id).
+- **Allowed groups** (optional, Admin → Azure AD): when set, only members of these Azure AD group object ids may sign in. Add the *groups* claim in the app registration's token configuration; users in too many groups for the token (overage) are refused with a message.
+- Authorization stays in the portal (groups and roles). Signing out ends the portal session, not the Microsoft session.
 
 ## Default Bootstrap
 
-On first startup the portal seeds a default admin user:
+On the first start, with an empty database, the portal creates an administrator account:
 
-- username: `admin`
-- password: `admin`
+- username: `BOOTSTRAP_ADMIN_USERNAME` (default `admin`)
+- password: `BOOTSTRAP_ADMIN_PASSWORD` / `BOOTSTRAP_ADMIN_PASSWORD_FILE`; if neither is set, a random 20-character password is generated and written **once** to the log (`bootstrap.admin_created`).
 
-The seeded admin is forced to change the password on first login.
+Either way the password must be changed at the first sign-in. Existing databases are not touched; there is no `admin` / `admin` account any more.
 
-Change it immediately.
+## Encryption at Rest
+
+The LDAP bind password and the Azure AD client secret are stored encrypted (AES-256-GCM). Set the key outside the database:
+
+- `DATA_ENCRYPTION_KEY` or `DATA_ENCRYPTION_KEY_FILE`: 32 random bytes, base64 or hex (`openssl rand -base64 32`). At startup every stored secret is re-encrypted with it and the key that older versions kept in the database is deleted, so a copy of the database alone can no longer decrypt them (`crypto.rekey` log line).
+- Without it (legacy mode) the key stays in the database and administrators see a warning banner.
+- Rotation: put the old key in `DATA_ENCRYPTION_KEY_PREVIOUS(_FILE)` and the new one in `DATA_ENCRYPTION_KEY(_FILE)`, restart; the previous key can be dropped after that restart.
+- If the key is lost, the stored secrets can't be decrypted (`crypto.rekey_failed` in the log); enter the LDAP bind password and Azure AD client secret again in the admin UI.
+- A malformed key stops startup.
 
 ## Environment Variables
 
@@ -207,12 +221,17 @@ Change it immediately.
 | `STATIC_DIR` | `/app/public` | Frontend build directory served by backend |
 | `TIMEZONE` | `UTC` | Time zone for audit formatting and time display |
 | `LOG_RETENTION_DAYS` | `30` | Audit retention window |
-| `SESSION_MINUTES` | `60` | Session length seeded on the first start; afterwards the value set in Admin → Session is kept across restarts |
+| `SESSION_MINUTES` | `60` | Idle timeout seeded on the first start; afterwards Admin → Session Settings is used (with the maximum session age, default 12 hours) |
+| `DATA_ENCRYPTION_KEY` / `_FILE` | _(empty)_ | Key for secrets at rest (see Encryption at Rest) |
+| `DATA_ENCRYPTION_KEY_PREVIOUS` / `_FILE` | _(empty)_ | Previous key, during a rotation |
+| `BOOTSTRAP_ADMIN_USERNAME` | `admin` | First start only: the administrator account to create |
+| `BOOTSTRAP_ADMIN_PASSWORD` / `_FILE` | _(generated)_ | First start only: its password (changed at first sign-in) |
+| `PASSWORD_MIN_LENGTH` | `12` | Minimum length of new local passwords (at least 8) |
 | `PROXY_TIMEOUT_SECONDS` | `30` | Upstream request timeout |
 | `MAX_REQUEST_BYTES` | `1048576` | Max proxied request body size |
 | `MAX_RESPONSE_BYTES` | `5242880` | Max proxied response body size |
 | `TRUSTED_PROXIES` | _(empty)_ | Comma-separated CIDRs / IPs of reverse proxies (ingress) whose `X-Forwarded-For` / `X-Forwarded-Proto` are believed. Empty: the headers are ignored and the TCP peer address is used for audit and login lockout. Set it to your ingress controller's pod CIDR. |
-| `COOKIE_SECURE` | `auto` | Secure flag of the Azure AD state cookies: `auto` (TLS, or `https` from a trusted proxy), `true`, `false` |
+| `COOKIE_SECURE` | `auto` | Secure flag (and `__Host-` name) of the session and Azure AD cookies: `auto` (TLS, or `https` from a trusted proxy), `true`, `false`. Behind a TLS-terminating ingress set `TRUSTED_PROXIES` or `COOKIE_SECURE=true`. |
 | `PROXY_DENY_CIDRS` | _(empty)_ | Extra networks the try-it proxy and spec fetcher may never connect to |
 | `PROXY_ALLOW_LOOPBACK` | `false` | Allow upstreams on `127.0.0.0/8` / `::1` (local development only) |
 | `LOG_FORMAT` | `json` | `json` or `text` |
@@ -358,10 +377,19 @@ What they set up:
 - nightly backups to `/data/backups` (`BACKUP_INTERVAL=24h`, 7 kept)
 - `PersistentVolumeClaim` (5 Gi, ReadWriteOnce) and a `ClusterIP` `Service` on port 80
 
+Secrets: the Deployment mounts the optional Secret `internal-api-portal-secrets` at `/etc/portal-secrets` for `DATA_ENCRYPTION_KEY_FILE` and `BOOTSTRAP_ADMIN_PASSWORD_FILE`. Create it as shown in [deploy/secret.example.yaml](deploy/secret.example.yaml) (it isn't part of the kustomization, so a re-apply never overwrites it). Without it the pod still starts: the key stays in the database and the generated bootstrap password is in the pod log.
+
 The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (`images.newTag`); bump it to upgrade. Optional examples, not applied by default:
 
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
+
+### Upgrading to 1.4.0
+
+- Everyone signs in again once: sessions moved from browser-stored tokens to server-side sessions in a cookie.
+- Scripts that called the API with `Authorization: Bearer` need a cookie jar and the `X-CSRF-Protection` header (see Sessions).
+- Create the Secret with `data-encryption-key` before or after upgrading; at the next start the stored LDAP / Azure AD secrets move to that key.
+- New local passwords need 12 characters by default (`PASSWORD_MIN_LENGTH`); existing passwords keep working.
 
 ### Upgrading from 1.2.0 or older
 
@@ -616,7 +644,7 @@ This first phase does not require Microsoft Graph permissions.
 - The login page shows `Sign in with Microsoft` only when Azure AD is enabled.
 - Users are matched on their Azure identity (tenant id + object id) only, never to local or LDAP accounts. Azure AD accounts created before 1.1.0 are bound once, on their next sign-in, by e-mail (or username).
 - If no matching Azure AD account exists, the portal creates one with `authSource = azuread`. If a local or LDAP account has the same e-mail, a separate account is created and the server logs `azure.link.skipped`; move that person's group memberships to the new account.
-- Disabled accounts can't sign in through Azure AD.
+- Disabled accounts, and users outside the allowed groups (when configured), can't sign in; the login page says why.
 - Group and role assignment still happens in the portal admin UI.
 - LDAP remains available and unchanged when Azure AD is configured.
 
