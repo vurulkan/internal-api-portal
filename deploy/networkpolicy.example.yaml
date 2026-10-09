@@ -1,0 +1,44 @@
+# Example: only the ingress controller may reach the portal, and the portal may only
+# make DNS queries and connections to the networks your internal APIs live in.
+# Adjust the namespace label and CIDRs, then add this file to kustomization.yaml.
+# Requires a CNI that enforces NetworkPolicy (Calico, Cilium, ...).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal-api-portal
+  namespace: internal-api-portal
+spec:
+  podSelector:
+    matchLabels:
+      app: internal-api-portal
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8080
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Internal APIs and their OpenAPI documents (replace with your ranges).
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+    # LDAP / Azure AD, if used (Azure AD needs HTTPS to login.microsoftonline.com).
+    # - to:
+    #     - ipBlock:
+    #         cidr: 0.0.0.0/0
+    #   ports:
+    #     - port: 443
+    #     - port: 636

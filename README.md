@@ -60,25 +60,28 @@ The portal backend is the security boundary.
 
 ```text
 backend/
-  cmd/server
-  internal/api
-  internal/auth
-  internal/audit
-  internal/config
-  internal/db
+  cmd/server          entry point; also the healthcheck / backup / version commands
+  internal/api        HTTP handlers (one file per area), middleware, authorization table test
+  internal/auth       passwords, JWT, LDAP, Azure AD
+  internal/audit      audit log writer and retention
+  internal/config     environment variables
+  internal/db         SQLite connection, versioned migrations, backups
+  internal/logging    slog setup, request ids
+  internal/metrics    Prometheus text-format metrics
   internal/models
-  internal/openapi
-  internal/proxy
+  internal/netguard   dial-time guard for upstream connections
+  internal/openapi    spec fetching and sanitising
+  internal/proxy      try-it forwarding
   internal/rbac
-  internal/store
+  internal/store      queries, one file per entity
 
 frontend/
   src/components
   src/pages
   src/services
 
-deploy/
-docker/
+deploy/               kustomize manifests (+ optional ingress / network policy examples)
+.github/              CI and Dependabot
 ```
 
 ## Technology Stack
@@ -259,10 +262,8 @@ npm run build
 
 ```bash
 cd (Project Root)
-docker build -t internal-api-portal:local .
-docker run --rm -p 8080:8080 \
-  -e DATA_PATH=/data/app.db \
-  -e STATIC_DIR=/app/public \
+docker build --build-arg VERSION=local -t internal-api-portal:local .
+docker run --rm -p 8080:8080 --read-only --tmpfs /tmp \
   -v internal-api-portal-data:/data \
   internal-api-portal:local
 ```
@@ -271,69 +272,100 @@ Open:
 
 - [http://localhost:8080](http://localhost:8080)
 
-## Ready Image
+## Images
 
-If you want to use the prebuilt image directly, use:
+Published to GHCR by CI, for `linux/amd64` and `linux/arm64`:
 
-```text
-ghcr.io/vurulkan/internal-api-portal:latest
-```
+| Tag | Points to |
+|---|---|
+| `X.Y.Z` (e.g. `1.3.0`) | that release |
+| `X.Y` | newest patch of that minor release |
+| `latest` | newest release |
+| `main`, `sha-<commit>` | the current `main` branch (unreleased) |
 
-### Run the ready image locally
+Every image carries an SBOM and SLSA provenance and is signed with cosign (keyless, GitHub OIDC). Verify before deploying:
 
 ```bash
-docker run --rm -p 8080:8080 \
-  -e DATA_PATH=/data/app.db \
-  -e STATIC_DIR=/app/public \
-  -v internal-api-portal-data:/data \
-  ghcr.io/vurulkan/internal-api-portal:latest
+cosign verify ghcr.io/vurulkan/internal-api-portal:1.3.0 \
+  --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-## Docker Build Pattern
+### Run the published image locally
 
-The Dockerfile uses a multi-stage build:
+```bash
+docker run --rm -p 8080:8080 --read-only --tmpfs /tmp \
+  -v internal-api-portal-data:/data \
+  ghcr.io/vurulkan/internal-api-portal:1.3.0
+```
 
-1. build frontend assets with Node
-2. build the Go backend binary
-3. copy both into a lightweight runtime image
-4. serve the frontend from the backend
+## Container Image
 
-Runtime notes:
+- Multi-stage build: the frontend (Node 24) and the Go binary are built on the build machine's platform and cross-compiled; base images are pinned by digest and updated by Dependabot.
+- Runtime: `gcr.io/distroless/static-debian12:nonroot` — no shell, no package manager; CA certificates and time zones included. About 30 MB.
+- Runs as **uid 100 / gid 101**, never as root. This is the same user the images up to 1.2.0 switched to after start-up, so existing volumes keep working without a `chown`.
+- `/data` (the volume) must be writable by uid 100 or gid 101. Docker named volumes are; for a **bind mount** run `sudo chown -R 100:101 <host dir>` once.
+- Works with a read-only root filesystem (`--read-only --tmpfs /tmp`).
+- `HEALTHCHECK` runs `/app/server healthcheck` (calls `/livez`).
+- Commands: `/app/server backup` (see Backups), `/app/server version`.
 
-- SQLite data should live on a mounted volume
-- the entrypoint prepares the data directory for the non-root runtime user
+## Backups
+
+The database is a single SQLite file in WAL mode. Don't copy `app.db` while the portal runs; use the built-in backup, which writes a consistent copy with `VACUUM INTO`:
+
+```bash
+# Docker
+docker exec <container> /app/server backup
+# Kubernetes
+kubectl -n internal-api-portal exec deploy/internal-api-portal -- /app/server backup
+```
+
+It prints the file it wrote, `/data/backups/app-<UTC timestamp>.db`, and keeps the newest `BACKUP_KEEP` copies. For scheduled copies set `BACKUP_INTERVAL` (the Kubernetes manifest uses `24h`). Backups live on the same volume as the database, so also copy them off the volume, e.g. with your volume snapshot tooling.
+
+| Variable | Default | |
+|---|---|---|
+| `BACKUP_INTERVAL` | _(off)_ | Go duration (`24h`, `6h`); empty or `0` disables scheduled backups |
+| `BACKUP_KEEP` | `7` | Copies to keep |
+| `BACKUP_DIR` | `backups` next to `DATA_PATH` | Where copies are written |
+
+Restore (Kubernetes): scale to zero, replace the file from a helper pod, scale up.
+
+```bash
+kubectl -n internal-api-portal scale deploy/internal-api-portal --replicas=0
+kubectl -n internal-api-portal run restore --rm -it --restart=Never --image=busybox:1.37 \
+  --overrides='{"spec":{"securityContext":{"runAsUser":100,"runAsGroup":101},"containers":[{"name":"restore","image":"busybox:1.37","stdin":true,"tty":true,"command":["sh"],"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"internal-api-portal-data"}}]}}'
+# inside the helper pod:
+#   ls /data/backups
+#   rm -f /data/app.db-wal /data/app.db-shm && cp /data/backups/app-<timestamp>.db /data/app.db
+kubectl -n internal-api-portal scale deploy/internal-api-portal --replicas=1
+```
 
 ## Kubernetes Deployment
 
-Example manifests are provided under [deploy]((Project Root)/deploy).
-
-The default deployment manifest is already configured to use the ready image:
-
-```text
-ghcr.io/vurulkan/internal-api-portal:latest
-```
-
-If you want to deploy the ready image directly, apply the manifests as-is:
-
-Apply:
+Manifests are in [deploy](deploy) and applied with kustomize:
 
 ```bash
-kubectl apply -f (Project Root)/deploy/namespace.yaml
-kubectl apply -f (Project Root)/deploy/pvc.yaml
-kubectl apply -f (Project Root)/deploy/deployment.yaml
-kubectl apply -f (Project Root)/deploy/service.yaml
+kubectl apply -k deploy/
 ```
 
-Deployment expectations:
+What they set up:
 
-- a persistent volume is mounted at `/data`
-- probes: liveness `/livez`, readiness `/readyz` (see Health Checks)
-- the same container serves both frontend and backend
-- the provided manifest defaults to the image's root startup path for maximum compatibility with mounted PVCs
-- if you want a strict non-root deployment, adjust the deployment security context and volume ownership strategy to match your cluster policy (a hardened, non-root manifest is planned for 1.3.0)
-- run a single replica: SQLite on a ReadWriteOnce volume and the in-memory rate limiters assume one instance
+- `Deployment` with **one replica** and `strategy: Recreate` (SQLite on a ReadWriteOnce volume: one writer; a rolling update would wait on the volume or run two writers)
+- pod security: non-root uid 100 / gid 101, `fsGroup: 101`, seccomp `RuntimeDefault`, no ServiceAccount token, all capabilities dropped, no privilege escalation, **read-only root filesystem** with an `emptyDir` for `/tmp`
+- startup, liveness (`/livez`) and readiness (`/readyz`) probes; CPU / memory requests and limits
+- nightly backups to `/data/backups` (`BACKUP_INTERVAL=24h`, 7 kept)
+- `PersistentVolumeClaim` (5 Gi, ReadWriteOnce) and a `ClusterIP` `Service` on port 80
 
-If you prefer to build and publish your own image, replace the image reference in [deploy/deployment.yaml]((Project Root)/deploy/deployment.yaml).
+The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (`images.newTag`); bump it to upgrade. Optional examples, not applied by default:
+
+- [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
+- [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
+
+### Upgrading from 1.2.0 or older
+
+The old manifest started the container as root (the entrypoint `chown`ed `/data` to uid 100 and dropped privileges). 1.3.0 starts as uid 100 directly, so the data written by older versions is already owned correctly. `kubectl apply -k deploy/` replaces the old Deployment (the strategy changes to `Recreate`); the data on the PVC is kept. Tested: data created by 1.2.0 with the old manifest is readable and writable after the upgrade.
+
+If you changed the old manifest to run as another user, make `/data` writable by uid 100 or gid 101 first.
 
 ## Health Checks, Metrics and Logs
 

@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +43,12 @@ type Config struct {
 	// HSTSEnabled adds Strict-Transport-Security; turn on only when the portal is
 	// reached exclusively over HTTPS.
 	HSTSEnabled bool
+
+	// Scheduled database backups (VACUUM INTO). BackupInterval 0 disables them; the
+	// `server backup` command works regardless.
+	BackupDir      string
+	BackupInterval time.Duration
+	BackupKeep     int
 }
 
 func Load() Config {
@@ -60,12 +67,32 @@ func Load() Config {
 		CookieSecure:       strings.ToLower(env("COOKIE_SECURE", "auto")),
 		ProxyDenyCIDRs:     envCIDRs("PROXY_DENY_CIDRS"),
 		ProxyAllowLoopback: envBool("PROXY_ALLOW_LOOPBACK", false),
+		BackupDir:          os.Getenv("BACKUP_DIR"),
 		LogFormat:          env("LOG_FORMAT", "json"),
 		LogLevel:           env("LOG_LEVEL", "info"),
 		MetricsEnabled:     envBool("METRICS_ENABLED", true),
 		MetricsAddr:        env("METRICS_ADDR", ""),
 		HSTSEnabled:        envBool("HSTS_ENABLED", false),
+		BackupInterval:     envDurationOrOff("BACKUP_INTERVAL"),
+		BackupKeep:         envInt("BACKUP_KEEP", 7),
 	}
+}
+
+// BackupDirFor returns BACKUP_DIR, defaulting to "backups" next to the database.
+func (c Config) BackupDirFor() string {
+	if c.BackupDir != "" {
+		return c.BackupDir
+	}
+	return filepath.Join(filepath.Dir(c.DataPath), "backups")
+}
+
+// envDurationOrOff reads a duration where empty or "0" means disabled.
+func envDurationOrOff(key string) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" || raw == "0" {
+		return 0
+	}
+	return envDuration(key, 0)
 }
 
 // envDuration reads a Go duration ("90m", "6h"); values below a minute fall back.

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -129,5 +130,38 @@ func TestMigrationVersionsAreOrdered(t *testing.T) {
 		if migrations[i].version <= migrations[i-1].version {
 			t.Fatalf("migration %d listed after %d", migrations[i].version, migrations[i-1].version)
 		}
+	}
+}
+
+func TestBackupIsConsistentAndPruned(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(filepath.Join(dir, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Conn.Close()
+	exec(t, database.Conn, `INSERT INTO "groups" (name, created_at) VALUES ('devs', ?)`, time.Now().UTC())
+
+	backups := filepath.Join(dir, "backups")
+	path, err := Backup(context.Background(), database.Conn, backups, 2)
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	copyDB := openRaw(t, path)
+	if got := count(t, copyDB, `SELECT COUNT(*) FROM "groups"`); got != 1 {
+		t.Fatalf("backup has %d groups, want 1", got)
+	}
+	// Older copies beyond keep are removed.
+	for _, name := range []string{"app-20200101-000000.db", "app-20200102-000000.db"} {
+		if err := os.WriteFile(filepath.Join(backups, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pruneBackups(backups, 2); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(backups)
+	if len(entries) != 2 || entries[0].Name() != "app-20200102-000000.db" {
+		t.Fatalf("after prune: %v", entries)
 	}
 }
