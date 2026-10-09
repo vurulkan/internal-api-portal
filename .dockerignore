@@ -1,0 +1,10 @@
+.git
+.github
+.claude
+**/.DS_Store
+**/node_modules
+frontend/dist
+backend/server
+deploy
+docker
+*.md

@@ -1,0 +1,29 @@
+# Example TLS ingress (ingress-nginx). Then set on the Deployment:
+#   TRUSTED_PROXIES = the ingress controller's pod CIDR
+#   HSTS_ENABLED    = "true" once HTTPS is the only way in
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: internal-api-portal
+  namespace: internal-api-portal
+  annotations:
+    # Try-it bodies are base64 in JSON: allow a bit more than MAX_REQUEST_BYTES.
+    nginx.ingress.kubernetes.io/proxy-body-size: "4m"
+    # Upstream calls can take up to PROXY_TIMEOUT_SECONDS.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [api-portal.example.internal]
+      secretName: internal-api-portal-tls
+  rules:
+    - host: api-portal.example.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: internal-api-portal
+                port:
+                  name: http

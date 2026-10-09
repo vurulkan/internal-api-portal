@@ -1,0 +1,15 @@
+# kubectl apply -k deploy/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: internal-api-portal
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - service.yaml
+  - deployment.yaml
+# Optional, review before adding to resources:
+#   - networkpolicy.example.yaml   restrict traffic to the ingress controller
+#   - ingress.example.yaml         TLS ingress
+images:
+  - name: ghcr.io/vurulkan/internal-api-portal
+    newTag: "1.3.0"
