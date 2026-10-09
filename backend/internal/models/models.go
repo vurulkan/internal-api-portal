@@ -69,10 +69,31 @@ type AzureADConfig struct {
 	ClientSecret       string `json:"clientSecret,omitempty"`
 	RedirectURL        string `json:"redirectUrl"`
 	PasswordConfigured bool   `json:"passwordConfigured"`
+	// AllowedGroups, when set, limits sign-in to members of these Azure AD group
+	// object ids (needs the "groups" claim in the app registration).
+	AllowedGroups []string `json:"allowedGroups"`
 }
 
+// SessionSettings: a session ends after SessionMinutes without activity (idle
+// timeout) or MaxHours after sign-in, whichever comes first.
 type SessionSettings struct {
 	SessionMinutes int `json:"sessionMinutes"`
+	MaxHours       int `json:"maxHours"`
+}
+
+// Session is a signed-in browser. The token itself is never stored, only its hash.
+type Session struct {
+	ID         int        `json:"id"`
+	UserID     int        `json:"userId"`
+	Username   string     `json:"username,omitempty"`
+	AuthSource string     `json:"authSource"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	LastUsedAt time.Time  `json:"lastUsedAt"`
+	ExpiresAt  time.Time  `json:"expiresAt"`
+	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
+	IP         string     `json:"ip"`
+	UserAgent  string     `json:"userAgent"`
+	Current    bool       `json:"current,omitempty"`
 }
 
 type SystemSettings struct {

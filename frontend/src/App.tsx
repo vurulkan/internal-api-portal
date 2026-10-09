@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
-import { ChangePasswordPage } from './pages/ChangePasswordPage';
+import { AccountPage } from './pages/AccountPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { ApiDetailsPage } from './pages/ApiDetailsPage';
 import { AdminPage } from './pages/AdminPage';
-import { api, ApiSummary, clearToken, getToken, MeResponse, SystemSettings } from './services/api';
+import { api, ApiError, ApiSummary, MeResponse, SystemSettings } from './services/api';
 
 export default function App() {
   const location = useLocation();
@@ -20,16 +20,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   async function loadSession() {
-    if (!getToken()) {
-      setMe(null);
-      setLoading(false);
-      return;
-    }
     try {
       const meResponse = await api.me();
       // Until a forced password change is done the backend refuses everything but /me
-      // and change-password, so don't ask for the catalog (a 403 here used to sign the
-      // user out in a loop).
+      // and change-password, so don't ask for the catalog.
       const mustChange = meResponse.user.mustChangePassword && meResponse.user.authSource === 'local';
       const catalogResponse = mustChange ? [] : await api.catalog();
       setMe({
@@ -39,16 +33,24 @@ export default function App() {
         branding: meResponse.branding ?? publicSettings,
       });
       setCatalog(catalogResponse ?? []);
-    } catch {
-      clearToken();
+    } catch (err) {
+      // 401: not signed in (or the session ended). Anything else is shown on the
+      // login page as a sign-in problem rather than looping.
+      if (!(err instanceof ApiError) || err.status !== 401) {
+        console.error(err);
+      }
       setMe(null);
     } finally {
       setLoading(false);
     }
   }
 
-  function handleLogout() {
-    clearToken();
+  async function handleLogout() {
+    try {
+      await api.logout();
+    } catch {
+      // The session may already be gone; the local state is cleared either way.
+    }
     setCatalog([]);
     setMe(null);
     setLoading(false);
@@ -88,7 +90,7 @@ export default function App() {
       logoDataUrl={me.branding.logoDataUrl || publicSettings.logoDataUrl}
       username={me.user.username}
       isAdmin={me.user.isAdmin}
-      canChangePassword={me.user.authSource === 'local'}
+      warnings={me.warnings ?? []}
       onLogout={handleLogout}
     >
       <Routes>
@@ -106,9 +108,19 @@ export default function App() {
           path="/change-password"
           element={
             me.user.authSource === 'local' ? (
-              <ChangePasswordPage onSuccess={loadSession} />
+              <AccountPage me={me} forced={me.user.mustChangePassword} onPasswordChanged={loadSession} />
             ) : (
-              <Navigate to="/" replace />
+              <Navigate to="/account" replace />
+            )
+          }
+        />
+        <Route
+          path="/account"
+          element={
+            me.user.mustChangePassword && me.user.authSource === 'local' ? (
+              <Navigate to="/change-password" replace />
+            ) : (
+              <AccountPage me={me} forced={false} onPasswordChanged={loadSession} />
             )
           }
         />

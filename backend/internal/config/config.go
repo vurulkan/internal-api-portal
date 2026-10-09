@@ -49,6 +49,19 @@ type Config struct {
 	BackupDir      string
 	BackupInterval time.Duration
 	BackupKeep     int
+
+	// DataEncryptionKey encrypts secrets at rest (base64 or hex, 32 bytes). Empty:
+	// legacy mode, the key is kept in the database. Previous keys stay readable
+	// during a rotation.
+	DataEncryptionKey     string
+	DataEncryptionKeyPrev string
+
+	// First start only (no users yet): the administrator account to create. Without
+	// a password a random one is generated and logged once.
+	BootstrapAdminUsername string
+	BootstrapAdminPassword string
+
+	PasswordMinLength int
 }
 
 func Load() Config {
@@ -75,7 +88,34 @@ func Load() Config {
 		HSTSEnabled:        envBool("HSTS_ENABLED", false),
 		BackupInterval:     envDurationOrOff("BACKUP_INTERVAL"),
 		BackupKeep:         envInt("BACKUP_KEEP", 7),
+
+		DataEncryptionKey:      envSecret("DATA_ENCRYPTION_KEY"),
+		DataEncryptionKeyPrev:  envSecret("DATA_ENCRYPTION_KEY_PREVIOUS"),
+		BootstrapAdminUsername: env("BOOTSTRAP_ADMIN_USERNAME", "admin"),
+		BootstrapAdminPassword: envSecret("BOOTSTRAP_ADMIN_PASSWORD"),
+		PasswordMinLength:      envInt("PASSWORD_MIN_LENGTH", 12),
 	}
+}
+
+// envSecret reads KEY, or the contents of the file named by KEY_FILE (a mounted
+// Kubernetes Secret). A configured file that doesn't exist counts as unset (an
+// optional Secret that wasn't created) and is logged.
+func envSecret(key string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	path := os.Getenv(key + "_FILE")
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("config: reading %s_FILE %s: %v", key, path, err)
+		}
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // BackupDirFor returns BACKUP_DIR, defaulting to "backups" next to the database.

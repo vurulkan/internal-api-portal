@@ -41,7 +41,7 @@ func newEnv(t *testing.T) *testEnv {
 		t.Fatalf("db open: %v", err)
 	}
 	t.Cleanup(func() { database.Conn.Close() })
-	st, err := store.New(database.Conn)
+	st, err := store.New(database.Conn, store.Keys{})
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -54,6 +54,7 @@ func newEnv(t *testing.T) *testEnv {
 		CookieSecure:       "auto",
 		ProxyAllowLoopback: true,
 		MetricsEnabled:     true,
+		PasswordMinLength:  12,
 	}
 	srv := NewServer(st, audit.New(st), cfg)
 	return &testEnv{t: t, srv: srv, handler: srv.Router(), store: st, dbConn: database.Conn}
@@ -110,8 +111,10 @@ func (e *testEnv) do(method, path, token string, body any) (int, string) {
 	}
 	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Content-Type", "application/json")
+	// What the SPA sends on every request.
+	req.Header.Set(csrfHeader, "1")
 	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.AddCookie(&http.Cookie{Name: sessionCookiePlain, Value: token})
 	}
 	rec := httptest.NewRecorder()
 	e.handler.ServeHTTP(rec, req)
@@ -127,12 +130,32 @@ func (e *testEnv) expect(method, path, token string, body any, want int) string 
 	return out
 }
 
+// login signs in and returns the session cookie value, which do() sends back.
 func (e *testEnv) login(username string) string {
 	e.t.Helper()
-	out := e.expect(http.MethodPost, "/api/auth/login", "", map[string]string{"username": username, "password": testPassword}, http.StatusOK)
-	var resp struct{ Token string }
-	_ = json.Unmarshal([]byte(out), &resp)
-	return resp.Token
+	return e.loginWith(username, testPassword)
+}
+
+func (e *testEnv) loginWith(username, pw string) string {
+	e.t.Helper()
+	raw, _ := json.Marshal(map[string]string{"username": username, "password": pw})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(raw))
+	req.Header.Set(csrfHeader, "1")
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		e.t.Fatalf("login %s = %d (%s)", username, rec.Code, rec.Body.String())
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookiePlain && c.Value != "" {
+			if !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
+				e.t.Fatalf("session cookie flags: HttpOnly=%v SameSite=%v", c.HttpOnly, c.SameSite)
+			}
+			return c.Value
+		}
+	}
+	e.t.Fatalf("login %s: no session cookie", username)
+	return ""
 }
 
 func (e *testEnv) auditActions() []string {
@@ -172,7 +195,7 @@ func TestDeactivatedUserTokenStopsWorking(t *testing.T) {
 func TestMustChangePasswordBlocksEverythingElse(t *testing.T) {
 	e := newEnv(t)
 	hash, _ := auth.HashPassword(testPassword)
-	if err := e.store.EnsureDefaultAdmin(context.Background(), hash, 60); err != nil {
+	if _, err := e.store.EnsureBootstrapAdmin(context.Background(), "admin", hash, 60); err != nil {
 		t.Fatal(err)
 	}
 	token := e.login("admin")

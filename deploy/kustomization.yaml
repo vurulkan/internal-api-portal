@@ -7,9 +7,11 @@ resources:
   - pvc.yaml
   - service.yaml
   - deployment.yaml
+# Secrets: create "internal-api-portal-secrets" yourself (secret.example.yaml shows
+# how); it is not part of these resources so a re-apply never overwrites it.
 # Optional, review before adding to resources:
 #   - networkpolicy.example.yaml   restrict traffic to the ingress controller
 #   - ingress.example.yaml         TLS ingress
 images:
   - name: ghcr.io/vurulkan/internal-api-portal
-    newTag: "1.3.0"
+    newTag: "1.4.0"

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, Button, Input } from '../components/ui';
-import { api, setToken } from '../services/api';
+import { api } from '../services/api';
 
 // Codes the Azure AD callback appends as ?auth_error=… when sign-in fails.
 const AUTH_ERRORS: Record<string, string> = {
@@ -9,6 +9,7 @@ const AUTH_ERRORS: Record<string, string> = {
   azure_state: 'The Microsoft sign-in took too long or was started in another tab. Please try again.',
   azure_denied: 'Microsoft sign-in was cancelled or refused.',
   azure_failed: 'Microsoft sign-in failed. Please try again, or contact an administrator if it keeps happening.',
+  azure_groups: 'Your Microsoft account is not in a group that may use this portal. Contact an administrator.',
   account_disabled: 'Your portal account is disabled. Contact an administrator.',
 };
 
@@ -45,8 +46,7 @@ export function LoginPage({ brandTitle, logoDataUrl, onLogin }: Props) {
     setLoading(true);
     setError('');
     try {
-      const response = await api.login(username, password);
-      setToken(response.token);
+      await api.login(username, password);
       await onLogin();
       navigate('/');
     } catch (err) {

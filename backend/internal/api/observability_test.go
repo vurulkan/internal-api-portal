@@ -15,7 +15,11 @@ import (
 	"api-portal/backend/internal/models"
 )
 
+// raw sends req as the SPA would (with the CSRF header).
 func (e *testEnv) raw(req *http.Request) *httptest.ResponseRecorder {
+	if req.Header.Get(csrfHeader) == "" {
+		req.Header.Set(csrfHeader, "1")
+	}
 	rec := httptest.NewRecorder()
 	e.handler.ServeHTTP(rec, req)
 	return rec

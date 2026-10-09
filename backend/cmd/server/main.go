@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
 	// Embedded zone database, so TIMEZONE works on images without /usr/share/zoneinfo.
 	_ "time/tzdata"
 
@@ -19,6 +20,7 @@ import (
 	"api-portal/backend/internal/config"
 	"api-portal/backend/internal/db"
 	"api-portal/backend/internal/logging"
+	"api-portal/backend/internal/password"
 	"api-portal/backend/internal/store"
 )
 
@@ -55,18 +57,16 @@ func main() {
 		fatal("db.open", err)
 	}
 
-	dataStore, err := store.New(database.Conn)
+	keys, err := loadKeys(cfg)
+	if err != nil {
+		fatal("crypto.config", err)
+	}
+	dataStore, err := store.New(database.Conn, keys)
 	if err != nil {
 		fatal("store.init", err)
 	}
-
-	adminHash, err := auth.HashPassword("admin")
-	if err != nil {
-		fatal("admin.hash", err)
-	}
-	if err := dataStore.EnsureDefaultAdmin(context.Background(), adminHash, cfg.SessionMinutes); err != nil {
-		fatal("admin.seed", err)
-	}
+	secureSecretsAtRest(dataStore)
+	bootstrapAdmin(cfg, dataStore)
 
 	if removed, err := dataStore.ClearSVGLogo(context.Background()); err != nil {
 		slog.Warn("branding.svg_cleanup_failed", "error", err.Error())
@@ -82,6 +82,7 @@ func main() {
 	}
 
 	server := api.NewServer(dataStore, auditLogger, cfg)
+	server.StartSessionPurge(context.Background())
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           server.Router(),
@@ -167,4 +168,71 @@ func backupOnce(cfg config.Config) int {
 	}
 	fmt.Println(path)
 	return 0
+}
+
+// loadKeys parses DATA_ENCRYPTION_KEY(_PREVIOUS). A malformed key stops startup:
+// running on with the database key would silently undo the operator's intent.
+func loadKeys(cfg config.Config) (store.Keys, error) {
+	current, err := store.ParseKey(cfg.DataEncryptionKey)
+	if err != nil {
+		return store.Keys{}, fmt.Errorf("DATA_ENCRYPTION_KEY: %w", err)
+	}
+	previous, err := store.ParseKey(cfg.DataEncryptionKeyPrev)
+	if err != nil {
+		return store.Keys{}, fmt.Errorf("DATA_ENCRYPTION_KEY_PREVIOUS: %w", err)
+	}
+	return store.Keys{Current: current, Previous: [][]byte{previous}}, nil
+}
+
+// secureSecretsAtRest re-encrypts stored secrets with the current key and reports
+// where the key lives. A value that can't be decrypted (its key was removed) is
+// logged, not fatal: the LDAP / Azure AD secret can be entered again in the UI.
+func secureSecretsAtRest(dataStore *store.Store) {
+	result, err := dataStore.Rekey(context.Background())
+	switch {
+	case err != nil:
+		slog.Error("crypto.rekey_failed", "error", err.Error(), "hint", "set DATA_ENCRYPTION_KEY_PREVIOUS to the old key, or re-enter the LDAP bind password / Azure AD client secret")
+	case result.Reencrypted > 0 || result.LegacyKeyRemoved:
+		slog.Info("crypto.rekey", "reencrypted", result.Reencrypted, "database_key_removed", result.LegacyKeyRemoved, "key_id", dataStore.CurrentKeyID())
+	}
+	if dataStore.KeyInDatabase() {
+		slog.Warn("crypto.key_in_database", "hint", "the encryption key for stored LDAP / Azure AD secrets is kept in the database; set DATA_ENCRYPTION_KEY (or _FILE) from a secret store")
+	}
+}
+
+// bootstrapAdmin creates the first administrator on an empty database. Without
+// BOOTSTRAP_ADMIN_PASSWORD a random password is generated and logged once; either
+// way it must be changed at first sign-in.
+func bootstrapAdmin(cfg config.Config, dataStore *store.Store) {
+	ctx := context.Background()
+	if n, err := dataStore.CountUsers(ctx); err != nil {
+		fatal("bootstrap.count_users", err)
+	} else if n > 0 {
+		return
+	}
+	pw, generated := cfg.BootstrapAdminPassword, false
+	if pw == "" {
+		var err error
+		if pw, err = password.Generate(20); err != nil {
+			fatal("bootstrap.generate_password", err)
+		}
+		generated = true
+	}
+	hash, err := auth.HashPassword(pw)
+	if err != nil {
+		fatal("bootstrap.hash", err)
+	}
+	created, err := dataStore.EnsureBootstrapAdmin(ctx, cfg.BootstrapAdminUsername, hash, cfg.SessionMinutes)
+	if err != nil {
+		fatal("bootstrap.create_admin", err)
+	}
+	if !created {
+		return
+	}
+	if generated {
+		slog.Warn("bootstrap.admin_created", "username", cfg.BootstrapAdminUsername, "password", pw,
+			"note", "generated because BOOTSTRAP_ADMIN_PASSWORD is not set; shown only now, must be changed at first sign-in")
+	} else {
+		slog.Info("bootstrap.admin_created", "username", cfg.BootstrapAdminUsername, "password_source", "BOOTSTRAP_ADMIN_PASSWORD", "note", "must be changed at first sign-in")
+	}
 }

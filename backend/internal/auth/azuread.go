@@ -20,22 +20,31 @@ type AzureADUser struct {
 	Email       string
 	Username    string
 	DisplayName string
+	// Groups are the group object ids from the "groups" claim. GroupsOverage is set
+	// when Azure left them out because the user is in too many groups.
+	Groups        []string
+	GroupsOverage bool
 }
 
-func AzureADAuthURL(cfg models.AzureADConfig, state, nonce string) (string, error) {
+// AzureADAuthURL builds the authorization request with state, nonce and a PKCE
+// (S256) challenge for pkceVerifier.
+func AzureADAuthURL(cfg models.AzureADConfig, state, nonce, pkceVerifier string) (string, error) {
 	oauthConfig, err := azureOAuthConfig(cfg)
 	if err != nil {
 		return "", err
 	}
-	return oauthConfig.AuthCodeURL(state, oidc.Nonce(nonce)), nil
+	return oauthConfig.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(pkceVerifier)), nil
 }
 
-func AzureADExchangeCode(ctx context.Context, cfg models.AzureADConfig, code, expectedNonce string) (*AzureADUser, error) {
+// NewPKCEVerifier returns a random PKCE code verifier.
+func NewPKCEVerifier() string { return oauth2.GenerateVerifier() }
+
+func AzureADExchangeCode(ctx context.Context, cfg models.AzureADConfig, code, expectedNonce, pkceVerifier string) (*AzureADUser, error) {
 	_, oauthConfig, verifier, err := azureProvider(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	token, err := oauthConfig.Exchange(ctx, code)
+	token, err := oauthConfig.Exchange(ctx, code, oauth2.VerifierOption(pkceVerifier))
 	if err != nil {
 		return nil, err
 	}
@@ -48,13 +57,15 @@ func AzureADExchangeCode(ctx context.Context, cfg models.AzureADConfig, code, ex
 		return nil, err
 	}
 	var claims struct {
-		Subject           string `json:"sub"`
-		Email             string `json:"email"`
-		PreferredUsername string `json:"preferred_username"`
-		Name              string `json:"name"`
-		OID               string `json:"oid"`
-		TenantID          string `json:"tid"`
-		Nonce             string `json:"nonce"`
+		Subject           string         `json:"sub"`
+		Email             string         `json:"email"`
+		PreferredUsername string         `json:"preferred_username"`
+		Name              string         `json:"name"`
+		OID               string         `json:"oid"`
+		TenantID          string         `json:"tid"`
+		Nonce             string         `json:"nonce"`
+		Groups            []string       `json:"groups"`
+		ClaimNames        map[string]any `json:"_claim_names"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, err
@@ -77,11 +88,13 @@ func AzureADExchangeCode(ctx context.Context, cfg models.AzureADConfig, code, ex
 		return nil, fmt.Errorf("azure ad subject missing")
 	}
 	return &AzureADUser{
-		Subject:     subject,
-		ExternalID:  firstNonEmpty(claims.TenantID, strings.TrimSpace(cfg.TenantID)) + ":" + subject,
-		Email:       strings.TrimSpace(claims.Email),
-		Username:    username,
-		DisplayName: strings.TrimSpace(claims.Name),
+		Subject:       subject,
+		ExternalID:    firstNonEmpty(claims.TenantID, strings.TrimSpace(cfg.TenantID)) + ":" + subject,
+		Email:         strings.TrimSpace(claims.Email),
+		Username:      username,
+		DisplayName:   strings.TrimSpace(claims.Name),
+		Groups:        claims.Groups,
+		GroupsOverage: claims.ClaimNames["groups"] != nil,
 	}, nil
 }
 
@@ -133,4 +146,19 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// InAllowedGroups reports whether the user may sign in under allowed (empty: anyone).
+func (u *AzureADUser) InAllowedGroups(allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, group := range u.Groups {
+		for _, want := range allowed {
+			if strings.EqualFold(group, strings.TrimSpace(want)) {
+				return true
+			}
+		}
+	}
+	return false
 }

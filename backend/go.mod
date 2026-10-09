@@ -6,7 +6,6 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-ldap/ldap/v3 v3.4.15
-	github.com/golang-jwt/jwt/v5 v5.3.1
 	golang.org/x/crypto v0.58.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/time v0.16.0

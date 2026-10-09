@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"api-portal/backend/internal/auth"
 	"api-portal/backend/internal/models"
+	"api-portal/backend/internal/password"
 )
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +41,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "username is required")
 		return
 	}
-	if msg := passwordProblem(payload.Password); msg != "" {
+	if msg := s.passwords.Problem(payload.Password, payload.Username); msg != "" {
 		writeError(w, r, http.StatusBadRequest, msg)
 		return
 	}
@@ -88,6 +90,11 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	request.ID = id
 	request.Username = strings.TrimSpace(request.Username)
+	if target.AuthSource != "local" {
+		// LDAP and Azure AD own these fields; changing them here would only make the
+		// account diverge from the directory (and an LDAP login matches on username).
+		request.Username, request.DisplayName, request.Email = target.Username, target.DisplayName, target.Email
+	}
 	if request.Username == "" {
 		writeError(w, r, http.StatusBadRequest, "username is required")
 		return
@@ -106,7 +113,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusBadRequest, "passwords can only be set for local users")
 			return
 		}
-		if msg := passwordProblem(request.Password); msg != "" {
+		if msg := s.passwords.Problem(request.Password, target.Username); msg != "" {
 			writeError(w, r, http.StatusBadRequest, msg)
 			return
 		}
@@ -126,8 +133,14 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Losing access, admin rights or the password ends the user's sessions now
+	// rather than at their next idle timeout.
+	revoked := 0
+	if (target.IsActive && !request.IsActive) || (target.IsAdmin && !request.IsAdmin) || request.Password != "" {
+		revoked, _ = s.store.RevokeUserSessions(r.Context(), id, 0, time.Now().UTC())
+	}
 	s.recordAudit(r, models.AuditLog{Action: "admin.user.update", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: request.Username, StatusCode: http.StatusOK,
-		DetailsJSON: marshalJSON(map[string]any{"isAdmin": request.IsAdmin, "isActive": request.IsActive, "passwordChanged": request.Password != ""})})
+		DetailsJSON: marshalJSON(map[string]any{"isAdmin": request.IsAdmin, "isActive": request.IsActive, "passwordChanged": request.Password != "", "sessionsRevoked": revoked})})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -252,4 +265,70 @@ func addedIDs(current, next []int) []int {
 		}
 	}
 	return added
+}
+
+// handleResetPassword gives a local user a generated temporary password that must
+// be changed at the next sign-in, and ends their sessions. The password is returned
+// once, in this response, and never logged or audited.
+func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	actor, _ := s.identityForRequest(r)
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	target, err := s.store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "user not found")
+		return
+	}
+	if target.IsAdmin && !actor.User.IsAdmin {
+		s.denyAudit(r, "non-admin tried to reset an administrator's password", marshalJSON(map[string]any{"userId": id}))
+		writeError(w, r, http.StatusForbidden, "only administrators can reset administrator passwords")
+		return
+	}
+	if target.AuthSource != "local" {
+		writeError(w, r, http.StatusBadRequest, "only local users have a portal password; LDAP and Azure AD users change theirs in the directory")
+		return
+	}
+	temporary, err := password.Generate(16)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not generate a password")
+		return
+	}
+	hash, err := auth.HashPassword(temporary)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not set the password")
+		return
+	}
+	if err := s.store.UpdateUserPassword(r.Context(), id, hash, true); err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not set the password")
+		return
+	}
+	revoked, _ := s.store.RevokeUserSessions(r.Context(), id, 0, time.Now().UTC())
+	s.recordAudit(r, models.AuditLog{Action: "user.password_reset.success", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: target.Username, StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]int{"sessionsRevoked": revoked})})
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"temporaryPassword": temporary, "sessionsRevoked": revoked})
+}
+
+func (s *Server) handleRevokeUserSessions(w http.ResponseWriter, r *http.Request) {
+	actor, _ := s.identityForRequest(r)
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	target, err := s.store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "user not found")
+		return
+	}
+	if target.IsAdmin && !actor.User.IsAdmin {
+		s.denyAudit(r, "non-admin tried to end an administrator's sessions", marshalJSON(map[string]any{"userId": id}))
+		writeError(w, r, http.StatusForbidden, "only administrators can end administrator sessions")
+		return
+	}
+	except := 0
+	if id == actor.User.ID {
+		except = currentSession(r).ID // keep the caller signed in
+	}
+	revoked, err := s.store.RevokeUserSessions(r.Context(), id, except, time.Now().UTC())
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not end the sessions")
+		return
+	}
+	s.recordAudit(r, models.AuditLog{Action: "session.revoke_user", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: target.Username, StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]int{"sessionsRevoked": revoked})})
+	writeJSON(w, http.StatusOK, map[string]int{"sessionsRevoked": revoked})
 }

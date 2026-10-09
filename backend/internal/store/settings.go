@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"api-portal/backend/internal/models"
 )
@@ -24,7 +25,7 @@ func (s *Store) GetLDAPConfig(ctx context.Context) (*models.LDAPConfig, error) {
 	cfg.PasswordConfigured = bindPasswordEnc != ""
 	_ = json.Unmarshal([]byte(userBaseDNSRaw), &cfg.UserBaseDNs)
 	if bindPasswordEnc != "" {
-		cfg.BindPassword, _ = decrypt(s.key, bindPasswordEnc)
+		cfg.BindPassword, _ = s.keys.decrypt(bindPasswordEnc)
 	}
 	return &cfg, nil
 }
@@ -38,7 +39,7 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 			password = existing.BindPassword
 		}
 	}
-	encoded, err := encrypt(s.key, password)
+	encoded, err := s.keys.encrypt(password)
 	if err != nil {
 		return err
 	}
@@ -51,15 +52,20 @@ func (s *Store) GetAzureADConfig(ctx context.Context) (*models.AzureADConfig, er
 	var cfg models.AzureADConfig
 	var enabled int
 	var clientSecretEnc string
-	err := s.conn.QueryRowContext(ctx, `SELECT enabled, tenant_id, client_id, client_secret_enc, redirect_url FROM azure_ad_config WHERE id = 1`).
-		Scan(&enabled, &cfg.TenantID, &cfg.ClientID, &clientSecretEnc, &cfg.RedirectURL)
+	var allowedGroups string
+	err := s.conn.QueryRowContext(ctx, `SELECT enabled, tenant_id, client_id, client_secret_enc, redirect_url, allowed_groups FROM azure_ad_config WHERE id = 1`).
+		Scan(&enabled, &cfg.TenantID, &cfg.ClientID, &clientSecretEnc, &cfg.RedirectURL, &allowedGroups)
 	if err != nil {
 		return nil, err
+	}
+	_ = json.Unmarshal([]byte(allowedGroups), &cfg.AllowedGroups)
+	if cfg.AllowedGroups == nil {
+		cfg.AllowedGroups = []string{}
 	}
 	cfg.Enabled = enabled == 1
 	cfg.PasswordConfigured = clientSecretEnc != ""
 	if clientSecretEnc != "" {
-		cfg.ClientSecret, _ = decrypt(s.key, clientSecretEnc)
+		cfg.ClientSecret, _ = s.keys.decrypt(clientSecretEnc)
 	}
 	return &cfg, nil
 }
@@ -72,23 +78,30 @@ func (s *Store) UpdateAzureADConfig(ctx context.Context, cfg models.AzureADConfi
 			clientSecret = existing.ClientSecret
 		}
 	}
-	encoded, err := encrypt(s.key, clientSecret)
+	encoded, err := s.keys.encrypt(clientSecret)
 	if err != nil {
 		return err
 	}
-	_, err = s.conn.ExecContext(ctx, `UPDATE azure_ad_config SET enabled = ?, tenant_id = ?, client_id = ?, client_secret_enc = ?, redirect_url = ? WHERE id = 1`,
-		boolInt(cfg.Enabled), cfg.TenantID, cfg.ClientID, encoded, cfg.RedirectURL)
+	groups := []string{}
+	for _, g := range cfg.AllowedGroups {
+		if g = strings.TrimSpace(g); g != "" {
+			groups = append(groups, g)
+		}
+	}
+	rawGroups, _ := json.Marshal(groups)
+	_, err = s.conn.ExecContext(ctx, `UPDATE azure_ad_config SET enabled = ?, tenant_id = ?, client_id = ?, client_secret_enc = ?, redirect_url = ?, allowed_groups = ? WHERE id = 1`,
+		boolInt(cfg.Enabled), cfg.TenantID, cfg.ClientID, encoded, cfg.RedirectURL, string(rawGroups))
 	return err
 }
 
 func (s *Store) GetSessionSettings(ctx context.Context) (*models.SessionSettings, error) {
 	var session models.SessionSettings
-	err := s.conn.QueryRowContext(ctx, `SELECT session_minutes FROM session_settings WHERE id = 1`).Scan(&session.SessionMinutes)
+	err := s.conn.QueryRowContext(ctx, `SELECT session_minutes, max_hours FROM session_settings WHERE id = 1`).Scan(&session.SessionMinutes, &session.MaxHours)
 	return &session, err
 }
 
 func (s *Store) UpdateSessionSettings(ctx context.Context, session models.SessionSettings) error {
-	_, err := s.conn.ExecContext(ctx, `UPDATE session_settings SET session_minutes = ? WHERE id = 1`, session.SessionMinutes)
+	_, err := s.conn.ExecContext(ctx, `UPDATE session_settings SET session_minutes = ?, max_hours = ? WHERE id = 1`, session.SessionMinutes, session.MaxHours)
 	return err
 }
 
