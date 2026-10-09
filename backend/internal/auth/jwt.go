@@ -28,7 +28,7 @@ func GenerateToken(secret []byte, userID int, username string, ttl time.Duration
 func ParseToken(secret []byte, raw string) (*Claims, error) {
 	parsed, err := jwt.ParseWithClaims(raw, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return secret, nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}

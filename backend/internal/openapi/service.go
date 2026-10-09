@@ -20,11 +20,22 @@ type Service struct {
 	client *http.Client
 }
 
-func New(store *store.Store, timeout time.Duration) *Service {
-	return &Service{
-		store: store,
-		client: &http.Client{Timeout: timeout},
+// New takes the HTTP client used to fetch specs (dialing through netguard). Redirects
+// are followed only to the same host, at most three times: a spec URL behind a
+// trailing-slash or http→https redirect keeps working, but an upstream can't send
+// the portal to another host.
+func New(store *store.Store, client *http.Client) *Service {
+	guarded := *client
+	guarded.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return fmt.Errorf("spec fetch: too many redirects")
+		}
+		if !strings.EqualFold(req.URL.Hostname(), via[0].URL.Hostname()) {
+			return fmt.Errorf("spec fetch: redirect to another host (%s) refused", req.URL.Hostname())
+		}
+		return nil
 	}
+	return &Service{store: store, client: &guarded}
 }
 
 func (s *Service) Refresh(ctx context.Context, api models.APIDefinition) (*models.APISpecCache, error) {

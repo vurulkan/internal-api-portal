@@ -28,7 +28,7 @@ This is not a Kubernetes resource dashboard. It does not manage pods, deployment
 - App-layer RBAC with users, groups, roles, permissions
 - Per-API authorization with global and resource-scoped permissions
 - Backend-only OpenAPI fetch and cache
-- Backend-only try-it-out proxy with SSRF protections
+- Backend-only try-it-out proxy: method / path allowlists, header filtering, no redirect following, and a network guard that refuses metadata, link-local and loopback addresses
 - Admin UI for users, groups, roles, LDAP, API definitions, audit logs, and branding
 - Audit retention with configurable purge window
 - `/healthz` for readiness and liveness probes
@@ -96,7 +96,7 @@ docker/
 - React
 - TypeScript
 - Vite
-- Material UI
+- Tailwind CSS + lucide-react icons
 - `swagger-ui-react` for read-only documentation rendering
 
 ## Data Model
@@ -145,6 +145,14 @@ Recommended operational model:
 
 - use global admin permissions for platform administrators
 - use API-scoped permissions for application teams
+
+Delegation rules (since 1.1.0):
+
+- only administrators (`isAdmin`) can create, edit, delete or regroup administrator accounts
+- a delegated manager (`user.manage`, `group.manage`, `role.manage`) can only hand out scopes they hold themselves, whether by adding a scope to a role, a role to a group, or a group to a user
+- nobody can deactivate, demote or delete their own account, and the last active administrator can't be deactivated, demoted or deleted
+- Azure AD, session and system / branding settings are administrator-only
+- a user's authentication source (local / LDAP / Azure AD) can't be changed from the admin UI, and passwords can only be set for local users
 - attach permissions to roles
 - attach roles to groups
 - attach users to groups
@@ -153,9 +161,11 @@ Recommended operational model:
 
 ### Local Users
 
-- Passwords are hashed with Argon2id.
-- Local users can be forced to change password on first login.
+- Passwords are hashed with Argon2id and must be at least 8 characters (taken as typed, not trimmed).
+- Local users can be forced to change password on first login. Until they do, every API call except `GET /api/auth/me` and `POST /api/auth/change-password` is refused.
 - Local users can use the Change Password flow.
+- After 5 failed sign-ins for the same username from the same address within 15 minutes, that pair is locked for 5 minutes (`429` + `Retry-After`, audited as `login.locked`).
+- Deactivating a user ends their access on their next request; existing tokens stop working.
 
 ### LDAP Users
 
@@ -168,7 +178,7 @@ Recommended operational model:
 
 - Azure AD is available as an additional login provider.
 - Authentication uses the Microsoft identity platform via OIDC.
-- On first successful Azure AD login, the portal can create the local user record just in time.
+- On first successful Azure AD login, the portal creates the local user record just in time and binds it to the Azure identity (tenant id + object id).
 - Existing local RBAC still applies because authorization remains inside the portal.
 - Azure AD users do not use the local password change screen.
 - Logout is application-local only and does not trigger global Microsoft sign-out.
@@ -193,10 +203,14 @@ Change it immediately.
 | `STATIC_DIR` | `/app/public` | Frontend build directory served by backend |
 | `TIMEZONE` | `UTC` | Time zone for audit formatting and time display |
 | `LOG_RETENTION_DAYS` | `30` | Audit retention window |
-| `SESSION_MINUTES` | `60` | Seed/default session duration |
+| `SESSION_MINUTES` | `60` | Session length seeded on the first start; afterwards the value set in Admin → Session is kept across restarts |
 | `PROXY_TIMEOUT_SECONDS` | `30` | Upstream request timeout |
 | `MAX_REQUEST_BYTES` | `1048576` | Max proxied request body size |
 | `MAX_RESPONSE_BYTES` | `5242880` | Max proxied response body size |
+| `TRUSTED_PROXIES` | _(empty)_ | Comma-separated CIDRs / IPs of reverse proxies (ingress) whose `X-Forwarded-For` / `X-Forwarded-Proto` are believed. Empty: the headers are ignored and the TCP peer address is used for audit and login lockout. Set it to your ingress controller's pod CIDR. |
+| `COOKIE_SECURE` | `auto` | Secure flag of the Azure AD state cookies: `auto` (TLS, or `https` from a trusted proxy), `true`, `false` |
+| `PROXY_DENY_CIDRS` | _(empty)_ | Extra networks the try-it proxy and spec fetcher may never connect to |
+| `PROXY_ALLOW_LOOPBACK` | `false` | Allow upstreams on `127.0.0.0/8` / `::1` (local development only) |
 
 ## Local Development
 
@@ -462,6 +476,8 @@ Admin flow:
 - `emailAttribute = mail`
 - `userFilter = (objectClass=user)`
 
+How `userFilter` is used at login: the typed username is always part of the search. A filter containing `%s` gets the (escaped) username substituted; any other filter is combined as `(&<userFilter>(<usernameAttribute>=<username>))`. If the search matches more than one entry the login is refused. Before 1.1.0 a filter without `%s` was used as-is, so the first entry in the directory was bound with the typed password; upgrade if you run an older version with such a filter.
+
 Or:
 
 - `userFilter = (&(objectClass=user)(objectCategory=person))`
@@ -474,15 +490,15 @@ Example values for a typical internal AD setup:
 - `port = 636`
 - `useSsl = true`
 - `startTls = false`
-- `sslSkipVerify = true`
+- `sslSkipVerify = false` (trust the directory's CA on the host instead)
 - `bindDn = CN=svc-api-portal,OU=Service Accounts,OU=Directory,DC=corp,DC=example,DC=internal`
 - `userBaseDn = OU=Applications,DC=corp,DC=example,DC=internal`
 - `usernameAttribute = sAMAccountName`
-- `userFilter = (sAMAccountName=%s*)`
+- `userFilter = (&(objectClass=user)(sAMAccountName=%s))` — no `*` after `%s`: a wildcard makes `bob` also match `bobby`, and an ambiguous match is refused
 
 Notes:
 
-- `sslSkipVerify = true` is common in internal environments with private or incomplete trust chains, but it is less secure than proper CA trust.
+- `sslSkipVerify = true` turns certificate verification off for both `ldaps://` and StartTLS: anyone on the network path can then impersonate the directory and read bind and user passwords. Use it only for testing.
 - the `bindDn` account should be read-only and limited to directory lookup needs
 - `userBaseDn` should point to the OU tree where end users actually live
 - if search returns no users, first verify `userBaseDn`, then `userFilter`, then attribute mappings
@@ -520,8 +536,9 @@ This first phase does not require Microsoft Graph permissions.
 ### Azure AD Behavior
 
 - The login page shows `Sign in with Microsoft` only when Azure AD is enabled.
-- Users are matched to the local catalog by email first, then username.
-- If no local user exists, the portal creates one with `authSource = azuread`.
+- Users are matched on their Azure identity (tenant id + object id) only, never to local or LDAP accounts. Azure AD accounts created before 1.1.0 are bound once, on their next sign-in, by e-mail (or username).
+- If no matching Azure AD account exists, the portal creates one with `authSource = azuread`. If a local or LDAP account has the same e-mail, a separate account is created and the server logs `azure.link.skipped`; move that person's group memberships to the new account.
+- Disabled accounts can't sign in through Azure AD.
 - Group and role assignment still happens in the portal admin UI.
 - LDAP remains available and unchanged when Azure AD is configured.
 
@@ -537,9 +554,13 @@ The portal logs:
 - API spec refreshes
 - API invocation attempts
 - API invocation failures
-- admin changes
+- refused admin actions (`authz.denied`) and login lockouts (`login.locked`)
 - LDAP update and LDAP test actions
-- user, group, role, and permission changes
+- user create / update / delete and group membership changes
+- group role assignments, role permission add / replace
+- session and system / logo changes
+
+Not yet audited (planned for M5): group create / update / delete, role create / update / delete, permission delete, LDAP import and API definition create / update / delete.
 
 For API invocation logs, the system records:
 
@@ -551,11 +572,11 @@ For API invocation logs, the system records:
 - duration
 - request size
 - response size
-- masked request headers
+- request header names; values are kept only for `Content-Type`, `Accept`, `Accept-Language` and `User-Agent`, every other value is stored as `***`
 - blocked or allowed status
 - error message when present
 
-Audit exports are available from the admin UI as CSV.
+Audit exports are available from the admin UI as CSV. Cells starting with `=`, `+`, `-`, `@`, TAB or CR are prefixed with `'` so spreadsheets don't evaluate them.
 
 ### Audit Log Pagination
 
@@ -584,8 +605,9 @@ Supported logo upload types:
 
 - PNG
 - JPEG
-- SVG
 - WEBP
+
+SVG is not accepted (an SVG can carry script); a stored SVG logo from an older version is removed at startup. The type is detected from the file content.
 
 Logo size limit:
 
@@ -605,6 +627,10 @@ Key protections:
 - max request size limit
 - max response size limit
 - request timeout
+- redirects from the upstream are returned to the caller, never followed (the spec fetcher follows at most 3 redirects, same host only)
+- network guard: connections to link-local / cloud metadata (`169.254.0.0/16`, `fe80::/10`, `100.100.100.200`, `168.63.129.16`, `fd00:ec2::254`), `0.0.0.0/8` and loopback are refused at dial time, after DNS resolution; private ranges stay reachable because they are the point of the portal. HTTP(S)_PROXY environment variables are not used for upstream calls.
+- path allowlist matches on segment boundaries (`/v1` allows `/v1/...`, not `/v1-admin`); dot segments (also percent-encoded), `//`, backslashes and control characters are refused
+- query strings are parsed and re-encoded before forwarding
 - sensitive request headers are stripped or masked
 - hop-by-hop headers are removed
 - cookies are not blindly forwarded
@@ -613,11 +639,14 @@ Key protections:
 
 ### Sensitive Header Handling
 
-The proxy strips or masks sensitive values such as:
+Never forwarded upstream:
 
-- `Authorization`
-- `Cookie`
-- `Set-Cookie`
+- `Authorization`, `Cookie`, `Set-Cookie`, `Host`
+- headers that change routing, the method or the client identity: `X-Forwarded-*`, `X-Real-IP`, `X-Client-IP`, `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`, `X-Original-Method`, `X-Original-URL`, `X-Original-URI`, `X-Rewrite-URL`, `X-Host`
+
+Other `X-*` headers (e.g. `X-Api-Key`) plus `Content-Type`, `Accept`, `Accept-Language` and `User-Agent` are forwarded. Their values are masked in the audit log.
+
+Responses also carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: strict-origin-when-cross-origin`; API responses are `Cache-Control: no-store`.
 
 ### Why the Browser Does Not Need CORS
 
@@ -677,7 +706,7 @@ Check:
 - the client secret is current
 - the portal is reachable at the same public URL configured in Azure AD
 
-### API invocation returns `path not allowed`
+### API invocation returns `path ... is not in this API's allowlist`
 
 Most common reason:
 

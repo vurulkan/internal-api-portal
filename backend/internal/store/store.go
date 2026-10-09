@@ -11,6 +11,8 @@ import (
 	"api-portal/backend/internal/models"
 )
 
+const userColumns = `id, username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, external_id, created_at, updated_at`
+
 type Store struct {
 	conn *sql.DB
 	key  []byte
@@ -53,33 +55,63 @@ func (s *Store) EnsureDefaultAdmin(ctx context.Context, passwordHash string, ses
 		return err
 	}
 	now := time.Now().UTC()
-	if _, err := s.conn.ExecContext(ctx, `INSERT OR REPLACE INTO session_settings (id, session_minutes) VALUES (1, ?)`, sessionMinutes); err != nil {
-		return err
-	}
 	if count > 0 {
 		return nil
+	}
+	// First boot only: seed the session length from SESSION_MINUTES. Afterwards the
+	// value set in Admin → Session wins (it used to be reset on every restart).
+	if _, err := s.conn.ExecContext(ctx, `UPDATE session_settings SET session_minutes = ? WHERE id = 1`, sessionMinutes); err != nil {
+		return err
 	}
 	_, err := s.conn.ExecContext(ctx, `INSERT INTO users (username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at) VALUES (?, ?, ?, ?, 'local', 1, 1, 1, ?, ?)`, "admin", "Administrator", "", passwordHash, now, now)
 	return err
 }
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at FROM users WHERE username = ?`, username)
+	row := s.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE username = ?`, username)
 	return scanUser(row)
 }
 
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at FROM users WHERE email = ?`, email)
+	row := s.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email)
 	return scanUser(row)
 }
 
+// GetAzureUserByExternalID finds the Azure AD account bound to a tenant:object id.
+func (s *Store) GetAzureUserByExternalID(ctx context.Context, externalID string) (*models.User, error) {
+	row := s.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE auth_source = 'azuread' AND external_id = ?`, externalID)
+	return scanUser(row)
+}
+
+// GetUnboundAzureUser finds an Azure AD account created before external ids were
+// stored (matched on e-mail, else on the username it was created with) so it can be
+// bound once. Local and LDAP accounts are never returned.
+func (s *Store) GetUnboundAzureUser(ctx context.Context, email, username string) (*models.User, error) {
+	row := s.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users
+		WHERE auth_source = 'azuread' AND external_id = ''
+		  AND ((? <> '' AND lower(email) = lower(?)) OR (? <> '' AND username = ?))
+		ORDER BY id LIMIT 1`, email, email, username, username)
+	return scanUser(row)
+}
+
+func (s *Store) SetUserExternalID(ctx context.Context, userID int, externalID string) error {
+	_, err := s.conn.ExecContext(ctx, `UPDATE users SET external_id = ?, updated_at = ? WHERE id = ?`, externalID, time.Now().UTC(), userID)
+	return err
+}
+
+func (s *Store) CountActiveAdmins(ctx context.Context) (int, error) {
+	var count int
+	err := s.conn.QueryRowContext(ctx, `SELECT COUNT(1) FROM users WHERE is_admin = 1 AND is_active = 1`).Scan(&count)
+	return count, err
+}
+
 func (s *Store) GetUserByID(ctx context.Context, id int) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at FROM users WHERE id = ?`, id)
+	row := s.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id)
 	return scanUser(row)
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := s.conn.QueryContext(ctx, `SELECT id, username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at FROM users ORDER BY username`)
+	rows, err := s.conn.QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -97,8 +129,8 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 
 func (s *Store) CreateUser(ctx context.Context, user models.User) (int, error) {
 	now := time.Now().UTC()
-	result, err := s.conn.ExecContext(ctx, `INSERT INTO users (username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		user.Username, user.DisplayName, user.Email, user.PasswordHash, defaultString(user.AuthSource, "local"), boolInt(user.MustChangePassword), boolInt(user.IsActive), boolInt(user.IsAdmin), now, now)
+	result, err := s.conn.ExecContext(ctx, `INSERT INTO users (username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, external_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		user.Username, user.DisplayName, user.Email, user.PasswordHash, defaultString(user.AuthSource, "local"), boolInt(user.MustChangePassword), boolInt(user.IsActive), boolInt(user.IsAdmin), user.ExternalID, now, now)
 	if err != nil {
 		return 0, err
 	}
@@ -107,8 +139,10 @@ func (s *Store) CreateUser(ctx context.Context, user models.User) (int, error) {
 }
 
 func (s *Store) UpdateUser(ctx context.Context, user models.User) error {
-	_, err := s.conn.ExecContext(ctx, `UPDATE users SET username = ?, display_name = ?, email = ?, auth_source = ?, must_change_password = ?, is_active = ?, is_admin = ?, updated_at = ? WHERE id = ?`,
-		user.Username, user.DisplayName, user.Email, defaultString(user.AuthSource, "local"), boolInt(user.MustChangePassword), boolInt(user.IsActive), boolInt(user.IsAdmin), time.Now().UTC(), user.ID)
+	// auth_source is deliberately not updatable: switching an LDAP / Azure AD account
+	// to "local" would let whoever sets its password log in as that person.
+	_, err := s.conn.ExecContext(ctx, `UPDATE users SET username = ?, display_name = ?, email = ?, must_change_password = ?, is_active = ?, is_admin = ?, updated_at = ? WHERE id = ?`,
+		user.Username, user.DisplayName, user.Email, boolInt(user.MustChangePassword), boolInt(user.IsActive), boolInt(user.IsAdmin), time.Now().UTC(), user.ID)
 	return err
 }
 
@@ -335,6 +369,53 @@ func (s *Store) DeletePermission(ctx context.Context, permissionID int) error {
 	return err
 }
 
+// ScopesForGroups returns the distinct scopes the given groups grant through their roles.
+func (s *Store) ScopesForGroups(ctx context.Context, groupIDs []int) ([]string, error) {
+	if len(groupIDs) == 0 {
+		return nil, nil
+	}
+	query := `SELECT DISTINCT p.scope FROM permissions p INNER JOIN group_roles gr ON gr.role_id = p.role_id WHERE gr.group_id IN (` + placeholders(len(groupIDs)) + `)`
+	return s.scopes(ctx, query, intArgs(groupIDs)...)
+}
+
+// ScopesForRoles returns the distinct scopes the given roles grant.
+func (s *Store) ScopesForRoles(ctx context.Context, roleIDs []int) ([]string, error) {
+	if len(roleIDs) == 0 {
+		return nil, nil
+	}
+	query := `SELECT DISTINCT scope FROM permissions WHERE role_id IN (` + placeholders(len(roleIDs)) + `)`
+	return s.scopes(ctx, query, intArgs(roleIDs)...)
+}
+
+func (s *Store) scopes(ctx context.Context, query string, args ...any) ([]string, error) {
+	rows, err := s.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var scope string
+		if err := rows.Scan(&scope); err != nil {
+			return nil, err
+		}
+		out = append(out, scope)
+	}
+	return out, rows.Err()
+}
+
+func placeholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
+func intArgs(values []int) []any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+	return out
+}
+
 func (s *Store) ResolvePermissions(ctx context.Context, userID int) ([]string, error) {
 	rows, err := s.conn.QueryContext(ctx, `
 		SELECT DISTINCT p.scope
@@ -449,6 +530,17 @@ func (s *Store) GetSystemSettings(ctx context.Context) (*models.SystemSettings, 
 	return &settings, err
 }
 
+// ClearSVGLogo removes a stored SVG logo. SVG uploads are no longer accepted because
+// an SVG can carry script; it returns true when a logo was removed.
+func (s *Store) ClearSVGLogo(ctx context.Context) (bool, error) {
+	result, err := s.conn.ExecContext(ctx, `UPDATE system_settings SET logo_data_url = '' WHERE id = 1 AND logo_data_url LIKE 'data:image/svg%'`)
+	if err != nil {
+		return false, err
+	}
+	n, _ := result.RowsAffected()
+	return n > 0, nil
+}
+
 func (s *Store) UpdateSystemSettings(ctx context.Context, settings models.SystemSettings) error {
 	_, err := s.conn.ExecContext(ctx, `UPDATE system_settings SET brand_title = ?, logo_data_url = ? WHERE id = 1`, settings.BrandTitle, settings.LogoDataURL)
 	return err
@@ -539,7 +631,9 @@ func (s *Store) MarkSpecRefreshFailure(ctx context.Context, apiID int, message s
 	if err != nil {
 		return err
 	}
-	_, err = s.conn.ExecContext(ctx, `INSERT INTO api_spec_cache (api_id, last_error) VALUES (?, ?) ON CONFLICT(api_id) DO UPDATE SET last_error = excluded.last_error`, apiID, message)
+	// Only annotate an existing cache row. Inserting one here used to leave an empty
+	// spec_json behind that was then served (200, empty body) and never re-fetched.
+	_, err = s.conn.ExecContext(ctx, `UPDATE api_spec_cache SET last_error = ? WHERE api_id = ?`, message, apiID)
 	return err
 }
 
@@ -594,7 +688,7 @@ func (s *Store) PurgeAuditLogs(ctx context.Context, cutoff time.Time) error {
 func scanUser(scanner interface{ Scan(...any) error }) (*models.User, error) {
 	var user models.User
 	var mustChange, isActive, isAdmin int
-	if err := scanner.Scan(&user.ID, &user.Username, &user.DisplayName, &user.Email, &user.PasswordHash, &user.AuthSource, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.UpdatedAt); err != nil {
+	if err := scanner.Scan(&user.ID, &user.Username, &user.DisplayName, &user.Email, &user.PasswordHash, &user.AuthSource, &mustChange, &isActive, &isAdmin, &user.ExternalID, &user.CreatedAt, &user.UpdatedAt); err != nil {
 		return nil, err
 	}
 	user.MustChangePassword = mustChange == 1

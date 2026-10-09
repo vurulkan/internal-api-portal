@@ -26,7 +26,12 @@ export default function App() {
       return;
     }
     try {
-      const [meResponse, catalogResponse] = await Promise.all([api.me(), api.catalog()]);
+      const meResponse = await api.me();
+      // Until a forced password change is done the backend refuses everything but /me
+      // and change-password, so don't ask for the catalog (a 403 here used to sign the
+      // user out in a loop).
+      const mustChange = meResponse.user.mustChangePassword && meResponse.user.authSource === 'local';
+      const catalogResponse = mustChange ? [] : await api.catalog();
       setMe({
         ...meResponse,
         permissions: meResponse.permissions ?? [],

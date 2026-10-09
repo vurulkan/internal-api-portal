@@ -15,6 +15,7 @@ type User struct {
 	MustChangePassword bool      `json:"mustChangePassword"`
 	IsActive           bool      `json:"isActive"`
 	IsAdmin            bool      `json:"isAdmin"`
+	ExternalID         string    `json:"-"`
 	CreatedAt          time.Time `json:"createdAt"`
 	UpdatedAt          time.Time `json:"updatedAt"`
 }
@@ -75,52 +76,52 @@ type SessionSettings struct {
 }
 
 type SystemSettings struct {
-	BrandTitle string `json:"brandTitle"`
+	BrandTitle  string `json:"brandTitle"`
 	LogoDataURL string `json:"logoDataUrl"`
 }
 
 type APIDefinition struct {
-	ID                 int       `json:"id"`
-	Name               string    `json:"name"`
-	Slug               string    `json:"slug"`
-	Description        string    `json:"description"`
-	InternalOpenAPIURL string    `json:"internalOpenapiUrl,omitempty"`
-	InternalBaseURL    string    `json:"internalBaseUrl,omitempty"`
-	IsActive           bool      `json:"isActive"`
-	TryItEnabled       bool      `json:"tryItEnabled"`
-	AllowedMethods     []string  `json:"allowedMethods"`
-	AllowedPathPrefixes []string `json:"allowedPathPrefixes"`
-	OwnerTeam          string    `json:"ownerTeam"`
-	Tags               []string  `json:"tags"`
-	CreatedAt          time.Time `json:"createdAt"`
-	UpdatedAt          time.Time `json:"updatedAt"`
-	LastSpecRefreshAt  *time.Time `json:"lastSpecRefreshAt,omitempty"`
-	LastSpecStatus     string    `json:"lastSpecStatus,omitempty"`
+	ID                  int        `json:"id"`
+	Name                string     `json:"name"`
+	Slug                string     `json:"slug"`
+	Description         string     `json:"description"`
+	InternalOpenAPIURL  string     `json:"internalOpenapiUrl,omitempty"`
+	InternalBaseURL     string     `json:"internalBaseUrl,omitempty"`
+	IsActive            bool       `json:"isActive"`
+	TryItEnabled        bool       `json:"tryItEnabled"`
+	AllowedMethods      []string   `json:"allowedMethods"`
+	AllowedPathPrefixes []string   `json:"allowedPathPrefixes"`
+	OwnerTeam           string     `json:"ownerTeam"`
+	Tags                []string   `json:"tags"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
+	LastSpecRefreshAt   *time.Time `json:"lastSpecRefreshAt,omitempty"`
+	LastSpecStatus      string     `json:"lastSpecStatus,omitempty"`
 }
 
 type APISummary struct {
-	ID                int       `json:"id"`
-	Name              string    `json:"name"`
-	Slug              string    `json:"slug"`
-	Description       string    `json:"description"`
-	IsActive          bool      `json:"isActive"`
-	TryItEnabled      bool      `json:"tryItEnabled"`
-	OwnerTeam         string    `json:"ownerTeam"`
-	Tags              []string  `json:"tags"`
+	ID                int        `json:"id"`
+	Name              string     `json:"name"`
+	Slug              string     `json:"slug"`
+	Description       string     `json:"description"`
+	IsActive          bool       `json:"isActive"`
+	TryItEnabled      bool       `json:"tryItEnabled"`
+	OwnerTeam         string     `json:"ownerTeam"`
+	Tags              []string   `json:"tags"`
 	LastSpecRefreshAt *time.Time `json:"lastSpecRefreshAt,omitempty"`
-	LastSpecStatus    string    `json:"lastSpecStatus,omitempty"`
-	CanView           bool      `json:"canView"`
-	CanInvoke         bool      `json:"canInvoke"`
-	CanManage         bool      `json:"canManage"`
+	LastSpecStatus    string     `json:"lastSpecStatus,omitempty"`
+	CanView           bool       `json:"canView"`
+	CanInvoke         bool       `json:"canInvoke"`
+	CanManage         bool       `json:"canManage"`
 }
 
 type APISpecCache struct {
-	APIID          int             `json:"apiId"`
-	SpecJSON       json.RawMessage `json:"specJson"`
-	ETag           string          `json:"etag"`
-	FetchedAt      time.Time       `json:"fetchedAt"`
-	LastError      string          `json:"lastError"`
-	SourceFormat   string          `json:"sourceFormat"`
+	APIID        int             `json:"apiId"`
+	SpecJSON     json.RawMessage `json:"specJson"`
+	ETag         string          `json:"etag"`
+	FetchedAt    time.Time       `json:"fetchedAt"`
+	LastError    string          `json:"lastError"`
+	SourceFormat string          `json:"sourceFormat"`
 }
 
 type AuditLog struct {

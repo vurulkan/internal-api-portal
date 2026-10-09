@@ -38,6 +38,12 @@ func main() {
 		log.Fatalf("default admin seed failed: %v", err)
 	}
 
+	if removed, err := dataStore.ClearSVGLogo(context.Background()); err != nil {
+		log.Printf("svg logo cleanup failed: %v", err)
+	} else if removed {
+		log.Printf("removed the stored SVG logo: SVG logos are no longer accepted (they can carry script); upload a PNG, JPEG or WEBP")
+	}
+
 	auditLogger := audit.New(dataStore)
 	auditLogger.StartRetention(context.Background(), cfg.LogRetentionDays, cfg.AuditPurgeInterval)
 
