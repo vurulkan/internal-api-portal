@@ -671,21 +671,33 @@ function beautifyBody(body: string, contentType: string) {
   return body;
 }
 
+// Follows local $ref chains. A ref seen twice (A -> B -> A) stops the walk instead of
+// recursing forever.
 function resolveRef(spec: SpecObject, value: unknown): unknown {
-  if (!value || typeof value !== 'object') return value;
-  const ref = (value as SpecObject).$ref;
-  if (typeof ref !== 'string' || !ref.startsWith('#/')) return value;
-  const parts = ref.slice(2).split('/').map((p) => p.replace(/~1/g, '/').replace(/~0/g, '~'));
-  let current: unknown = spec;
-  for (const part of parts) {
-    if (!current || typeof current !== 'object') return value;
-    current = (current as SpecObject)[part];
-  }
-  if (current && typeof current === 'object' && (current as SpecObject).$ref && current !== value) {
-    return resolveRef(spec, current);
+  let current: unknown = value;
+  const seen = new Set<string>();
+  while (current && typeof current === 'object') {
+    const ref = (current as SpecObject).$ref;
+    if (typeof ref !== 'string' || !ref.startsWith('#/') || seen.has(ref)) break;
+    seen.add(ref);
+    const target = lookupPointer(spec, ref);
+    if (target === undefined) break;
+    current = target;
   }
   return current ?? value;
 }
+
+function lookupPointer(spec: SpecObject, ref: string): unknown {
+  const parts = ref.slice(2).split('/').map((p) => p.replace(/~1/g, '/').replace(/~0/g, '~'));
+  let current: unknown = spec;
+  for (const part of parts) {
+    if (!current || typeof current !== 'object') return undefined;
+    current = (current as SpecObject)[part];
+  }
+  return current;
+}
+
+const MAX_EXAMPLE_DEPTH = 8;
 
 function resolveExampleValue(spec: SpecObject, value: unknown): unknown {
   const resolved = resolveRef(spec, value);
@@ -695,10 +707,26 @@ function resolveExampleValue(spec: SpecObject, value: unknown): unknown {
   return resolved;
 }
 
-function generateExampleFromSchema(schema: SpecObject | undefined, spec: SpecObject): unknown {
-  if (!schema) return undefined;
+// Builds an example value from a schema. Self-referencing schemas (a Node with
+// children: Node[]) stop at the first repeat on the current path, and nesting is
+// capped at MAX_EXAMPLE_DEPTH, so recursive specs can't hang the page.
+function generateExampleFromSchema(
+  schema: SpecObject | undefined,
+  spec: SpecObject,
+  path: Set<object> = new Set(),
+): unknown {
+  if (!schema || path.size >= MAX_EXAMPLE_DEPTH) return undefined;
   const resolved = resolveRef(spec, schema) as SpecObject | undefined;
-  if (!resolved) return undefined;
+  if (!resolved || typeof resolved !== 'object' || path.has(resolved)) return undefined;
+  path.add(resolved);
+  try {
+    return exampleForResolvedSchema(resolved, spec, path);
+  } finally {
+    path.delete(resolved);
+  }
+}
+
+function exampleForResolvedSchema(resolved: SpecObject, spec: SpecObject, path: Set<object>): unknown {
   if (resolved.example !== undefined) return resolveExampleValue(spec, resolved.example);
   if (resolved.default !== undefined) return resolveExampleValue(spec, resolved.default);
   if (Array.isArray(resolved.enum) && resolved.enum.length > 0) return resolved.enum[0];
@@ -706,13 +734,13 @@ function generateExampleFromSchema(schema: SpecObject | undefined, spec: SpecObj
   if (schemaType === 'object' || resolved.properties) {
     const out: Record<string, unknown> = {};
     Object.entries((resolved.properties as SpecObject) ?? {}).forEach(([key, value]) => {
-      const example = generateExampleFromSchema(value as SpecObject, spec);
+      const example = generateExampleFromSchema(value as SpecObject, spec, path);
       if (example !== undefined) out[key] = example;
     });
     return out;
   }
   if (schemaType === 'array') {
-    const itemExample = generateExampleFromSchema((resolved.items as SpecObject) ?? {}, spec);
+    const itemExample = generateExampleFromSchema((resolved.items as SpecObject) ?? {}, spec, path);
     return itemExample === undefined ? [] : [itemExample];
   }
   if (schemaType === 'integer' || schemaType === 'number') return 0;
@@ -722,7 +750,7 @@ function generateExampleFromSchema(schema: SpecObject | undefined, spec: SpecObj
   if (schemaType === 'string') return '';
   if (Array.isArray(resolved.allOf) && resolved.allOf.length > 0) {
     return resolved.allOf.reduce<Record<string, unknown>>((acc, item) => {
-      const value = generateExampleFromSchema(item as SpecObject, spec);
+      const value = generateExampleFromSchema(item as SpecObject, spec, path);
       if (value && typeof value === 'object' && !Array.isArray(value)) return { ...acc, ...(value as Record<string, unknown>) };
       return acc;
     }, {});

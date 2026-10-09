@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -163,6 +164,18 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 	}
 	for _, stmt := range stmts {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+	}
+	// Additive column changes. Re-running them on an upgraded DB fails with
+	// "duplicate column name", which is the expected no-op.
+	alters := []string{
+		// Azure AD identity (tenant:object id). Azure logins are matched on this,
+		// never on e-mail or username, so they can't take over local/LDAP accounts.
+		`ALTER TABLE users ADD COLUMN external_id TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range alters {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}

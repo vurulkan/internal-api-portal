@@ -9,10 +9,9 @@ RUN npm run build
 
 FROM golang:1.23-alpine AS backend-build
 WORKDIR /app
-COPY backend/go.mod ./
+COPY backend/go.mod backend/go.sum ./
 RUN go mod download
-COPY backend ./ 
-RUN go mod tidy
+COPY backend ./
 ENV CGO_ENABLED=0
 RUN go build -o /app/server ./cmd/server
 

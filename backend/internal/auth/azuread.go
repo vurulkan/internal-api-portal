@@ -14,7 +14,9 @@ import (
 )
 
 type AzureADUser struct {
-	Subject     string
+	Subject string
+	// ExternalID is "<tid>:<oid>", the stable identity a portal account is bound to.
+	ExternalID  string
 	Email       string
 	Username    string
 	DisplayName string
@@ -29,11 +31,10 @@ func AzureADAuthURL(cfg models.AzureADConfig, state, nonce string) (string, erro
 }
 
 func AzureADExchangeCode(ctx context.Context, cfg models.AzureADConfig, code, expectedNonce string) (*AzureADUser, error) {
-	provider, oauthConfig, verifier, err := azureProvider(ctx, cfg)
+	_, oauthConfig, verifier, err := azureProvider(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	_ = provider
 	token, err := oauthConfig.Exchange(ctx, code)
 	if err != nil {
 		return nil, err
@@ -52,6 +53,7 @@ func AzureADExchangeCode(ctx context.Context, cfg models.AzureADConfig, code, ex
 		PreferredUsername string `json:"preferred_username"`
 		Name              string `json:"name"`
 		OID               string `json:"oid"`
+		TenantID          string `json:"tid"`
 		Nonce             string `json:"nonce"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
@@ -70,8 +72,13 @@ func AzureADExchangeCode(ctx context.Context, cfg models.AzureADConfig, code, ex
 	if username == "" {
 		return nil, fmt.Errorf("azure ad user identifier missing")
 	}
+	subject := firstNonEmpty(claims.OID, claims.Subject)
+	if subject == "" {
+		return nil, fmt.Errorf("azure ad subject missing")
+	}
 	return &AzureADUser{
-		Subject:     firstNonEmpty(claims.OID, claims.Subject),
+		Subject:     subject,
+		ExternalID:  firstNonEmpty(claims.TenantID, strings.TrimSpace(cfg.TenantID)) + ":" + subject,
 		Email:       strings.TrimSpace(claims.Email),
 		Username:    username,
 		DisplayName: strings.TrimSpace(claims.Name),

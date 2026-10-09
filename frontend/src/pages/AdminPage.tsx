@@ -284,7 +284,7 @@ export function AdminPage() {
   async function submitUser() {
     if (!userForm.username.trim()) { setError('Username is required.'); return; }
     if (!userForm.id && !userForm.password.trim()) { setError('Password is required for a new local user.'); return; }
-    const payload: UserPayload = { username: userForm.username.trim(), displayName: userForm.displayName.trim(), email: userForm.email.trim(), password: userForm.password.trim() || undefined, authSource: userForm.authSource, mustChangePassword: userForm.mustChangePassword, isActive: userForm.isActive, isAdmin: userForm.isAdmin };
+    const payload: UserPayload = { username: userForm.username.trim(), displayName: userForm.displayName.trim(), email: userForm.email.trim(), password: userForm.password || undefined, authSource: userForm.authSource, mustChangePassword: userForm.mustChangePassword, isActive: userForm.isActive, isAdmin: userForm.isAdmin };
     await run(async () => {
       if (userForm.id) {
         await api.updateUser(userForm.id, payload);
@@ -716,12 +716,17 @@ export function AdminPage() {
                   <Input label="Email Attribute" value={ldap.emailAttribute} onChange={(v) => setLdap({ ...ldap, emailAttribute: v })} />
                 </div>
                 <Textarea label="User Base DNs" value={(ldap.userBaseDns ?? []).join('\n')} onChange={(v) => setLdap({ ...ldap, userBaseDns: splitList(v) })} helperText="Comma or newline separated values." rows={2} />
-                <Input label="User Filter" value={ldap.userFilter} onChange={(v) => setLdap({ ...ldap, userFilter: v })} helperText="Examples: (objectClass=user) or (&(objectClass=user)(objectCategory=person))" />
+                <Input label="User Filter" value={ldap.userFilter} onChange={(v) => setLdap({ ...ldap, userFilter: v })} helperText="The username is always part of the login search: a filter with %s gets it substituted, any other filter is combined with (usernameAttribute=username). Examples: (objectClass=user) or (&(objectClass=user)(mail=%s))" />
                 <div className="flex flex-wrap gap-4">
                   <Checkbox label="Use SSL" checked={ldap.useSsl} onChange={(v) => setLdap({ ...ldap, useSsl: v })} />
                   <Checkbox label="StartTLS" checked={ldap.startTls} onChange={(v) => setLdap({ ...ldap, startTls: v })} />
                   <Checkbox label="Skip TLS Verify" checked={ldap.sslSkipVerify} onChange={(v) => setLdap({ ...ldap, sslSkipVerify: v })} />
                 </div>
+                {ldap.sslSkipVerify && (ldap.useSsl || ldap.startTls) && (
+                  <Alert variant="warning">
+                    TLS certificate verification is off: anyone on the network path can impersonate the directory and read bind and user passwords. Use only for testing.
+                  </Alert>
+                )}
               </div>
             )}
           </FormCard>
@@ -953,7 +958,7 @@ export function AdminPage() {
               )}
               <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors">
                 Select Image
-                <input hidden type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
+                <input hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
               </label>
               {logoFile && <span className="ml-2 text-xs text-gray-500">{logoFile.name}</span>}
               <div className="mt-3 flex gap-2">
