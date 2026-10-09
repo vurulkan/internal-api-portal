@@ -283,7 +283,9 @@ Published to GHCR by CI, for `linux/amd64` and `linux/arm64`:
 | `latest` | newest release |
 | `main`, `sha-<commit>` | the current `main` branch (unreleased) |
 
-Every image carries an SBOM and SLSA provenance and is signed with cosign (keyless, GitHub OIDC). Verify before deploying:
+CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access* → add `internal-api-portal` with the *Write* role). Without them, pushes still build both platforms but don't publish.
+
+Every image published by CI carries an SBOM and SLSA provenance and is signed with cosign (keyless, GitHub OIDC). Verify before deploying:
 
 ```bash
 cosign verify ghcr.io/vurulkan/internal-api-portal:1.3.0 \
