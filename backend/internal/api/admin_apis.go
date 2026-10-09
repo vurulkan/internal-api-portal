@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -12,7 +13,7 @@ import (
 func (s *Server) handleAdminAPIs(w http.ResponseWriter, r *http.Request) {
 	apis, err := s.store.ListAPIDefinitions(r.Context())
 	if err != nil {
-		http.Error(w, "failed to load apis", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load apis")
 		return
 	}
 	writeJSON(w, http.StatusOK, apis)
@@ -25,7 +26,7 @@ func (s *Server) handleCreateAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.store.CreateAPIDefinition(r.Context(), payload)
 	if err != nil {
-		http.Error(w, "failed to create api", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to create api")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]int{"id": id})
@@ -38,7 +39,7 @@ func (s *Server) handleUpdateAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	payload.ID, _ = strconv.Atoi(chi.URLParam(r, "id"))
 	if err := s.store.UpdateAPIDefinition(r.Context(), payload); err != nil {
-		http.Error(w, "failed to update api", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to update api")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -47,7 +48,7 @@ func (s *Server) handleUpdateAPI(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteAPI(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	if err := s.store.DeleteAPIDefinition(r.Context(), id); err != nil {
-		http.Error(w, "failed to delete api", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to delete api")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -57,14 +58,28 @@ func (s *Server) handleRefreshAPISpec(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	apiDef, err := s.store.GetAPIDefinition(r.Context(), id)
 	if err != nil {
-		http.Error(w, "api not found", http.StatusNotFound)
+		writeError(w, r, http.StatusNotFound, "api not found")
 		return
 	}
-	cache, err := s.openapi.Refresh(r.Context(), *apiDef)
+	cache, err := s.refreshSpec(r.Context(), *apiDef)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		// API managers need the reason (DNS, TLS, status code, parse error) to fix the
+		// definition, so the detail is returned here, unlike on the viewer endpoints.
+		s.recordAudit(r, models.AuditLog{Action: "api.spec.refresh", ResourceType: "api", ResourceID: strconv.Itoa(apiDef.ID), ResourceName: apiDef.Name, ErrorMessage: err.Error(), StatusCode: http.StatusBadGateway})
+		writeError(w, r, http.StatusBadGateway, "spec refresh failed: "+err.Error())
 		return
 	}
 	s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "api.spec.refresh", ResourceType: "api", ResourceID: strconv.Itoa(apiDef.ID), ResourceName: apiDef.Name, StatusCode: http.StatusOK})
 	writeJSON(w, http.StatusOK, cache)
+}
+
+// refreshSpec fetches the API's spec and records the outcome metric.
+func (s *Server) refreshSpec(ctx context.Context, apiDef models.APIDefinition) (*models.APISpecCache, error) {
+	cache, err := s.openapi.Refresh(ctx, apiDef)
+	if err != nil {
+		s.metrics.SpecRefreshes.Inc("error")
+		return nil, err
+	}
+	s.metrics.SpecRefreshes.Inc("ok")
+	return cache, nil
 }

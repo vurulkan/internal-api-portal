@@ -15,7 +15,7 @@ import (
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
-		http.Error(w, "failed to load users", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load users")
 		return
 	}
 	writeJSON(w, http.StatusOK, users)
@@ -36,21 +36,21 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	payload.Username = strings.TrimSpace(payload.Username)
 	if payload.Username == "" {
-		http.Error(w, "username is required", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "username is required")
 		return
 	}
 	if msg := passwordProblem(payload.Password); msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, msg)
 		return
 	}
 	if payload.IsAdmin && !actor.User.IsAdmin {
 		s.denyAudit(r, "non-admin tried to create an administrator", marshalJSON(map[string]string{"username": payload.Username}))
-		http.Error(w, "only administrators can create administrator accounts", http.StatusForbidden)
+		writeError(w, r, http.StatusForbidden, "only administrators can create administrator accounts")
 		return
 	}
 	hash, err := auth.HashPassword(payload.Password)
 	if err != nil {
-		http.Error(w, "failed to create user", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to create user")
 		return
 	}
 	id, err := s.store.CreateUser(r.Context(), models.User{
@@ -64,7 +64,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		IsAdmin:            payload.IsAdmin,
 	})
 	if err != nil {
-		http.Error(w, "failed to create user (is the username taken?)", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to create user (is the username taken?)")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{Action: "admin.user.create", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: payload.Username, StatusCode: http.StatusCreated, DetailsJSON: marshalJSON(map[string]bool{"isAdmin": payload.IsAdmin})})
@@ -83,46 +83,46 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	target, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
-		http.Error(w, "user not found", http.StatusNotFound)
+		writeError(w, r, http.StatusNotFound, "user not found")
 		return
 	}
 	request.ID = id
 	request.Username = strings.TrimSpace(request.Username)
 	if request.Username == "" {
-		http.Error(w, "username is required", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "username is required")
 		return
 	}
 	if (target.IsAdmin || request.IsAdmin) && !actor.User.IsAdmin {
 		s.denyAudit(r, "non-admin tried to change an administrator account", marshalJSON(map[string]any{"userId": id}))
-		http.Error(w, "only administrators can manage administrator accounts", http.StatusForbidden)
+		writeError(w, r, http.StatusForbidden, "only administrators can manage administrator accounts")
 		return
 	}
 	if msg := s.adminChangeProblem(r.Context(), actor, target, request.IsAdmin, request.IsActive); msg != "" {
-		http.Error(w, msg, http.StatusConflict)
+		writeError(w, r, http.StatusConflict, msg)
 		return
 	}
 	if request.Password != "" {
 		if target.AuthSource != "local" {
-			http.Error(w, "passwords can only be set for local users", http.StatusBadRequest)
+			writeError(w, r, http.StatusBadRequest, "passwords can only be set for local users")
 			return
 		}
 		if msg := passwordProblem(request.Password); msg != "" {
-			http.Error(w, msg, http.StatusBadRequest)
+			writeError(w, r, http.StatusBadRequest, msg)
 			return
 		}
 	}
 	if err := s.store.UpdateUser(r.Context(), request.User); err != nil {
-		http.Error(w, "failed to update user", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to update user")
 		return
 	}
 	if request.Password != "" {
 		hash, err := auth.HashPassword(request.Password)
 		if err != nil {
-			http.Error(w, "failed to update password", http.StatusInternalServerError)
+			writeError(w, r, http.StatusInternalServerError, "failed to update password")
 			return
 		}
 		if err := s.store.UpdateUserPassword(r.Context(), id, hash, request.MustChangePassword); err != nil {
-			http.Error(w, "failed to update password", http.StatusInternalServerError)
+			writeError(w, r, http.StatusInternalServerError, "failed to update password")
 			return
 		}
 	}
@@ -157,20 +157,20 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	target, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
-		http.Error(w, "user not found", http.StatusNotFound)
+		writeError(w, r, http.StatusNotFound, "user not found")
 		return
 	}
 	if target.IsAdmin && !actor.User.IsAdmin {
 		s.denyAudit(r, "non-admin tried to delete an administrator", marshalJSON(map[string]any{"userId": id}))
-		http.Error(w, "only administrators can delete administrator accounts", http.StatusForbidden)
+		writeError(w, r, http.StatusForbidden, "only administrators can delete administrator accounts")
 		return
 	}
 	if msg := s.adminChangeProblem(r.Context(), actor, target, false, false); msg != "" {
-		http.Error(w, msg, http.StatusConflict)
+		writeError(w, r, http.StatusConflict, msg)
 		return
 	}
 	if err := s.store.DeleteUser(r.Context(), id); err != nil {
-		http.Error(w, "failed to delete user", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to delete user")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{Action: "admin.user.delete", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: target.Username, StatusCode: http.StatusOK})
@@ -181,7 +181,7 @@ func (s *Server) handleGetUserGroups(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	ids, err := s.store.GetUserGroupIDs(r.Context(), id)
 	if err != nil {
-		http.Error(w, "failed to load user groups", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load user groups")
 		return
 	}
 	writeJSON(w, http.StatusOK, ids)
@@ -196,24 +196,24 @@ func (s *Server) handleSetUserGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	target, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
-		http.Error(w, "user not found", http.StatusNotFound)
+		writeError(w, r, http.StatusNotFound, "user not found")
 		return
 	}
 	if target.IsAdmin && !actor.User.IsAdmin {
 		s.denyAudit(r, "non-admin tried to change an administrator's groups", marshalJSON(map[string]any{"userId": id}))
-		http.Error(w, "only administrators can manage administrator accounts", http.StatusForbidden)
+		writeError(w, r, http.StatusForbidden, "only administrators can manage administrator accounts")
 		return
 	}
 	current, err := s.store.GetUserGroupIDs(r.Context(), id)
 	if err != nil {
-		http.Error(w, "failed to load user groups", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load user groups")
 		return
 	}
 	if !s.allowGrant(w, r, actor, func() ([]string, error) { return s.store.ScopesForGroups(r.Context(), addedIDs(current, payload)) }) {
 		return
 	}
 	if err := s.store.SetUserGroups(r.Context(), id, payload); err != nil {
-		http.Error(w, "failed to update user groups", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to update user groups")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{Action: "admin.user.groups.update", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: target.Username, StatusCode: http.StatusOK, DetailsJSON: marshalJSON(payload)})
@@ -229,12 +229,12 @@ func (s *Server) allowGrant(w http.ResponseWriter, r *http.Request, actor *model
 	}
 	granted, err := scopes()
 	if err != nil {
-		http.Error(w, "failed to resolve permissions", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to resolve permissions")
 		return false
 	}
 	if missing := scopesBeyondActor(actor, granted); len(missing) > 0 {
 		s.denyAudit(r, "grant exceeds the actor's own permissions", marshalJSON(map[string]any{"scopes": missing}))
-		http.Error(w, "you can only grant permissions you hold yourself; missing: "+strings.Join(missing, ", "), http.StatusForbidden)
+		writeError(w, r, http.StatusForbidden, "you can only grant permissions you hold yourself; missing: "+strings.Join(missing, ", "))
 		return false
 	}
 	return true

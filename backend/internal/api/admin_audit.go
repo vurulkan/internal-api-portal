@@ -14,7 +14,7 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	offset = clampInt(offset, 0, 1<<30)
 	logs, total, err := s.store.ListAuditLogs(r.Context(), limit, offset, r.URL.Query().Get("action"), r.URL.Query().Get("user"))
 	if err != nil {
-		http.Error(w, "failed to load audit logs", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load audit logs")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -28,7 +28,7 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 	logs, _, err := s.store.ListAuditLogs(r.Context(), 5000, 0, r.URL.Query().Get("action"), r.URL.Query().Get("user"))
 	if err != nil {
-		http.Error(w, "failed to export audit logs", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to export audit logs")
 		return
 	}
 	w.Header().Set("Content-Type", "text/csv")

@@ -2,14 +2,18 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"api-portal/backend/internal/auth"
+	"api-portal/backend/internal/logging"
 	"api-portal/backend/internal/models"
 	"api-portal/backend/internal/store"
 )
@@ -26,23 +30,26 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	key := loginKey(s.clientIP(r), payload.Username)
 	if wait := s.logins.locked(key); wait > 0 {
 		w.Header().Set("Retry-After", retryAfterSeconds(wait))
+		s.metrics.Logins.Inc("password", "locked")
 		s.recordAudit(r, models.AuditLog{User: name, Action: "login.locked", ResourceType: "auth", Blocked: true, StatusCode: http.StatusTooManyRequests})
-		http.Error(w, "too many failed sign-in attempts; try again in a few minutes", http.StatusTooManyRequests)
+		writeError(w, r, http.StatusTooManyRequests, "too many failed sign-in attempts; try again in a few minutes")
 		return
 	}
 	user, reason := s.authenticate(r.Context(), payload.Username, payload.Password)
 	if user == nil {
+		s.metrics.Logins.Inc("password", "failed")
 		s.recordAudit(r, models.AuditLog{User: name, Action: "login.failed", ResourceType: "auth", ErrorMessage: reason, StatusCode: http.StatusUnauthorized})
 		if s.logins.fail(key) {
 			s.recordAudit(r, models.AuditLog{User: name, Action: "login.locked", ResourceType: "auth", Blocked: true, StatusCode: http.StatusTooManyRequests, DetailsJSON: marshalJSON(map[string]any{"lockoutSeconds": int(loginLockout.Seconds())})})
 		}
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		writeError(w, r, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	s.logins.succeed(key)
+	s.metrics.Logins.Inc(user.AuthSource, "success")
 	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, s.sessionTTL(r.Context()))
 	if err != nil {
-		http.Error(w, "token error", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "token error")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{User: user.Username, Action: "login.success", ResourceType: "auth", StatusCode: http.StatusOK})
@@ -102,22 +109,22 @@ func (s *Server) handleAuthProviders(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetAzureADConfig(r.Context())
 	if err != nil || cfg == nil || !cfg.Enabled {
-		http.Error(w, "azure ad not configured", http.StatusBadRequest)
+		s.azureFail(w, r, "azure_not_configured", "azure ad is not enabled", nil)
 		return
 	}
 	state, err := auth.RandomState()
 	if err != nil {
-		http.Error(w, "failed to initialize azure login", http.StatusInternalServerError)
+		s.azureFail(w, r, "azure_failed", "random state", err)
 		return
 	}
 	nonce, err := auth.RandomState()
 	if err != nil {
-		http.Error(w, "failed to initialize azure login", http.StatusInternalServerError)
+		s.azureFail(w, r, "azure_failed", "random nonce", err)
 		return
 	}
 	authURL, err := auth.AzureADAuthURL(*cfg, state, nonce)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		s.azureFail(w, r, "azure_failed", "building the authorization url (discovery)", err)
 		return
 	}
 	s.setEphemeralCookie(w, r, "azuread_state", state)
@@ -125,50 +132,83 @@ func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
+// handleAzureCallback finishes the OIDC flow. This is a browser navigation, so
+// failures redirect to the login page with a short error code (shown there as a
+// message) instead of returning JSON; the detail goes to the log and audit.
 func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetAzureADConfig(r.Context())
 	if err != nil || cfg == nil || !cfg.Enabled {
-		http.Error(w, "azure ad not configured", http.StatusBadRequest)
+		s.azureFail(w, r, "azure_not_configured", "azure ad is not enabled", nil)
 		return
 	}
-	if r.URL.Query().Get("state") == "" || r.URL.Query().Get("state") != cookieValue(r, "azuread_state") {
-		http.Error(w, "invalid azure ad state", http.StatusBadRequest)
+	query := r.URL.Query()
+	if query.Get("state") == "" || query.Get("state") != cookieValue(r, "azuread_state") {
+		s.azureFail(w, r, "azure_state", "state mismatch (expired, replayed or forged callback)", nil)
 		return
 	}
-	if errText := r.URL.Query().Get("error"); errText != "" {
-		http.Error(w, errText, http.StatusBadRequest)
+	if errCode := query.Get("error"); errCode != "" {
+		s.azureFail(w, r, "azure_denied", "identity provider returned "+errCode+": "+query.Get("error_description"), nil)
 		return
 	}
-	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	code := strings.TrimSpace(query.Get("code"))
 	if code == "" {
-		http.Error(w, "missing azure ad code", http.StatusBadRequest)
+		s.azureFail(w, r, "azure_failed", "callback without code", nil)
 		return
 	}
 	azureUser, err := auth.AzureADExchangeCode(r.Context(), *cfg, code, cookieValue(r, "azuread_nonce"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		s.azureFail(w, r, "azure_failed", "code exchange / id token verification", err)
 		return
 	}
 	user, err := s.userForAzureLogin(r.Context(), azureUser)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.azureFail(w, r, "azure_failed", "finding or creating the portal account", err)
 		return
 	}
 	s.clearCookie(w, r, "azuread_state")
 	s.clearCookie(w, r, "azuread_nonce")
 	if !user.IsActive {
+		s.metrics.Logins.Inc("azuread", "denied")
 		s.recordAudit(r, models.AuditLog{User: user.Username, Action: "login.azure.denied", ResourceType: "auth", ErrorMessage: "user inactive", Blocked: true, StatusCode: http.StatusForbidden})
-		http.Error(w, "your portal account is disabled; contact an administrator", http.StatusForbidden)
+		http.Redirect(w, r, "/?auth_error=account_disabled", http.StatusFound)
 		return
 	}
 	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, s.sessionTTL(r.Context()))
 	if err != nil {
-		http.Error(w, "token error", http.StatusInternalServerError)
+		s.azureFail(w, r, "azure_failed", "issuing the session token", err)
 		return
 	}
-	s.recordAudit(r, models.AuditLog{User: user.Username, Action: "login.success", ResourceType: "auth", StatusCode: http.StatusOK})
+	s.metrics.Logins.Inc("azuread", "success")
+	s.recordAudit(r, models.AuditLog{User: user.Username, Action: "login.success", ResourceType: "auth", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]string{"source": "azuread"})})
+
+	// The SPA keeps its token in localStorage (until M4 moves sessions to an
+	// HttpOnly cookie), so this page hands it over with a one-off script. The
+	// page-specific CSP allows exactly that script by nonce and nothing else.
+	nonce, err := auth.RandomState()
+	if err != nil {
+		s.azureFail(w, r, "azure_failed", "csp nonce", err)
+		return
+	}
+	tokenJSON, _ := json.Marshal(token)
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(fmt.Sprintf(`<!doctype html><html><body><script>localStorage.setItem("api_portal_token", %q); window.location.replace("/");</script></body></html>`, token)))
+	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><title>Signing in…</title></head><body><script nonce="%s">localStorage.setItem("api_portal_token", %s); window.location.replace("/");</script></body></html>`, nonce, tokenJSON)
+}
+
+// azureFail logs and audits a failed Azure AD sign-in step and sends the browser
+// back to the login page with an error code the UI turns into a message.
+func (s *Server) azureFail(w http.ResponseWriter, r *http.Request, code, step string, err error) {
+	detail := step
+	if err != nil {
+		detail = step + ": " + err.Error()
+	}
+	slog.WarnContext(r.Context(), "login.azure.failed", "code", code, "detail", detail, "request_id", logging.RequestID(r.Context()))
+	s.metrics.Logins.Inc("azuread", "failed")
+	s.recordAudit(r, models.AuditLog{Action: "login.azure.failed", ResourceType: "auth", ErrorMessage: detail, StatusCode: http.StatusBadRequest, DetailsJSON: marshalJSON(map[string]string{"code": code})})
+	s.clearCookie(w, r, "azuread_state")
+	s.clearCookie(w, r, "azuread_nonce")
+	http.Redirect(w, r, "/?auth_error="+url.QueryEscape(code), http.StatusFound)
 }
 
 // userForAzureLogin finds or creates the portal account for an Azure AD sign-in.
@@ -273,7 +313,7 @@ func uniqueUsername(ctx context.Context, store *store.Store, base string) string
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	identity, ok := s.identityForRequest(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	settings, _ := s.store.GetSystemSettings(r.Context())
@@ -288,11 +328,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	identity, ok := s.identityForRequest(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if identity.User.AuthSource != "local" {
-		http.Error(w, "password changes supported only for local users", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "password changes supported only for local users")
 		return
 	}
 	var payload struct {
@@ -305,24 +345,24 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if err := auth.ComparePassword(identity.User.PasswordHash, payload.CurrentPassword); err != nil {
 		s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "user.password.change.failed", ResourceType: "user", ResourceID: strconv.Itoa(identity.User.ID), ErrorMessage: "current password incorrect", StatusCode: http.StatusBadRequest})
 		// 400, not 401: the session itself is fine, and the UI treats 401 as "signed out".
-		http.Error(w, "current password is incorrect", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "current password is incorrect")
 		return
 	}
 	if msg := passwordProblem(payload.NewPassword); msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, msg)
 		return
 	}
 	if payload.NewPassword == payload.CurrentPassword {
-		http.Error(w, "the new password must differ from the current one", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "the new password must differ from the current one")
 		return
 	}
 	hash, err := auth.HashPassword(payload.NewPassword)
 	if err != nil {
-		http.Error(w, "failed to update password", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to update password")
 		return
 	}
 	if err := s.store.UpdateUserPassword(r.Context(), identity.User.ID, hash, false); err != nil {
-		http.Error(w, "failed to update password", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to update password")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "user.password.changed", ResourceType: "user", ResourceID: strconv.Itoa(identity.User.ID), ResourceName: identity.User.Username, StatusCode: http.StatusOK})
@@ -347,7 +387,7 @@ func passwordProblem(password string) string {
 func (s *Server) handlePublicSettings(w http.ResponseWriter, r *http.Request) {
 	settings, err := s.store.GetSystemSettings(r.Context())
 	if err != nil {
-		http.Error(w, "failed to load settings", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load settings")
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)

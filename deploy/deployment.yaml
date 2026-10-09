@@ -32,14 +32,27 @@ spec:
               value: "30"
             - name: SESSION_MINUTES
               value: "60"
+            - name: LOG_FORMAT
+              value: json
+            # Set to the ingress controller's pod CIDR so audit IPs and the login
+            # lockout see the real client address, e.g. "10.244.0.0/16".
+            - name: TRUSTED_PROXIES
+              value: ""
+          # Readiness checks the database; liveness only the process, so a slow
+          # database never restarts the pod.
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: 8080
+            periodSeconds: 10
+            failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 20
+            failureThreshold: 3
           volumeMounts:
             - name: data
               mountPath: /data

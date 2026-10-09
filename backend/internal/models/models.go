@@ -141,6 +141,7 @@ type AuditLog struct {
 	ErrorMessage    string    `json:"errorMessage"`
 	SanitizedHeader string    `json:"sanitizedHeaders"`
 	DetailsJSON     string    `json:"detailsJson"`
+	RequestID       string    `json:"requestId"`
 }
 
 type LDAPUser struct {

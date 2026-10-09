@@ -79,14 +79,37 @@ func (s *Server) secureRequest(r *http.Request) bool {
 
 // ─── Headers ─────────────────────────────────────────────────────────────────
 
-// securityHeaders sets the baseline headers. A full Content-Security-Policy comes in
-// M2 together with the Swagger UI / Azure callback changes it needs.
-func securityHeaders(next http.Handler) http.Handler {
+// contentSecurityPolicy applies to every response. Notes on the exceptions:
+//   - style-src 'unsafe-inline': Swagger UI and React set inline style attributes.
+//   - fonts.googleapis.com / fonts.gstatic.com: the Inter web font; removed when the
+//     fonts are self-hosted (M6).
+//   - img-src data:: the brand logo is stored as a data URL.
+//
+// Scripts are 'self' only; the Azure AD callback page sets its own nonce-based policy.
+const contentSecurityPolicy = "default-src 'self'; " +
+	"base-uri 'self'; " +
+	"object-src 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+	"font-src 'self' data: https://fonts.gstatic.com; " +
+	"img-src 'self' data: blob:; " +
+	"connect-src 'self'; " +
+	"worker-src 'self' blob:"
+
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		if s.config.HSTSEnabled {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			h.Set("Cache-Control", "no-store")
 		}
@@ -196,13 +219,14 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity, ok := s.loadIdentity(r)
 		if !ok || !identity.User.IsActive {
-			http.Error(w, "session is no longer valid", http.StatusUnauthorized)
+			writeError(w, r, http.StatusUnauthorized, "session is no longer valid")
 			return
 		}
 		if identity.User.MustChangePassword && identity.User.AuthSource == "local" && !allowedBeforePasswordChange(r) {
-			http.Error(w, "password change required", http.StatusForbidden)
+			writeError(w, r, http.StatusForbidden, "password change required")
 			return
 		}
+		setRequestUser(r.Context(), identity.User.Username)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), identityKey{}, identity)))
 	})
 }
@@ -242,11 +266,11 @@ func (s *Server) requirePermission(permission string) func(http.Handler) http.Ha
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			identity, ok := s.identityForRequest(r)
 			if !ok {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				writeError(w, r, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			if !rbac.New(identity.User.IsAdmin, identity.Permissions).Has(permission) {
-				http.Error(w, "forbidden", http.StatusForbidden)
+				writeError(w, r, http.StatusForbidden, "forbidden")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -260,12 +284,12 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity, ok := s.identityForRequest(r)
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeError(w, r, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		if !identity.User.IsAdmin {
 			s.denyAudit(r, "admin required", "")
-			http.Error(w, "forbidden: administrator only", http.StatusForbidden)
+			writeError(w, r, http.StatusForbidden, "forbidden: administrator only")
 			return
 		}
 		next.ServeHTTP(w, r)

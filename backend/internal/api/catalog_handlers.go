@@ -20,13 +20,13 @@ import (
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	identity, ok := s.identityForRequest(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
 	apis, err := s.store.ListAPIDefinitions(r.Context())
 	if err != nil {
-		http.Error(w, "failed to load apis", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load apis")
 		return
 	}
 	var out []models.APISummary
@@ -47,18 +47,18 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIDetails(w http.ResponseWriter, r *http.Request) {
 	identity, ok := s.identityForRequest(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	apiDef, err := s.store.GetAPIDefinition(r.Context(), id)
 	if err != nil {
-		http.Error(w, "api not found", http.StatusNotFound)
+		writeError(w, r, http.StatusNotFound, "api not found")
 		return
 	}
 	engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
 	if !engine.CanViewAPI(apiDef.ID) && !engine.CanManageAPI(apiDef.ID) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeError(w, r, http.StatusForbidden, "forbidden")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "api.view", ResourceType: "api", ResourceID: strconv.Itoa(apiDef.ID), ResourceName: apiDef.Name, StatusCode: http.StatusOK})
@@ -71,13 +71,13 @@ func (s *Server) handleAPIDetails(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPISpec(w http.ResponseWriter, r *http.Request) {
 	identity, ok := s.identityForRequest(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
 	if !engine.CanViewAPI(id) && !engine.CanManageAPI(id) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeError(w, r, http.StatusForbidden, "forbidden")
 		return
 	}
 	cache, err := s.store.GetSpecCache(r.Context(), id)
@@ -85,13 +85,14 @@ func (s *Server) handleAPISpec(w http.ResponseWriter, r *http.Request) {
 	if err == sql.ErrNoRows || (err == nil && len(cache.SpecJSON) == 0) {
 		apiDef, apiErr := s.store.GetAPIDefinition(r.Context(), id)
 		if apiErr != nil {
-			http.Error(w, "api not found", http.StatusNotFound)
+			writeError(w, r, http.StatusNotFound, "api not found")
 			return
 		}
-		cache, err = s.openapi.Refresh(r.Context(), *apiDef)
+		cache, err = s.refreshSpec(r.Context(), *apiDef)
 	}
 	if err != nil {
-		http.Error(w, "spec unavailable", http.StatusBadGateway)
+		// Viewers get no detail (it can name internal hosts); admins see it on refresh.
+		writeError(w, r, http.StatusBadGateway, "the API's specification is currently unavailable")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "api.spec.view", ResourceType: "api", ResourceID: strconv.Itoa(id), StatusCode: http.StatusOK})
@@ -102,19 +103,20 @@ func (s *Server) handleAPISpec(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	identity, ok := s.identityForRequest(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
 	if !engine.CanInvokeAPI(id) {
 		s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "api.invoke.blocked", ResourceType: "api", ResourceID: strconv.Itoa(id), Blocked: true, StatusCode: http.StatusForbidden})
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeError(w, r, http.StatusForbidden, "forbidden")
 		return
 	}
 	if !s.userLimiter(identity.User.ID).Allow() {
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		s.metrics.Invocations.Inc(strconv.Itoa(id), "rate_limited")
+		writeError(w, r, http.StatusTooManyRequests, "rate limit exceeded; wait a moment and try again")
 		return
 	}
 	var payload proxy.InvokeRequest
@@ -123,11 +125,12 @@ func (s *Server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 	apiDef, err := s.store.GetAPIDefinition(r.Context(), id)
 	if err != nil || !apiDef.IsActive || !apiDef.TryItEnabled {
-		http.Error(w, "api unavailable", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "api unavailable")
 		return
 	}
 	start := time.Now()
 	resp, sanitizedHeaders, err := s.proxy.Invoke(r.Context(), *apiDef, payload)
+	apiLabel := strconv.Itoa(apiDef.ID)
 	entry := models.AuditLog{
 		User:            identity.User.Username,
 		Action:          "api.invoke",
@@ -145,14 +148,28 @@ func (s *Server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		entry.ErrorMessage = err.Error()
 		entry.StatusCode = status
 		s.recordAudit(r, entry)
-		http.Error(w, message, status)
+		s.metrics.Invocations.Inc(apiLabel, invokeOutcome(status))
+		writeError(w, r, status, message)
 		return
 	}
+	s.metrics.Invocations.Inc(apiLabel, "ok")
+	s.metrics.UpstreamDuration.Observe(time.Since(start).Seconds(), apiLabel)
 	entry.StatusCode = resp.StatusCode
 	entry.RequestBytes = resp.RequestBytes
 	entry.ResponseBytes = resp.ResponseBytes
 	s.recordAudit(r, entry)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func invokeOutcome(status int) string {
+	switch status {
+	case http.StatusForbidden:
+		return "blocked"
+	case http.StatusGatewayTimeout:
+		return "timeout"
+	default:
+		return "upstream_error"
+	}
 }
 
 // invokeErrorResponse maps a proxy error to what the caller sees. Policy refusals

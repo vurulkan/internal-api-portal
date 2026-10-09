@@ -12,7 +12,7 @@ import (
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	session, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
-		http.Error(w, "failed to load session settings", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load session settings")
 		return
 	}
 	writeJSON(w, http.StatusOK, session)
@@ -24,11 +24,11 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if session.SessionMinutes < 5 {
-		http.Error(w, "session timeout too low", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "session timeout too low")
 		return
 	}
 	if err := s.store.UpdateSessionSettings(r.Context(), session); err != nil {
-		http.Error(w, "failed to update session settings", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to update session settings")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{Action: "admin.session.update", ResourceType: "settings", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(session)})
@@ -38,7 +38,7 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetSystem(w http.ResponseWriter, r *http.Request) {
 	settings, err := s.store.GetSystemSettings(r.Context())
 	if err != nil {
-		http.Error(w, "failed to load settings", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load settings")
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
@@ -54,17 +54,17 @@ func (s *Server) handleUpdateSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	title := strings.TrimSpace(payload.BrandTitle)
 	if len([]rune(title)) > 100 {
-		http.Error(w, "brand title is too long (max 100 characters)", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "brand title is too long (max 100 characters)")
 		return
 	}
 	settings, err := s.store.GetSystemSettings(r.Context())
 	if err != nil {
-		http.Error(w, "failed to load settings", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load settings")
 		return
 	}
 	settings.BrandTitle = title
 	if err := s.store.UpdateSystemSettings(r.Context(), *settings); err != nil {
-		http.Error(w, "failed to update settings", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to update settings")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{Action: "admin.system.update", ResourceType: "settings", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]string{"brandTitle": title})})
@@ -74,52 +74,52 @@ func (s *Server) handleUpdateSystem(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUploadSystemLogo(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 	if err := r.ParseMultipartForm(512 * 1024); err != nil {
-		http.Error(w, "invalid multipart payload", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "invalid multipart payload")
 		return
 	}
 	file, header, err := r.FormFile("logo")
 	if err != nil {
-		http.Error(w, "logo file is required", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "logo file is required")
 		return
 	}
 	defer file.Close()
 
 	if header.Size <= 0 || header.Size > 256*1024 {
-		http.Error(w, "logo file too large", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "logo file too large")
 		return
 	}
 
 	content, err := io.ReadAll(io.LimitReader(file, 256*1024+1))
 	if err != nil {
-		http.Error(w, "failed to read logo file", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "failed to read logo file")
 		return
 	}
 	if len(content) == 0 || len(content) > 256*1024 {
-		http.Error(w, "logo file too large", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "logo file too large")
 		return
 	}
 
 	// Sniffed, not taken from the client. SVG is refused: it can carry script.
 	contentType := http.DetectContentType(content)
 	if !allowedLogoContentType(contentType) {
-		http.Error(w, "unsupported logo type (use PNG, JPEG or WEBP)", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "unsupported logo type (use PNG, JPEG or WEBP)")
 		return
 	}
 
 	dataURL := "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(content)
 	if !validLogo(dataURL) {
-		http.Error(w, "invalid logo data", http.StatusBadRequest)
+		writeError(w, r, http.StatusBadRequest, "invalid logo data")
 		return
 	}
 
 	settings, err := s.store.GetSystemSettings(r.Context())
 	if err != nil {
-		http.Error(w, "failed to load settings", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load settings")
 		return
 	}
 	settings.LogoDataURL = dataURL
 	if err := s.store.UpdateSystemSettings(r.Context(), *settings); err != nil {
-		http.Error(w, "failed to store logo", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to store logo")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{Action: "admin.system.logo.update", ResourceType: "settings", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]any{"contentType": contentType, "bytes": len(content)})})
@@ -129,12 +129,12 @@ func (s *Server) handleUploadSystemLogo(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleDeleteSystemLogo(w http.ResponseWriter, r *http.Request) {
 	settings, err := s.store.GetSystemSettings(r.Context())
 	if err != nil {
-		http.Error(w, "failed to load settings", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to load settings")
 		return
 	}
 	settings.LogoDataURL = ""
 	if err := s.store.UpdateSystemSettings(r.Context(), *settings); err != nil {
-		http.Error(w, "failed to remove logo", http.StatusInternalServerError)
+		writeError(w, r, http.StatusInternalServerError, "failed to remove logo")
 		return
 	}
 	s.recordAudit(r, models.AuditLog{Action: "admin.system.logo.delete", ResourceType: "settings", StatusCode: http.StatusOK})

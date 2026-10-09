@@ -32,6 +32,16 @@ type Config struct {
 	ProxyDenyCIDRs []*net.IPNet
 	// ProxyAllowLoopback lets upstreams on 127.0.0.0/8 and ::1 through (local development).
 	ProxyAllowLoopback bool
+
+	LogFormat string // json (default) or text
+	LogLevel  string // debug, info (default), warn, error
+	// MetricsEnabled serves Prometheus metrics. With MetricsAddr set they are served on
+	// that separate listener instead of the main port.
+	MetricsEnabled bool
+	MetricsAddr    string
+	// HSTSEnabled adds Strict-Transport-Security; turn on only when the portal is
+	// reached exclusively over HTTPS.
+	HSTSEnabled bool
 }
 
 func Load() Config {
@@ -42,7 +52,7 @@ func Load() Config {
 		TimeZone:           env("TIMEZONE", "UTC"),
 		LogRetentionDays:   envInt("LOG_RETENTION_DAYS", 30),
 		SessionMinutes:     envInt("SESSION_MINUTES", 60),
-		AuditPurgeInterval: time.Hour,
+		AuditPurgeInterval: envDuration("AUDIT_PURGE_INTERVAL", time.Hour),
 		ProxyTimeout:       time.Duration(envInt("PROXY_TIMEOUT_SECONDS", 30)) * time.Second,
 		MaxRequestBytes:    int64(envInt("MAX_REQUEST_BYTES", 1024*1024)),
 		MaxResponseBytes:   int64(envInt("MAX_RESPONSE_BYTES", 5*1024*1024)),
@@ -50,7 +60,26 @@ func Load() Config {
 		CookieSecure:       strings.ToLower(env("COOKIE_SECURE", "auto")),
 		ProxyDenyCIDRs:     envCIDRs("PROXY_DENY_CIDRS"),
 		ProxyAllowLoopback: envBool("PROXY_ALLOW_LOOPBACK", false),
+		LogFormat:          env("LOG_FORMAT", "json"),
+		LogLevel:           env("LOG_LEVEL", "info"),
+		MetricsEnabled:     envBool("METRICS_ENABLED", true),
+		MetricsAddr:        env("METRICS_ADDR", ""),
+		HSTSEnabled:        envBool("HSTS_ENABLED", false),
 	}
+}
+
+// envDuration reads a Go duration ("90m", "6h"); values below a minute fall back.
+func envDuration(key string, fallback time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < time.Minute {
+		log.Printf("config: ignoring invalid %s %q", key, raw)
+		return fallback
+	}
+	return value
 }
 
 func env(key, fallback string) string {

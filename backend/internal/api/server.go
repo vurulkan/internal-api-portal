@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +16,8 @@ import (
 	"api-portal/backend/internal/audit"
 	"api-portal/backend/internal/auth"
 	"api-portal/backend/internal/config"
+	"api-portal/backend/internal/logging"
+	"api-portal/backend/internal/metrics"
 	"api-portal/backend/internal/models"
 	"api-portal/backend/internal/netguard"
 	"api-portal/backend/internal/openapi"
@@ -30,8 +34,9 @@ type Server struct {
 	staticDir  string
 	jwtKey     []byte
 	timezone   *time.Location
-	limiters   map[int]*rate.Limiter
+	limiters   map[int]*userLimiter
 	limitersMu sync.Mutex
+	metrics    *metrics.Portal
 	logins     *loginGate
 	// dummyHash is checked when the user doesn't exist, so a failed login takes the
 	// same time either way and doesn't reveal which usernames exist.
@@ -59,7 +64,8 @@ func NewServer(store *store.Store, auditLogger *audit.Logger, cfg config.Config)
 		staticDir: cfg.StaticDir,
 		jwtKey:    store.SigningKey(),
 		timezone:  tz,
-		limiters:  map[int]*rate.Limiter{},
+		limiters:  map[int]*userLimiter{},
+		metrics:   metrics.NewPortal(),
 		logins:    newLoginGate(),
 		dummyHash: dummyHash,
 	}
@@ -67,13 +73,16 @@ func NewServer(store *store.Store, auditLogger *audit.Logger, cfg config.Config)
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Use(recoverMiddleware)
-	r.Use(securityHeaders)
-	r.Use(requestLogger)
+	r.Use(requestContext, s.requestLogger, recoverMiddleware, s.securityHeaders)
 
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
+	// Probes. /livez only says the process serves HTTP; /readyz also needs the
+	// database. /healthz is the pre-1.2.0 name, kept as an alias of /livez.
+	r.Get("/livez", s.handleLivez)
+	r.Get("/healthz", s.handleLivez)
+	r.Get("/readyz", s.handleReadyz)
+	if s.config.MetricsEnabled && s.config.MetricsAddr == "" {
+		r.Get("/metrics", s.MetricsHandler().ServeHTTP)
+	}
 
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Get("/api/auth/providers", s.handleAuthProviders)
@@ -151,37 +160,86 @@ func (s *Server) Router() http.Handler {
 			s.notFound(w, r)
 			return
 		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, r, http.StatusMethodNotAllowed, "method not allowed")
 	})
 	return r
 }
 
+func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.store.Ping(ctx); err != nil {
+		slog.WarnContext(r.Context(), "readyz.database", "error", err.Error())
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable", "reason": "database"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+// MetricsHandler serves the Prometheus text format. main mounts it on METRICS_ADDR
+// when that is set; otherwise the router serves it at /metrics.
+func (s *Server) MetricsHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		s.metrics.Registry.WriteText(w)
+	})
+}
+
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") || s.staticDir == "" || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeError(w, r, http.StatusNotFound, "not found")
 		return
 	}
 	s.serveSPA(w, r)
 }
 
+// serveSPA serves built assets, and index.html for client-side routes. Vite puts
+// content-hashed files under /assets/, so they can be cached forever; index.html must
+// be revalidated so a new release is picked up.
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(s.staticDir, filepath.Clean(r.URL.Path))
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		http.ServeFile(w, r, path)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, filepath.Join(s.staticDir, "index.html"))
 }
 
+type userLimiter struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+// userLimiter returns the per-user try-it rate limiter (burst 5, then one every
+// 500 ms). Limiters idle for 10 minutes are dropped so the map can't grow forever.
 func (s *Server) userLimiter(userID int) *rate.Limiter {
 	s.limitersMu.Lock()
 	defer s.limitersMu.Unlock()
-	if limiter, ok := s.limiters[userID]; ok {
-		return limiter
+	now := time.Now()
+	if len(s.limiters) > 256 {
+		for id, entry := range s.limiters {
+			if now.Sub(entry.lastSeen) > 10*time.Minute {
+				delete(s.limiters, id)
+			}
+		}
 	}
-	limiter := rate.NewLimiter(rate.Every(500*time.Millisecond), 5)
-	s.limiters[userID] = limiter
-	return limiter
+	entry, ok := s.limiters[userID]
+	if !ok {
+		entry = &userLimiter{limiter: rate.NewLimiter(rate.Every(500*time.Millisecond), 5)}
+		s.limiters[userID] = entry
+	}
+	entry.lastSeen = now
+	return entry.limiter
 }
 
 func (s *Server) recordAudit(r *http.Request, entry models.AuditLog) {
@@ -191,6 +249,7 @@ func (s *Server) recordAudit(r *http.Request, entry models.AuditLog) {
 	if entry.SourceIP == "" {
 		entry.SourceIP = s.clientIP(r)
 	}
+	entry.RequestID = logging.RequestID(r.Context())
 	s.audit.Record(r.Context(), entry)
 }
 
