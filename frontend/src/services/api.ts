@@ -170,6 +170,36 @@ export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+// ApiError carries the backend's error body: {"error", "code", "requestId"}.
+// message is the human-readable text; requestId lets support find the log lines.
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly requestId: string;
+
+  constructor(status: number, message: string, code = '', requestId = '') {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.requestId = requestId;
+  }
+}
+
+async function toApiError(response: Response): Promise<ApiError> {
+  const text = await response.text();
+  const requestId = response.headers.get('X-Request-Id') ?? '';
+  try {
+    const body = JSON.parse(text) as { error?: string; code?: string; requestId?: string };
+    if (body && typeof body.error === 'string') {
+      return new ApiError(response.status, body.error, body.code ?? '', body.requestId || requestId);
+    }
+  } catch {
+    // Not JSON (e.g. a proxy's HTML error page): fall back to the raw text.
+  }
+  return new ApiError(response.status, text.trim() || `Request failed (${response.status})`, '', requestId);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers ?? {});
   headers.set('Content-Type', 'application/json');
@@ -179,7 +209,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
   const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
-    throw new Error(await response.text());
+    throw await toApiError(response);
   }
   if (response.headers.get('Content-Type')?.includes('text/csv')) {
     return (await response.text()) as T;
@@ -198,7 +228,7 @@ async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
   }
   const response = await fetch(path, { method: 'POST', body: formData, headers });
   if (!response.ok) {
-    throw new Error(await response.text());
+    throw await toApiError(response);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -262,7 +292,7 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     });
     if (!response.ok) {
-      throw new Error(await response.text());
+      throw await toApiError(response);
     }
     return response.text();
   },

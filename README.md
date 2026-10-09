@@ -85,11 +85,12 @@ docker/
 
 ### Backend
 
-- Go
+- Go (1.26+; images are built with the latest Go 1.27 patch)
 - chi router
-- SQLite
+- SQLite (WAL, foreign keys, versioned migrations)
 - JWT
 - go-ldap
+- `log/slog` structured logging, Prometheus metrics
 
 ### Frontend
 
@@ -211,6 +212,12 @@ Change it immediately.
 | `COOKIE_SECURE` | `auto` | Secure flag of the Azure AD state cookies: `auto` (TLS, or `https` from a trusted proxy), `true`, `false` |
 | `PROXY_DENY_CIDRS` | _(empty)_ | Extra networks the try-it proxy and spec fetcher may never connect to |
 | `PROXY_ALLOW_LOOPBACK` | `false` | Allow upstreams on `127.0.0.0/8` / `::1` (local development only) |
+| `LOG_FORMAT` | `json` | `json` or `text` |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` (probe and `/metrics` requests log at `debug`) |
+| `METRICS_ENABLED` | `true` | Serve Prometheus metrics |
+| `METRICS_ADDR` | _(empty)_ | Serve metrics on a separate listener (e.g. `:9090`) instead of `/metrics` on the main port |
+| `HSTS_ENABLED` | `false` | Send `Strict-Transport-Security`; enable only when the portal is reached exclusively over HTTPS |
+| `AUDIT_PURGE_INTERVAL` | `1h` | How often old audit entries are purged (Go duration, at least `1m`); the first purge runs at startup |
 
 ## Local Development
 
@@ -228,6 +235,25 @@ npm run dev
 cd (Project Root)/backend
 go run ./cmd/server
 ```
+
+### Tests and checks
+
+The same checks run in CI (`.github/workflows/ci.yml`) on every push and pull request:
+
+```bash
+cd backend
+go vet ./...
+staticcheck ./...   # v0.8.1; see ci.yml for the x/tools pin it needs on Go 1.27.2
+go test -race ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+cd ../frontend
+npm ci
+npx tsc --noEmit
+npm run build
+```
+
+`internal/api/authz_test.go` holds the authorization table: one row per route with who may call it. A route added without a row fails the build, and every row is checked for anonymous (401), unauthorized (403) and authorized access.
 
 ### Production-style local run with Docker
 
@@ -301,26 +327,42 @@ kubectl apply -f (Project Root)/deploy/service.yaml
 Deployment expectations:
 
 - a persistent volume is mounted at `/data`
-- probes call `/healthz`
+- probes: liveness `/livez`, readiness `/readyz` (see Health Checks)
 - the same container serves both frontend and backend
 - the provided manifest defaults to the image's root startup path for maximum compatibility with mounted PVCs
-- if you want a strict non-root deployment, adjust the deployment security context and volume ownership strategy to match your cluster policy
+- if you want a strict non-root deployment, adjust the deployment security context and volume ownership strategy to match your cluster policy (a hardened, non-root manifest is planned for 1.3.0)
+- run a single replica: SQLite on a ReadWriteOnce volume and the in-memory rate limiters assume one instance
 
 If you prefer to build and publish your own image, replace the image reference in [deploy/deployment.yaml]((Project Root)/deploy/deployment.yaml).
 
-## Health Check
+## Health Checks, Metrics and Logs
 
-Endpoint:
+| Endpoint | Meaning |
+|---|---|
+| `GET /livez` | The process serves HTTP. Use for the liveness probe. |
+| `GET /readyz` | The database answers too; `503` otherwise. Use for the readiness probe. External services (LDAP, Azure AD, upstream APIs) are deliberately not checked, so one unreachable dependency doesn't take the portal out of service. |
+| `GET /healthz` | Alias of `/livez`, kept for older manifests. |
+| `GET /metrics` | Prometheus text format (unless `METRICS_ENABLED=false`, or on `METRICS_ADDR` when set). |
 
-```text
-GET /healthz
-```
+Metrics: `portal_http_requests_total{route,method,code}`, `portal_http_request_duration_seconds{route,method}`, `portal_invoke_total{api,outcome}`, `portal_invoke_upstream_duration_seconds{api}`, `portal_spec_refresh_total{outcome}`, `portal_login_total{source,outcome}`. The `route` label is the route pattern (`/api/apis/{id}`), never the raw path.
 
-Expected response:
+Logs are JSON lines on stdout (`LOG_FORMAT=text` for development):
+
+- one `http.request` line per request: method, route, path, status, duration, bytes, client IP, user, `request_id`
+- one `audit` line per audit entry, with the same `request_id`
+- `db.migration.applied`, `login.azure.failed`, `http.panic`, startup / shutdown events
+
+Every response carries an `X-Request-Id` header. An incoming `X-Request-Id` (letters, digits, `._:-`, up to 64 characters) is kept, so ids from an ingress carry through. The id is stored with each audit entry and returned in error bodies.
+
+### Error format
+
+Every API error is JSON:
 
 ```json
-{"status":"ok"}
+{"error": "you can only grant permissions you hold yourself; missing: audit.view", "code": "forbidden", "requestId": "Kguzvp0W4Jf6ngXw"}
 ```
+
+`error` is safe to show to users; `code` is one of `bad_request`, `unauthorized`, `forbidden`, `not_found`, `method_not_allowed`, `conflict`, `payload_too_large`, `rate_limited`, `upstream_error`, `upstream_timeout`, `unavailable`, `internal_error`. Internal details (directory, identity provider, upstream errors) are logged under the request id instead of being returned, except on the administrator-only LDAP / Azure AD test endpoints and spec refresh, where the detail is needed to fix the configuration.
 
 ## API Definition Management
 
@@ -468,6 +510,8 @@ Admin flow:
 4. Save
 5. Search LDAP users
 6. Import selected users into the local catalog
+
+Importing never converts an existing local or Azure AD account: a username that already belongs to one is skipped and reported (before 1.2.0 the import turned it into an LDAP account, so the directory account of that name could sign in as it).
 
 ### Common Active Directory Starting Values
 
@@ -646,7 +690,13 @@ Never forwarded upstream:
 
 Other `X-*` headers (e.g. `X-Api-Key`) plus `Content-Type`, `Accept`, `Accept-Language` and `User-Agent` are forwarded. Their values are masked in the audit log.
 
-Responses also carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: strict-origin-when-cross-origin`; API responses are `Cache-Control: no-store`.
+Response headers:
+
+- `Content-Security-Policy`: scripts only from the portal itself (`script-src 'self'`, no inline script, no `eval`), no framing, no plugins. Inline styles are allowed because Swagger UI needs them; the Inter web font is loaded from Google Fonts until the fonts are self-hosted. The Azure AD callback page has its own policy that allows exactly its one script by nonce.
+- `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`, `Cross-Origin-Opener-Policy: same-origin`
+- `Strict-Transport-Security` when `HSTS_ENABLED=true`
+- API responses are `Cache-Control: no-store`; hashed assets under `/assets/` are cached for a year, `index.html` is revalidated
+- JSON request bodies are limited to 2 MiB (`413` above)
 
 ### Why the Browser Does Not Need CORS
 

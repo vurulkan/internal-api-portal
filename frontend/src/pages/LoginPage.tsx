@@ -3,6 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { Alert, Button, Input } from '../components/ui';
 import { api, setToken } from '../services/api';
 
+// Codes the Azure AD callback appends as ?auth_error=… when sign-in fails.
+const AUTH_ERRORS: Record<string, string> = {
+  azure_not_configured: 'Microsoft sign-in is not enabled.',
+  azure_state: 'The Microsoft sign-in took too long or was started in another tab. Please try again.',
+  azure_denied: 'Microsoft sign-in was cancelled or refused.',
+  azure_failed: 'Microsoft sign-in failed. Please try again, or contact an administrator if it keeps happening.',
+  account_disabled: 'Your portal account is disabled. Contact an administrator.',
+};
+
 type Props = {
   brandTitle: string;
   logoDataUrl?: string;
@@ -18,6 +27,14 @@ export function LoginPage({ brandTitle, logoDataUrl, onLogin }: Props) {
   const [azureEnabled, setAzureEnabled] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('auth_error');
+    if (code) {
+      setError(AUTH_ERRORS[code] ?? AUTH_ERRORS.azure_failed);
+      params.delete('auth_error');
+      const query = params.toString();
+      window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : ''));
+    }
     api.authProviders()
       .then((providers) => setAzureEnabled(Boolean(providers.azureAd)))
       .catch(() => undefined);

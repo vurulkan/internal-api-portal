@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -27,6 +28,7 @@ type testEnv struct {
 	srv     *Server
 	handler http.Handler
 	store   *store.Store
+	dbConn  *sql.DB
 	seq     int
 }
 
@@ -51,9 +53,10 @@ func newEnv(t *testing.T) *testEnv {
 		MaxResponseBytes:   1 << 20,
 		CookieSecure:       "auto",
 		ProxyAllowLoopback: true,
+		MetricsEnabled:     true,
 	}
 	srv := NewServer(st, audit.New(st), cfg)
-	return &testEnv{t: t, srv: srv, handler: srv.Router(), store: st}
+	return &testEnv{t: t, srv: srv, handler: srv.Router(), store: st, dbConn: database.Conn}
 }
 
 // user creates a local account with testPassword.
