@@ -35,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: portal
-          image: ghcr.io/vurulkan/internal-api-portal:1.4.0
+          image: ghcr.io/vurulkan/internal-api-portal:1.5.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

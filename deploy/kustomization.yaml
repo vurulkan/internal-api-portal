@@ -14,4 +14,4 @@ resources:
 #   - ingress.example.yaml         TLS ingress
 images:
   - name: ghcr.io/vurulkan/internal-api-portal
-    newTag: "1.4.0"
+    newTag: "1.5.0"
