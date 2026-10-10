@@ -14,6 +14,7 @@ import (
 	"api-portal/backend/internal/auth"
 	"api-portal/backend/internal/logging"
 	"api-portal/backend/internal/models"
+	"api-portal/backend/internal/rbac"
 	"api-portal/backend/internal/store"
 )
 
@@ -26,23 +27,30 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := auditUsername(payload.Username)
+	auditActor(r, name, "")
+	auditTarget(r, "auth", "", name)
 	key := loginKey(s.clientIP(r), payload.Username)
 	if wait := s.logins.locked(key); wait > 0 {
 		w.Header().Set("Retry-After", retryAfterSeconds(wait))
 		s.metrics.Logins.Inc("password", "locked")
-		s.recordAudit(r, models.AuditLog{User: name, Action: "login.locked", ResourceType: "auth", Blocked: true, StatusCode: http.StatusTooManyRequests})
+		auditReason(r, "locked out after repeated failures")
 		writeError(w, r, http.StatusTooManyRequests, "too many failed sign-in attempts; try again in a few minutes")
 		return
 	}
-	user, reason := s.authenticate(r.Context(), payload.Username, payload.Password)
+	user, reason, directoryGroups := s.authenticate(r.Context(), payload.Username, payload.Password)
 	if user == nil {
 		s.metrics.Logins.Inc("password", "failed")
-		s.recordAudit(r, models.AuditLog{User: name, Action: "login.failed", ResourceType: "auth", ErrorMessage: reason, StatusCode: http.StatusUnauthorized})
+		// auth.login.denied: wrong credentials, unknown or disabled account.
+		auditReason(r, reason)
 		if s.logins.fail(key) {
-			s.recordAudit(r, models.AuditLog{User: name, Action: "login.locked", ResourceType: "auth", Blocked: true, StatusCode: http.StatusTooManyRequests, DetailsJSON: marshalJSON(map[string]any{"lockoutSeconds": int(loginLockout.Seconds())})})
+			auditDetail(r, "lockoutStartedSeconds", int(loginLockout.Seconds()))
 		}
 		writeError(w, r, http.StatusUnauthorized, "invalid credentials")
 		return
+	}
+	auditActor(r, user.Username, user.AuthSource)
+	if user.AuthSource == "ldap" {
+		s.syncDirectoryGroups(r, user, "ldap", directoryGroups)
 	}
 	s.logins.succeed(key)
 	if err := s.startSession(w, r, user); err != nil {
@@ -51,40 +59,72 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.metrics.Logins.Inc(user.AuthSource, "success")
-	s.recordAudit(r, models.AuditLog{User: user.Username, Action: "login.success", ResourceType: "auth", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]string{"source": user.AuthSource})})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // authenticate checks a username/password login. On failure it returns a nil user and
-// the reason for the audit log (never shown to the caller).
-func (s *Server) authenticate(ctx context.Context, username, password string) (*models.User, string) {
+// the reason for the audit log (never shown to the caller). For LDAP users it also
+// returns the directory groups (memberOf).
+func (s *Server) authenticate(ctx context.Context, username, password string) (*models.User, string, []string) {
 	user, err := s.store.GetUserByUsername(ctx, username)
 	if err != nil {
 		_ = auth.ComparePassword(s.dummyHash, password)
-		return nil, "user not found"
+		return nil, "user not found", nil
 	}
 	if !user.IsActive {
 		_ = auth.ComparePassword(s.dummyHash, password)
-		return nil, "user inactive"
+		return nil, "user inactive", nil
 	}
 	switch user.AuthSource {
 	case "ldap":
+		if !s.config.Features.LDAP {
+			return nil, "ldap sign-in is turned off (FEATURE_LDAP=false)", nil
+		}
 		cfg, err := s.store.GetLDAPConfig(ctx)
 		if err != nil {
-			return nil, "ldap config unavailable"
+			return nil, "ldap config unavailable", nil
 		}
-		if err := auth.LDAPAuthenticate(*cfg, username, password); err != nil {
-			return nil, "ldap auth failed: " + err.Error()
+		groups, err := auth.LDAPAuthenticate(*cfg, username, password)
+		if err != nil {
+			return nil, "ldap auth failed: " + err.Error(), nil
 		}
+		return user, "", groups
 	case "azuread":
 		_ = auth.ComparePassword(s.dummyHash, password)
-		return nil, "azure ad account; password login not allowed"
+		return nil, "azure ad account; password login not allowed", nil
 	default:
 		if err := auth.ComparePassword(user.PasswordHash, password); err != nil {
-			return nil, "local auth failed"
+			return nil, "local auth failed", nil
 		}
 	}
-	return user, ""
+	return user, "", nil
+}
+
+// syncDirectoryGroups mirrors the user's directory groups into the portal groups
+// mapped to them (Admin → Groups). Failures are logged; sign-in goes on.
+func (s *Server) syncDirectoryGroups(r *http.Request, user *models.User, source string, memberships []string) {
+	isMember := func(g models.Group) bool {
+		want := g.AzureGroupID
+		if source == "ldap" {
+			want = g.LDAPGroupDN
+		}
+		for _, m := range memberships {
+			if strings.EqualFold(strings.TrimSpace(m), strings.TrimSpace(want)) {
+				return true
+			}
+		}
+		return false
+	}
+	added, removed, err := s.store.SyncDirectoryGroups(r.Context(), user.ID, source, isMember)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "groups.sync_failed", "user", user.Username, "error", err.Error())
+		return
+	}
+	if len(added) > 0 || len(removed) > 0 {
+		auditDetail(r, "groupsJoined", added)
+		auditDetail(r, "groupsLeft", removed)
+		slog.InfoContext(r.Context(), "groups.synced", "user", user.Username, "source", source, "joined", added, "left", removed)
+	}
 }
 
 func (s *Server) handleAuthProviders(w http.ResponseWriter, r *http.Request) {
@@ -92,14 +132,14 @@ func (s *Server) handleAuthProviders(w http.ResponseWriter, r *http.Request) {
 	azureCfg, _ := s.store.GetAzureADConfig(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"local":   true,
-		"ldap":    ldapCfg != nil && ldapCfg.Enabled,
-		"azureAd": azureCfg != nil && azureCfg.Enabled,
+		"ldap":    s.config.Features.LDAP && ldapCfg != nil && ldapCfg.Enabled,
+		"azureAd": s.config.Features.AzureAD && azureCfg != nil && azureCfg.Enabled,
 	})
 }
 
 func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetAzureADConfig(r.Context())
-	if err != nil || cfg == nil || !cfg.Enabled {
+	if err != nil || cfg == nil || !cfg.Enabled || !s.config.Features.AzureAD {
 		s.azureFail(w, r, "azure_not_configured", "azure ad is not enabled", nil)
 		return
 	}
@@ -130,7 +170,7 @@ func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
 // message) instead of returning JSON; the detail goes to the log and audit.
 func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetAzureADConfig(r.Context())
-	if err != nil || cfg == nil || !cfg.Enabled {
+	if err != nil || cfg == nil || !cfg.Enabled || !s.config.Features.AzureAD {
 		s.azureFail(w, r, "azure_not_configured", "azure ad is not enabled", nil)
 		return
 	}
@@ -169,9 +209,14 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearAzureCookies(w, r)
+	if azureUser.GroupsOverage {
+		slog.WarnContext(r.Context(), "groups.sync_skipped", "user", user.Username, "reason", "group overage: the token lists no groups")
+	} else {
+		s.syncDirectoryGroups(r, user, "azuread", azureUser.Groups)
+	}
 	if !user.IsActive {
 		s.metrics.Logins.Inc("azuread", "denied")
-		s.recordAudit(r, models.AuditLog{User: user.Username, Action: "login.azure.denied", ResourceType: "auth", ErrorMessage: "user inactive", Blocked: true, StatusCode: http.StatusForbidden})
+		s.recordAudit(r, models.AuditLog{User: user.Username, ActorSource: "azuread", Action: "auth.login.denied", Outcome: "denied", ResourceType: "auth", ErrorMessage: "user inactive", Blocked: true, StatusCode: http.StatusForbidden})
 		http.Redirect(w, r, "/?auth_error=account_disabled", http.StatusFound)
 		return
 	}
@@ -180,7 +225,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.metrics.Logins.Inc("azuread", "success")
-	s.recordAudit(r, models.AuditLog{User: user.Username, Action: "login.success", ResourceType: "auth", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]string{"source": "azuread"})})
+	s.recordAudit(r, models.AuditLog{User: user.Username, ActorSource: "azuread", Action: "auth.login.success", Outcome: "success", ResourceType: "auth", StatusCode: http.StatusOK})
 	// The session cookie is SameSite=Strict, so the browser won't send it on this
 	// cross-site redirect chain's final page load; the SPA's own API calls carry it.
 	http.Redirect(w, r, "/", http.StatusFound)
@@ -195,7 +240,11 @@ func (s *Server) azureFail(w http.ResponseWriter, r *http.Request, code, step st
 	}
 	slog.WarnContext(r.Context(), "login.azure.failed", "code", code, "detail", detail, "request_id", logging.RequestID(r.Context()))
 	s.metrics.Logins.Inc("azuread", "failed")
-	s.recordAudit(r, models.AuditLog{Action: "login.azure.failed", ResourceType: "auth", ErrorMessage: detail, StatusCode: http.StatusBadRequest, DetailsJSON: marshalJSON(map[string]string{"code": code})})
+	outcome := "failed"
+	if code == "azure_groups" || code == "azure_denied" {
+		outcome = "denied"
+	}
+	s.recordAudit(r, models.AuditLog{ActorSource: "azuread", Action: "auth.login." + outcome, Outcome: outcome, ResourceType: "auth", ErrorMessage: detail, StatusCode: http.StatusBadRequest, DetailsJSON: marshalJSON(map[string]string{"code": code})})
 	s.clearAzureCookies(w, r)
 	http.Redirect(w, r, "/?auth_error="+url.QueryEscape(code), http.StatusFound)
 }
@@ -322,11 +371,14 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"passwordPolicy": map[string]int{"minLength": s.passwords.MinLength},
 		"session":        map[string]any{"expiresAt": session.ExpiresAt, "idleMinutes": int(idle.Minutes())},
 		"warnings":       warnings,
+		"capabilities":   s.capabilitiesFor(rbac.New(identity.User.IsAdmin, identity.Permissions)),
+		"features":       s.config.Features,
 	})
 }
 
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	identity, _ := s.identityForRequest(r)
+	auditTarget(r, "user", strconv.Itoa(identity.User.ID), identity.User.Username)
 	if identity.User.AuthSource != "local" {
 		writeError(w, r, http.StatusBadRequest, "password changes are supported only for local users")
 		return
@@ -339,7 +391,6 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := auth.ComparePassword(identity.User.PasswordHash, payload.CurrentPassword); err != nil {
-		s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "password.change.failed", ResourceType: "user", ResourceID: strconv.Itoa(identity.User.ID), ErrorMessage: "current password incorrect", StatusCode: http.StatusBadRequest})
 		// 400, not 401: the session itself is fine, and the UI treats 401 as "signed out".
 		writeError(w, r, http.StatusBadRequest, "current password is incorrect")
 		return
@@ -363,7 +414,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	// Other browsers signed in as this user may have been someone who knew the old password.
 	revoked, _ := s.store.RevokeUserSessions(r.Context(), identity.User.ID, currentSession(r).ID, time.Now().UTC())
-	s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "password.change.success", ResourceType: "user", ResourceID: strconv.Itoa(identity.User.ID), ResourceName: identity.User.Username, StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]int{"sessionsRevoked": revoked})})
+	auditDetail(r, "sessionsRevoked", revoked)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionsRevoked": revoked})
 }
 
@@ -374,7 +425,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearSessionCookies(w, r)
-	s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "logout", ResourceType: "auth", StatusCode: http.StatusOK})
+	auditTarget(r, "session", strconv.Itoa(currentSession(r).ID), identity.User.Username)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

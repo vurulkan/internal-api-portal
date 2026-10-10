@@ -84,12 +84,16 @@ export default function App() {
     );
   }
 
+  // The admin console opens for anyone with at least one admin section (delegated
+  // administrators included), not only isAdmin.
+  const canAdmin = me.user.isAdmin || (me.capabilities?.adminSections.length ?? 0) > 0;
+
   return (
     <Layout
       brandTitle={me.branding.brandTitle || publicSettings.brandTitle}
       logoDataUrl={me.branding.logoDataUrl || publicSettings.logoDataUrl}
       username={me.user.username}
-      isAdmin={me.user.isAdmin}
+      isAdmin={canAdmin}
       warnings={me.warnings ?? []}
       onLogout={handleLogout}
     >
@@ -137,8 +141,8 @@ export default function App() {
         <Route
           path="/admin"
           element={
-            me.user.isAdmin && !me.user.mustChangePassword ? (
-              <AdminPage />
+            canAdmin && !me.user.mustChangePassword ? (
+              <AdminPage me={me} />
             ) : (
               <Navigate to={me.user.mustChangePassword ? '/change-password' : '/'} replace />
             )

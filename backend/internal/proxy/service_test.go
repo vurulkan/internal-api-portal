@@ -40,7 +40,7 @@ func newService() *Service {
 }
 
 func apiFor(baseURL string, prefixes ...string) models.APIDefinition {
-	return models.APIDefinition{InternalBaseURL: baseURL + "/base", AllowedMethods: []string{"GET", "POST"}, AllowedPathPrefixes: prefixes}
+	return models.APIDefinition{InternalBaseURL: baseURL + "/base", AllowedMethods: []string{"GET", "POST"}, AllowedPathPrefixes: prefixes, ForwardAllXHeaders: true}
 }
 
 func isPolicy(err error) bool {
@@ -61,7 +61,7 @@ func TestHeaderFiltering(t *testing.T) {
 			"Authorization":          "Bearer user-token",
 			"Accept":                 "application/json",
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestPathAllowlistUsesSegmentBoundaries(t *testing.T) {
 		"v1/items":     true, // leading slash is added
 		"/v1/../admin": false,
 	} {
-		_, _, err := svc.Invoke(context.Background(), api, InvokeRequest{Method: "GET", Path: path})
+		_, _, err := svc.Invoke(context.Background(), api, InvokeRequest{Method: "GET", Path: path}, nil)
 		if allowed && err != nil {
 			t.Errorf("%s: unexpected error %v", path, err)
 		}
@@ -112,7 +112,7 @@ func TestPathRejectsTraversalAndAmbiguity(t *testing.T) {
 	srv, _ := newUpstream(t, 200, "")
 	svc := newService()
 	for _, path := range []string{"/v1/%2e%2e/admin", "/v1/..%2Fadmin", "/v1//x", `/v1\x`, "/v1/a%00b", "/v1/x?y=1", "/v1/%zz"} {
-		if _, _, err := svc.Invoke(context.Background(), apiFor(srv.URL), InvokeRequest{Method: "GET", Path: path}); !isPolicy(err) {
+		if _, _, err := svc.Invoke(context.Background(), apiFor(srv.URL), InvokeRequest{Method: "GET", Path: path}, nil); !isPolicy(err) {
 			t.Errorf("%s: expected a policy error, got %v", path, err)
 		}
 	}
@@ -121,7 +121,7 @@ func TestPathRejectsTraversalAndAmbiguity(t *testing.T) {
 func TestEncodedPathParametersReachUpstreamUnchanged(t *testing.T) {
 	srv, got := newUpstream(t, 200, "")
 	// The UI sends path parameters through encodeURIComponent.
-	_, _, err := newService().Invoke(context.Background(), apiFor(srv.URL), InvokeRequest{Method: "GET", Path: "/users/john%20doe/files/a%2Fb", Query: "q=a b&z=1"})
+	_, _, err := newService().Invoke(context.Background(), apiFor(srv.URL), InvokeRequest{Method: "GET", Path: "/users/john%20doe/files/a%2Fb", Query: "q=a b&z=1"}, nil)
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
@@ -132,18 +132,44 @@ func TestEncodedPathParametersReachUpstreamUnchanged(t *testing.T) {
 
 func TestMethodAllowlist(t *testing.T) {
 	srv, _ := newUpstream(t, 200, "")
-	if _, _, err := newService().Invoke(context.Background(), apiFor(srv.URL), InvokeRequest{Method: "DELETE", Path: "/x"}); !isPolicy(err) {
+	if _, _, err := newService().Invoke(context.Background(), apiFor(srv.URL), InvokeRequest{Method: "DELETE", Path: "/x"}, nil); !isPolicy(err) {
 		t.Fatalf("DELETE: expected a policy error, got %v", err)
 	}
 }
 
 func TestRedirectIsReturnedNotFollowed(t *testing.T) {
 	srv, _ := newUpstream(t, http.StatusFound, "http://169.254.169.254/latest/meta-data/")
-	resp, _, err := newService().Invoke(context.Background(), apiFor(srv.URL), InvokeRequest{Method: "GET", Path: "/x"})
+	resp, _, err := newService().Invoke(context.Background(), apiFor(srv.URL), InvokeRequest{Method: "GET", Path: "/x"}, nil)
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status = %d, want 302 passed through", resp.StatusCode)
+	}
+}
+
+func TestHeaderAllowListAndInjection(t *testing.T) {
+	srv, got := newUpstream(t, 200, "")
+	api := apiFor(srv.URL)
+	api.ForwardAllXHeaders = false
+	api.AllowedRequestHeaders = []string{"X-Tenant-Id", "Authorization"}
+	_, _, err := newService().Invoke(context.Background(), api, InvokeRequest{Method: "GET", Path: "/x", Headers: map[string]string{
+		"X-Tenant-Id":   "t1",
+		"X-Other":       "dropped",
+		"Authorization": "Bearer user-supplied",
+		"X-Api-Key":     "user-attempt",
+		"Cookie":        "session=steal",
+	}}, map[string]string{"X-Api-Key": "server-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.header.Get("X-Tenant-Id") != "t1" || got.header.Get("X-Other") != "" || got.header.Get("Cookie") != "" {
+		t.Fatalf("allow-list not applied: %v", got.header)
+	}
+	if got.header.Get("Authorization") != "Bearer user-supplied" {
+		t.Error("allow-listed Authorization not forwarded")
+	}
+	if got.header.Get("X-Api-Key") != "server-secret" {
+		t.Errorf("injected header lost or overridden by the user: %q", got.header.Get("X-Api-Key"))
 	}
 }

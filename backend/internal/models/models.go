@@ -25,6 +25,9 @@ type Group struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"createdAt"`
+	// Directory groups mirrored into this group at sign-in (empty: not mapped).
+	AzureGroupID string `json:"azureGroupId"`
+	LDAPGroupDN  string `json:"ldapGroupDn"`
 }
 
 type Role struct {
@@ -118,6 +121,33 @@ type APIDefinition struct {
 	UpdatedAt           time.Time  `json:"updatedAt"`
 	LastSpecRefreshAt   *time.Time `json:"lastSpecRefreshAt,omitempty"`
 	LastSpecStatus      string     `json:"lastSpecStatus,omitempty"`
+
+	// OwnerGroupID: members of this group manage the API (nil: no owner group).
+	OwnerGroupID *int `json:"ownerGroupId"`
+	// Try-it header policy: headers users may send besides Content-Type, Accept,
+	// Accept-Language and User-Agent. ForwardAllXHeaders keeps the pre-1.5.0
+	// behaviour (any X-* header) for APIs registered before.
+	AllowedRequestHeaders []string `json:"allowedRequestHeaders"`
+	ForwardAllXHeaders    bool     `json:"forwardAllXHeaders"`
+	// InjectHeaders are added by the portal upstream; their values are write-only
+	// (never returned), InjectHeaderNames lists what is configured.
+	InjectHeaders      []HeaderValue `json:"injectHeaders,omitempty"`
+	InjectHeaderNames  []string      `json:"injectHeaderNames"`
+	RateLimitPerMinute int           `json:"rateLimitPerMinute"`
+	TimeoutSeconds     int           `json:"timeoutSeconds"`
+}
+
+// HeaderValue is one injected header. On update an empty Value keeps the stored one.
+type HeaderValue struct {
+	Name  string `json:"name"`
+	Value string `json:"value,omitempty"`
+}
+
+// APIAccess grants a group view or invoke on one API.
+type APIAccess struct {
+	GroupID   int    `json:"groupId"`
+	GroupName string `json:"groupName,omitempty"`
+	Level     string `json:"level"` // view | invoke
 }
 
 type APISummary struct {
@@ -134,6 +164,7 @@ type APISummary struct {
 	CanView           bool       `json:"canView"`
 	CanInvoke         bool       `json:"canInvoke"`
 	CanManage         bool       `json:"canManage"`
+	OwnerGroupID      *int       `json:"ownerGroupId,omitempty"`
 }
 
 type APISpecCache struct {
@@ -163,6 +194,19 @@ type AuditLog struct {
 	SanitizedHeader string    `json:"sanitizedHeaders"`
 	DetailsJSON     string    `json:"detailsJson"`
 	RequestID       string    `json:"requestId"`
+	Outcome         string    `json:"outcome"`
+	ActorSource     string    `json:"actorSource"`
+	Changes         string    `json:"changes"`
+}
+
+// AuditFilter selects audit entries; zero values don't filter.
+type AuditFilter struct {
+	From, To     time.Time
+	User         string
+	ActionPrefix string
+	Outcome      string
+	TargetType   string
+	TargetID     string
 }
 
 type LDAPUser struct {

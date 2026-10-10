@@ -59,7 +59,9 @@ func New(client *http.Client, maxRequestBytes, maxResponseBytes int64) *Service 
 	}
 }
 
-func (s *Service) Invoke(ctx context.Context, api models.APIDefinition, payload InvokeRequest) (*InvokeResponse, map[string]string, error) {
+// Invoke forwards one try-it request. inject are headers the portal adds upstream
+// (configured per API, never visible to the user); they override user headers.
+func (s *Service) Invoke(ctx context.Context, api models.APIDefinition, payload InvokeRequest, inject map[string]string) (*InvokeResponse, map[string]string, error) {
 	method := strings.ToUpper(strings.TrimSpace(payload.Method))
 	if method == "" {
 		return nil, nil, policy("method required")
@@ -102,7 +104,10 @@ func (s *Service) Invoke(ctx context.Context, api models.APIDefinition, payload 
 	if err != nil {
 		return nil, nil, err
 	}
-	for name, value := range filterRequestHeaders(payload.Headers) {
+	for name, value := range filterRequestHeaders(payload.Headers, api) {
+		req.Header.Set(name, value)
+	}
+	for name, value := range inject {
 		req.Header.Set(name, value)
 	}
 	req.Header.Set("X-Forwarded-By", "internal-api-portal")
@@ -239,17 +244,30 @@ var deniedRequestHeaders = map[string]bool{
 	"x-host":                 true,
 }
 
-func filterRequestHeaders(headers map[string]string) map[string]string {
+// neverForwarded can't be allow-listed: they belong to the connection or to the
+// portal's own session.
+var neverForwarded = map[string]bool{"host": true, "cookie": true, "set-cookie": true, "connection": true, "content-length": true, "transfer-encoding": true, "te": true, "upgrade": true, "proxy-authorization": true, "x-csrf-protection": true}
+
+// filterRequestHeaders keeps the user headers the API's policy allows: the safe
+// set (Content-Type, Accept, Accept-Language, User-Agent), the API's allow-list,
+// and, for APIs registered before 1.5.0 (ForwardAllXHeaders), any X-* header.
+// Routing / method-override headers are always dropped.
+func filterRequestHeaders(headers map[string]string, api models.APIDefinition) map[string]string {
+	allowed := map[string]bool{}
+	for _, name := range api.AllowedRequestHeaders {
+		allowed[strings.ToLower(strings.TrimSpace(name))] = true
+	}
 	out := map[string]string{}
 	for key, value := range headers {
-		if value == "" {
+		if value == "" || strings.ContainsAny(value, "\r\n") {
 			continue
 		}
 		lower := strings.ToLower(strings.TrimSpace(key))
-		if deniedRequestHeaders[lower] || strings.HasPrefix(lower, "x-forwarded-") {
+		if deniedRequestHeaders[lower] || strings.HasPrefix(lower, "x-forwarded-") || neverForwarded[lower] {
 			continue
 		}
-		if lower == "content-type" || lower == "accept" || lower == "accept-language" || lower == "user-agent" || strings.HasPrefix(lower, "x-") {
+		safe := lower == "content-type" || lower == "accept" || lower == "accept-language" || lower == "user-agent"
+		if safe || allowed[lower] || (api.ForwardAllXHeaders && strings.HasPrefix(lower, "x-")) {
 			out[http.CanonicalHeaderKey(key)] = value
 		}
 	}

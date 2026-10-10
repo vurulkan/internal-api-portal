@@ -84,7 +84,7 @@ func TestLogoutEndsTheSession(t *testing.T) {
 	token := e.login("alice")
 	e.expect(http.MethodPost, "/api/auth/logout", token, nil, http.StatusOK)
 	e.expect(http.MethodGet, "/api/auth/me", token, nil, http.StatusUnauthorized)
-	if !contains(e.auditActions(), "logout") {
+	if !contains(e.auditActions(), "auth.logout.success") {
 		t.Fatal("logout not audited")
 	}
 }
@@ -164,7 +164,7 @@ func TestAdminPasswordReset(t *testing.T) {
 	newToken := e.loginWith("alice", resp.TemporaryPassword)
 	e.expect(http.MethodGet, "/api/catalog", newToken, nil, http.StatusForbidden) // must change first
 
-	logs, _, _ := e.store.ListAuditLogs(context.Background(), 50, 0, "user.password_reset.success", "")
+	logs, _, _ := e.store.ListAuditLogs(context.Background(), models.AuditFilter{ActionPrefix: "user.password_reset.success"}, 50, 0)
 	if len(logs) != 1 || strings.Contains(logs[0].DetailsJSON, resp.TemporaryPassword) {
 		t.Fatalf("reset audit: %+v", logs)
 	}

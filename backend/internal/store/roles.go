@@ -146,8 +146,13 @@ func (s *Store) ScopesForGroups(ctx context.Context, groupIDs []int) ([]string, 
 	if len(groupIDs) == 0 {
 		return nil, nil
 	}
-	query := `SELECT DISTINCT p.scope FROM permissions p INNER JOIN group_roles gr ON gr.role_id = p.role_id WHERE gr.group_id IN (` + placeholders(len(groupIDs)) + `)`
-	return s.scopes(ctx, query, intArgs(groupIDs)...)
+	in := placeholders(len(groupIDs))
+	args := append(append(append([]any{}, intArgs(groupIDs)...), intArgs(groupIDs)...), intArgs(groupIDs)...)
+	return s.scopes(ctx, `SELECT DISTINCT scope FROM (
+		SELECT p.scope FROM permissions p INNER JOIN group_roles gr ON gr.role_id = p.role_id WHERE gr.group_id IN (`+in+`)
+		UNION SELECT 'api:' || a.id || ':manage' FROM api_definitions a WHERE a.owner_group_id IN (`+in+`)
+		UNION SELECT 'api:' || aa.api_id || ':' || aa.level FROM api_access aa WHERE aa.group_id IN (`+in+`)
+	)`, args...)
 }
 
 // ScopesForRoles returns the distinct scopes the given roles grant.
@@ -176,25 +181,19 @@ func (s *Store) scopes(ctx context.Context, query string, args ...any) ([]string
 	return out, rows.Err()
 }
 
+// ResolvePermissions returns the user's scopes: from roles, plus api:<id>:manage for
+// APIs owned by one of their groups and api:<id>:view|invoke from API access grants.
 func (s *Store) ResolvePermissions(ctx context.Context, userID int) ([]string, error) {
-	rows, err := s.conn.QueryContext(ctx, `
-		SELECT DISTINCT p.scope
-		FROM permissions p
-		INNER JOIN group_roles gr ON gr.role_id = p.role_id
-		INNER JOIN user_groups ug ON ug.group_id = gr.group_id
-		WHERE ug.user_id = ?
-		ORDER BY p.scope`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var scopes []string
-	for rows.Next() {
-		var scope string
-		if err := rows.Scan(&scope); err != nil {
-			return nil, err
-		}
-		scopes = append(scopes, scope)
-	}
-	return scopes, nil
+	return s.scopes(ctx, `SELECT DISTINCT scope FROM (
+		SELECT p.scope FROM permissions p
+			INNER JOIN group_roles gr ON gr.role_id = p.role_id
+			INNER JOIN user_groups ug ON ug.group_id = gr.group_id
+			WHERE ug.user_id = ?
+		UNION SELECT 'api:' || a.id || ':manage' FROM api_definitions a
+			INNER JOIN user_groups ug ON ug.group_id = a.owner_group_id
+			WHERE ug.user_id = ?
+		UNION SELECT 'api:' || aa.api_id || ':' || aa.level FROM api_access aa
+			INNER JOIN user_groups ug ON ug.group_id = aa.group_id
+			WHERE ug.user_id = ?
+	) ORDER BY scope`, userID, userID, userID)
 }

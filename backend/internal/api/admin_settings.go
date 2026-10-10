@@ -43,11 +43,13 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "the idle timeout can't be longer than the maximum session age")
 		return
 	}
+	auditChanges(r, current, payload)
 	if err := s.store.UpdateSessionSettings(r.Context(), payload); err != nil {
 		writeError(w, r, http.StatusBadRequest, "failed to update session settings")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.session.update", ResourceType: "settings", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(payload)})
+	auditTarget(r, "settings", "", "")
+	auditDetails(r, payload)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -78,12 +80,16 @@ func (s *Server) handleUpdateSystem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "failed to load settings")
 		return
 	}
+	if settings.BrandTitle != title {
+		auditChanged(r, "brandTitle")
+	}
 	settings.BrandTitle = title
 	if err := s.store.UpdateSystemSettings(r.Context(), *settings); err != nil {
 		writeError(w, r, http.StatusBadRequest, "failed to update settings")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.system.update", ResourceType: "settings", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]string{"brandTitle": title})})
+	auditTarget(r, "settings", "", "")
+	auditDetails(r, map[string]string{"brandTitle": title})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -138,7 +144,8 @@ func (s *Server) handleUploadSystemLogo(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, http.StatusInternalServerError, "failed to store logo")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.system.logo.update", ResourceType: "settings", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]any{"contentType": contentType, "bytes": len(content)})})
+	auditTarget(r, "settings", "", "")
+	auditDetails(r, map[string]any{"contentType": contentType, "bytes": len(content)})
 	writeJSON(w, http.StatusOK, settings)
 }
 
@@ -153,7 +160,7 @@ func (s *Server) handleDeleteSystemLogo(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, http.StatusInternalServerError, "failed to remove logo")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.system.logo.delete", ResourceType: "settings", StatusCode: http.StatusOK})
+	auditTarget(r, "settings", "", "")
 	writeJSON(w, http.StatusOK, settings)
 }
 

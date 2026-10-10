@@ -69,13 +69,15 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "failed to create user (is the username taken?)")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.user.create", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: payload.Username, StatusCode: http.StatusCreated, DetailsJSON: marshalJSON(map[string]bool{"isAdmin": payload.IsAdmin})})
+	auditTarget(r, "user", strconv.Itoa(id), payload.Username)
+	auditDetails(r, map[string]bool{"isAdmin": payload.IsAdmin})
 	writeJSON(w, http.StatusCreated, map[string]int{"id": id})
 }
 
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	actor, _ := s.identityForRequest(r)
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	auditTarget(r, "user", strconv.Itoa(id), "")
 	var request struct {
 		models.User
 		Password string `json:"password"`
@@ -122,6 +124,12 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "failed to update user")
 		return
 	}
+	after := request.User
+	after.AuthSource, after.CreatedAt, after.UpdatedAt = target.AuthSource, target.CreatedAt, target.UpdatedAt
+	auditChanges(r, target, after, "id", "updatedAt")
+	if request.Password != "" {
+		auditChanged(r, "password")
+	}
 	if request.Password != "" {
 		hash, err := auth.HashPassword(request.Password)
 		if err != nil {
@@ -139,8 +147,8 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if (target.IsActive && !request.IsActive) || (target.IsAdmin && !request.IsAdmin) || request.Password != "" {
 		revoked, _ = s.store.RevokeUserSessions(r.Context(), id, 0, time.Now().UTC())
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.user.update", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: request.Username, StatusCode: http.StatusOK,
-		DetailsJSON: marshalJSON(map[string]any{"isAdmin": request.IsAdmin, "isActive": request.IsActive, "passwordChanged": request.Password != "", "sessionsRevoked": revoked})})
+	auditTarget(r, "user", strconv.Itoa(id), request.Username)
+	auditDetails(r, map[string]any{"isAdmin": request.IsAdmin, "isActive": request.IsActive, "passwordChanged": request.Password != "", "sessionsRevoked": revoked})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -168,6 +176,7 @@ func (s *Server) adminChangeProblem(ctx context.Context, actor *models.Identity,
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	actor, _ := s.identityForRequest(r)
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	auditTarget(r, "user", strconv.Itoa(id), "")
 	target, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
 		writeError(w, r, http.StatusNotFound, "user not found")
@@ -186,12 +195,13 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "failed to delete user")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.user.delete", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: target.Username, StatusCode: http.StatusOK})
+	auditTarget(r, "user", strconv.Itoa(id), target.Username)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleGetUserGroups(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	auditTarget(r, "user", strconv.Itoa(id), "")
 	ids, err := s.store.GetUserGroupIDs(r.Context(), id)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "failed to load user groups")
@@ -203,6 +213,7 @@ func (s *Server) handleGetUserGroups(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSetUserGroups(w http.ResponseWriter, r *http.Request) {
 	actor, _ := s.identityForRequest(r)
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	auditTarget(r, "user", strconv.Itoa(id), "")
 	var payload []int
 	if !decodeJSON(w, r, &payload) {
 		return
@@ -229,7 +240,8 @@ func (s *Server) handleSetUserGroups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "failed to update user groups")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.user.groups.update", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: target.Username, StatusCode: http.StatusOK, DetailsJSON: marshalJSON(payload)})
+	auditTarget(r, "user", strconv.Itoa(id), target.Username)
+	auditDetail(r, "groupIds", payload)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -273,6 +285,7 @@ func addedIDs(current, next []int) []int {
 func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	actor, _ := s.identityForRequest(r)
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	auditTarget(r, "user", strconv.Itoa(id), "")
 	target, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
 		writeError(w, r, http.StatusNotFound, "user not found")
@@ -302,7 +315,8 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	revoked, _ := s.store.RevokeUserSessions(r.Context(), id, 0, time.Now().UTC())
-	s.recordAudit(r, models.AuditLog{Action: "user.password_reset.success", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: target.Username, StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]int{"sessionsRevoked": revoked})})
+	auditTarget(r, "user", strconv.Itoa(id), target.Username)
+	auditDetails(r, map[string]int{"sessionsRevoked": revoked})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"temporaryPassword": temporary, "sessionsRevoked": revoked})
 }
@@ -310,6 +324,7 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRevokeUserSessions(w http.ResponseWriter, r *http.Request) {
 	actor, _ := s.identityForRequest(r)
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	auditTarget(r, "user", strconv.Itoa(id), "")
 	target, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
 		writeError(w, r, http.StatusNotFound, "user not found")
@@ -329,6 +344,7 @@ func (s *Server) handleRevokeUserSessions(w http.ResponseWriter, r *http.Request
 		writeError(w, r, http.StatusInternalServerError, "could not end the sessions")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "session.revoke_user", ResourceType: "user", ResourceID: strconv.Itoa(id), ResourceName: target.Username, StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]int{"sessionsRevoked": revoked})})
+	auditTarget(r, "user", strconv.Itoa(id), target.Username)
+	auditDetails(r, map[string]int{"sessionsRevoked": revoked})
 	writeJSON(w, http.StatusOK, map[string]int{"sessionsRevoked": revoked})
 }

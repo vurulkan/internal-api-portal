@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"strconv"
@@ -233,22 +234,58 @@ func (s *Server) requirePermission(permission string) func(http.Handler) http.Ha
 	}
 }
 
-// requireAdmin guards settings that change how everyone authenticates (Azure AD,
-// session length, branding). They used to need only user.manage.
-func (s *Server) requireAdmin(next http.Handler) http.Handler {
+// requireAPIManagement admits users who manage at least one API (globally or per
+// API); handlers check the specific API.
+func (s *Server) requireAPIManagement(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		identity, ok := s.identityForRequest(r)
-		if !ok {
-			writeError(w, r, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		if !identity.User.IsAdmin {
-			s.denyAudit(r, "admin required", "")
-			writeError(w, r, http.StatusForbidden, "forbidden: administrator only")
+		identity, _ := s.identityForRequest(r)
+		engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
+		if !engine.ManagesAllAPIs() && !engine.Has("api.create") && len(engine.ManagedAPIs()) == 0 {
+			writeError(w, r, http.StatusForbidden, "forbidden: you don't manage any API")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireAnyAdminSection admits users who may open at least one admin section.
+func (s *Server) requireAnyAdminSection(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, _ := s.identityForRequest(r)
+		if len(s.capabilitiesFor(rbac.New(identity.User.IsAdmin, identity.Permissions)).AdminSections) == 0 {
+			writeError(w, r, http.StatusForbidden, "forbidden")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireFeature refuses requests to a capability switched off with FEATURE_*.
+func (s *Server) requireFeature(name string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !s.featureEnabled(name) {
+				writeError(w, r, http.StatusForbidden, "this feature is turned off on this portal ("+name+")")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (s *Server) featureEnabled(name string) bool {
+	f := s.config.Features
+	switch name {
+	case "tryIt":
+		return f.TryIt
+	case "ldap":
+		return f.LDAP
+	case "azureAd":
+		return f.AzureAD
+	case "auditExport":
+		return f.AuditExport
+	}
+	return false
 }
 
 // ─── Privilege escalation guards ─────────────────────────────────────────────
@@ -269,7 +306,17 @@ func scopesBeyondActor(actor *models.Identity, want []string) []string {
 	return missing
 }
 
+// denyAudit records why a request is refused. On audited routes the reason goes on
+// the request's own entry (which the 403 makes "<action>.denied"); elsewhere it
+// writes an authz.denied entry.
 func (s *Server) denyAudit(r *http.Request, reason, details string) {
+	if auditFrom(r) != nil {
+		auditReason(r, reason)
+		if details != "" {
+			auditDetail(r, "refused", json.RawMessage(details))
+		}
+		return
+	}
 	s.recordAudit(r, models.AuditLog{
 		Action:       "authz.denied",
 		ResourceType: "authz",
@@ -278,6 +325,7 @@ func (s *Server) denyAudit(r *http.Request, reason, details string) {
 		DetailsJSON:  details,
 		Blocked:      true,
 		StatusCode:   http.StatusForbidden,
+		Outcome:      "denied",
 	})
 }
 

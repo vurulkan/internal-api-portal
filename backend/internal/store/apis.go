@@ -5,13 +5,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"api-portal/backend/internal/models"
 )
 
+const apiColumns = `id, name, slug, description, internal_openapi_url, internal_base_url, is_active, try_it_enabled, allowed_methods, allowed_path_prefixes, owner_team, tags, created_at, updated_at, last_spec_refresh_at, last_spec_status, owner_group_id, allowed_request_headers, forward_all_x_headers, inject_headers_enc, rate_limit_per_minute, timeout_seconds`
+
 func (s *Store) ListAPIDefinitions(ctx context.Context) ([]models.APIDefinition, error) {
-	rows, err := s.conn.QueryContext(ctx, `SELECT id, name, slug, description, internal_openapi_url, internal_base_url, is_active, try_it_enabled, allowed_methods, allowed_path_prefixes, owner_team, tags, created_at, updated_at, last_spec_refresh_at, last_spec_status FROM api_definitions ORDER BY name`)
+	rows, err := s.conn.QueryContext(ctx, `SELECT `+apiColumns+` FROM api_definitions ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -28,17 +32,19 @@ func (s *Store) ListAPIDefinitions(ctx context.Context) ([]models.APIDefinition,
 }
 
 func (s *Store) GetAPIDefinition(ctx context.Context, id int) (*models.APIDefinition, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, name, slug, description, internal_openapi_url, internal_base_url, is_active, try_it_enabled, allowed_methods, allowed_path_prefixes, owner_team, tags, created_at, updated_at, last_spec_refresh_at, last_spec_status FROM api_definitions WHERE id = ?`, id)
+	row := s.conn.QueryRowContext(ctx, `SELECT `+apiColumns+` FROM api_definitions WHERE id = ?`, id)
 	return scanAPI(row)
 }
 
 func (s *Store) CreateAPIDefinition(ctx context.Context, api models.APIDefinition) (int, error) {
 	now := time.Now().UTC()
-	methods, _ := json.Marshal(api.AllowedMethods)
-	prefixes, _ := json.Marshal(api.AllowedPathPrefixes)
-	tags, _ := json.Marshal(api.Tags)
-	result, err := s.conn.ExecContext(ctx, `INSERT INTO api_definitions (name, slug, description, internal_openapi_url, internal_base_url, is_active, try_it_enabled, allowed_methods, allowed_path_prefixes, owner_team, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		api.Name, api.Slug, api.Description, api.InternalOpenAPIURL, api.InternalBaseURL, boolInt(api.IsActive), boolInt(api.TryItEnabled), string(methods), string(prefixes), api.OwnerTeam, string(tags), now, now)
+	inject, err := s.encodeInjectHeaders(api.InjectHeaders, nil)
+	if err != nil {
+		return 0, err
+	}
+	result, err := s.conn.ExecContext(ctx, `INSERT INTO api_definitions (name, slug, description, internal_openapi_url, internal_base_url, is_active, try_it_enabled, allowed_methods, allowed_path_prefixes, owner_team, tags, created_at, updated_at, owner_group_id, allowed_request_headers, forward_all_x_headers, inject_headers_enc, rate_limit_per_minute, timeout_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		api.Name, api.Slug, api.Description, api.InternalOpenAPIURL, api.InternalBaseURL, boolInt(api.IsActive), boolInt(api.TryItEnabled), jsonList(api.AllowedMethods), jsonList(api.AllowedPathPrefixes), api.OwnerTeam, jsonList(api.Tags), now, now,
+		api.OwnerGroupID, jsonList(api.AllowedRequestHeaders), boolInt(api.ForwardAllXHeaders), inject, api.RateLimitPerMinute, api.TimeoutSeconds)
 	if err != nil {
 		return 0, err
 	}
@@ -46,13 +52,102 @@ func (s *Store) CreateAPIDefinition(ctx context.Context, api models.APIDefinitio
 	return int(id), nil
 }
 
+// UpdateAPIDefinition saves every field. For injected headers, a header sent with
+// an empty value keeps its stored value; headers left out are removed.
 func (s *Store) UpdateAPIDefinition(ctx context.Context, api models.APIDefinition) error {
-	methods, _ := json.Marshal(api.AllowedMethods)
-	prefixes, _ := json.Marshal(api.AllowedPathPrefixes)
-	tags, _ := json.Marshal(api.Tags)
-	_, err := s.conn.ExecContext(ctx, `UPDATE api_definitions SET name = ?, slug = ?, description = ?, internal_openapi_url = ?, internal_base_url = ?, is_active = ?, try_it_enabled = ?, allowed_methods = ?, allowed_path_prefixes = ?, owner_team = ?, tags = ?, updated_at = ? WHERE id = ?`,
-		api.Name, api.Slug, api.Description, api.InternalOpenAPIURL, api.InternalBaseURL, boolInt(api.IsActive), boolInt(api.TryItEnabled), string(methods), string(prefixes), api.OwnerTeam, string(tags), time.Now().UTC(), api.ID)
+	existing, err := s.GetAPIInjectHeaders(ctx, api.ID)
+	if err != nil {
+		return err
+	}
+	inject, err := s.encodeInjectHeaders(api.InjectHeaders, existing)
+	if err != nil {
+		return err
+	}
+	_, err = s.conn.ExecContext(ctx, `UPDATE api_definitions SET name = ?, slug = ?, description = ?, internal_openapi_url = ?, internal_base_url = ?, is_active = ?, try_it_enabled = ?, allowed_methods = ?, allowed_path_prefixes = ?, owner_team = ?, tags = ?, updated_at = ?, owner_group_id = ?, allowed_request_headers = ?, forward_all_x_headers = ?, inject_headers_enc = ?, rate_limit_per_minute = ?, timeout_seconds = ? WHERE id = ?`,
+		api.Name, api.Slug, api.Description, api.InternalOpenAPIURL, api.InternalBaseURL, boolInt(api.IsActive), boolInt(api.TryItEnabled), jsonList(api.AllowedMethods), jsonList(api.AllowedPathPrefixes), api.OwnerTeam, jsonList(api.Tags), time.Now().UTC(),
+		api.OwnerGroupID, jsonList(api.AllowedRequestHeaders), boolInt(api.ForwardAllXHeaders), inject, api.RateLimitPerMinute, api.TimeoutSeconds, api.ID)
 	return err
+}
+
+// GetAPIInjectHeaders returns the decrypted headers the proxy adds for this API.
+func (s *Store) GetAPIInjectHeaders(ctx context.Context, apiID int) (map[string]string, error) {
+	var enc string
+	if err := s.conn.QueryRowContext(ctx, `SELECT inject_headers_enc FROM api_definitions WHERE id = ?`, apiID).Scan(&enc); err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	if enc == "" {
+		return out, nil
+	}
+	plain, err := s.keys.decrypt(enc)
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal([]byte(plain), &out)
+	return out, err
+}
+
+func (s *Store) encodeInjectHeaders(headers []models.HeaderValue, existing map[string]string) (string, error) {
+	out := map[string]string{}
+	for _, h := range headers {
+		name := http.CanonicalHeaderKey(strings.TrimSpace(h.Name))
+		if name == "" {
+			continue
+		}
+		value := h.Value
+		if value == "" {
+			value = existing[name]
+		}
+		if value != "" {
+			out[name] = value
+		}
+	}
+	if len(out) == 0 {
+		return "", nil
+	}
+	raw, _ := json.Marshal(out)
+	return s.keys.encrypt(string(raw))
+}
+
+// ListAPIAccess returns the groups granted view / invoke on an API.
+func (s *Store) ListAPIAccess(ctx context.Context, apiID int) ([]models.APIAccess, error) {
+	rows, err := s.conn.QueryContext(ctx, `SELECT aa.group_id, g.name, aa.level FROM api_access aa INNER JOIN "groups" g ON g.id = aa.group_id WHERE aa.api_id = ? ORDER BY g.name`, apiID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.APIAccess{}
+	for rows.Next() {
+		var a models.APIAccess
+		if err := rows.Scan(&a.GroupID, &a.GroupName, &a.Level); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// SetAPIAccess replaces an API's group grants.
+func (s *Store) SetAPIAccess(ctx context.Context, apiID int, access []models.APIAccess) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM api_access WHERE api_id = ?`, apiID); err != nil {
+			return err
+		}
+		for _, a := range access {
+			if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO api_access (api_id, group_id, level) VALUES (?, ?, ?)`, apiID, a.GroupID, a.Level); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func jsonList(values []string) string {
+	if values == nil {
+		values = []string{}
+	}
+	raw, _ := json.Marshal(values)
+	return string(raw)
 }
 
 // DeleteAPIDefinition removes the API, its cached spec and the API-scoped
@@ -110,19 +205,28 @@ func (s *Store) MarkSpecRefreshFailure(ctx context.Context, apiID int, message s
 
 func scanAPI(scanner interface{ Scan(...any) error }) (*models.APIDefinition, error) {
 	var api models.APIDefinition
-	var isActive, tryIt int
-	var methods, prefixes, tags string
+	var isActive, tryIt, forwardAll int
+	var methods, prefixes, tags, allowedHeaders, injectEnc string
 	var lastRefresh sql.NullTime
-	if err := scanner.Scan(&api.ID, &api.Name, &api.Slug, &api.Description, &api.InternalOpenAPIURL, &api.InternalBaseURL, &isActive, &tryIt, &methods, &prefixes, &api.OwnerTeam, &tags, &api.CreatedAt, &api.UpdatedAt, &lastRefresh, &api.LastSpecStatus); err != nil {
+	var ownerGroup sql.NullInt64
+	if err := scanner.Scan(&api.ID, &api.Name, &api.Slug, &api.Description, &api.InternalOpenAPIURL, &api.InternalBaseURL, &isActive, &tryIt, &methods, &prefixes, &api.OwnerTeam, &tags, &api.CreatedAt, &api.UpdatedAt, &lastRefresh, &api.LastSpecStatus,
+		&ownerGroup, &allowedHeaders, &forwardAll, &injectEnc, &api.RateLimitPerMinute, &api.TimeoutSeconds); err != nil {
 		return nil, err
 	}
 	api.IsActive = isActive == 1
 	api.TryItEnabled = tryIt == 1
+	api.ForwardAllXHeaders = forwardAll == 1
 	_ = json.Unmarshal([]byte(methods), &api.AllowedMethods)
 	_ = json.Unmarshal([]byte(prefixes), &api.AllowedPathPrefixes)
 	_ = json.Unmarshal([]byte(tags), &api.Tags)
+	_ = json.Unmarshal([]byte(allowedHeaders), &api.AllowedRequestHeaders)
 	if lastRefresh.Valid {
 		api.LastSpecRefreshAt = &lastRefresh.Time
 	}
+	if ownerGroup.Valid {
+		id := int(ownerGroup.Int64)
+		api.OwnerGroupID = &id
+	}
+	api.InjectHeaderNames = []string{}
 	return &api, nil
 }
