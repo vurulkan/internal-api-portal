@@ -64,7 +64,7 @@ func TestRequestIDIsPropagatedToAudit(t *testing.T) {
 	if got := rec.Header().Get("X-Request-Id"); got != "trace-abc.123" {
 		t.Fatalf("incoming request id not echoed: %q", got)
 	}
-	logs, _, _ := e.store.ListAuditLogs(context.Background(), 10, 0, "login.failed", "")
+	logs, _, _ := e.store.ListAuditLogs(context.Background(), models.AuditFilter{ActionPrefix: "auth.login.denied"}, 10, 0)
 	if len(logs) == 0 || logs[0].RequestID != "trace-abc.123" {
 		t.Fatalf("audit entry without the request id: %+v", logs)
 	}

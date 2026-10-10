@@ -165,3 +165,37 @@ func TestBackupIsConsistentAndPruned(t *testing.T) {
 		t.Fatalf("after prune: %v", entries)
 	}
 }
+
+func TestAuthzV2MigrationConvertsScopes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	legacy := openRaw(t, path)
+	if err := migrateTo(context.Background(), legacy, 6); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	exec(t, legacy, `INSERT INTO roles (id, name, created_at) VALUES (1, 'ops', ?)`, now)
+	exec(t, legacy, `INSERT INTO permissions (role_id, scope, created_at) VALUES (1, 'ldap.manage', ?), (1, 'audit.view', ?)`, now, now)
+	exec(t, legacy, `INSERT INTO api_definitions (id, name, slug, internal_openapi_url, internal_base_url, created_at, updated_at) VALUES (1, 'a', 'a', 'http://a', 'http://a', ?, ?)`, now, now)
+	legacy.Close()
+
+	database, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Conn.Close()
+	conn := database.Conn
+	scopes := map[string]bool{}
+	rows, _ := conn.Query(`SELECT scope FROM permissions WHERE role_id = 1`)
+	for rows.Next() {
+		var s string
+		_ = rows.Scan(&s)
+		scopes[s] = true
+	}
+	rows.Close()
+	if !scopes["idp.manage"] || scopes["ldap.manage"] || !scopes["audit.export"] || !scopes["audit.view"] || len(scopes) != 3 {
+		t.Fatalf("scopes after migration: %v", scopes)
+	}
+	if got := count(t, conn, `SELECT forward_all_x_headers FROM api_definitions WHERE id = 1`); got != 1 {
+		t.Fatal("existing API should keep forwarding all X-* headers")
+	}
+}

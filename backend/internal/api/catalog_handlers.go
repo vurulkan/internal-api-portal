@@ -4,7 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -101,64 +105,95 @@ func (s *Server) handleAPISpec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInvoke(w http.ResponseWriter, r *http.Request) {
-	identity, ok := s.identityForRequest(r)
-	if !ok {
-		writeError(w, r, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	identity, _ := s.identityForRequest(r)
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
-	engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
-	if !engine.CanInvokeAPI(id) {
-		s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "api.invoke.blocked", ResourceType: "api", ResourceID: strconv.Itoa(id), Blocked: true, StatusCode: http.StatusForbidden})
-		writeError(w, r, http.StatusForbidden, "forbidden")
-		return
-	}
-	if !s.userLimiter(identity.User.ID).Allow() {
-		w.Header().Set("Retry-After", "1")
-		s.metrics.Invocations.Inc(strconv.Itoa(id), "rate_limited")
-		writeError(w, r, http.StatusTooManyRequests, "rate limit exceeded; wait a moment and try again")
-		return
-	}
-	var payload proxy.InvokeRequest
-	if !decodeJSON(w, r, &payload) {
+	auditTarget(r, "api", strconv.Itoa(id), "")
+	if !rbac.New(identity.User.IsAdmin, identity.Permissions).CanInvokeAPI(id) {
+		writeError(w, r, http.StatusForbidden, "you may not call this API")
 		return
 	}
 	apiDef, err := s.store.GetAPIDefinition(r.Context(), id)
 	if err != nil || !apiDef.IsActive || !apiDef.TryItEnabled {
-		writeError(w, r, http.StatusBadRequest, "api unavailable")
+		writeError(w, r, http.StatusBadRequest, "try-it is not available for this API")
 		return
 	}
-	start := time.Now()
-	resp, sanitizedHeaders, err := s.proxy.Invoke(r.Context(), *apiDef, payload)
-	apiLabel := strconv.Itoa(apiDef.ID)
-	entry := models.AuditLog{
-		User:            identity.User.Username,
-		Action:          "api.invoke",
-		ResourceType:    "api",
-		ResourceID:      strconv.Itoa(apiDef.ID),
-		ResourceName:    apiDef.Name,
-		SourceIP:        s.clientIP(r),
-		DurationMs:      time.Since(start).Milliseconds(),
-		SanitizedHeader: marshalJSON(sanitizedHeaders),
+	auditTarget(r, "api", strconv.Itoa(id), apiDef.Name)
+	limiter, perMinute := s.invokeLimiter(identity.User.ID, apiDef)
+	if !limiter.Allow() {
+		wait := limiter.Reserve()
+		delay := wait.Delay()
+		wait.Cancel()
+		w.Header().Set("Retry-After", retryAfterSeconds(delay))
+		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(perMinute))
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		s.metrics.Invocations.Inc(strconv.Itoa(id), "rate_limited")
+		writeError(w, r, http.StatusTooManyRequests, fmt.Sprintf("rate limit of %d calls per minute reached; try again in %s", perMinute, retryAfterSeconds(delay)+"s"))
+		return
 	}
-	entry.DetailsJSON = marshalJSON(map[string]any{"method": payload.Method, "path": payload.Path})
+	remaining := int(limiter.Tokens())
+	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(perMinute))
+	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(max(remaining, 0)))
+
+	var payload proxy.InvokeRequest
+	if !decodeJSON(w, r, &payload) {
+		return
+	}
+	auditDetails(r, map[string]any{"method": strings.ToUpper(payload.Method), "path": payload.Path, "queryParams": queryParamNames(payload.Query)})
+	inject, err := s.store.GetAPIInjectHeaders(r.Context(), id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "invoke.inject_headers", "error", err.Error())
+		writeError(w, r, http.StatusInternalServerError, "the API's server-side headers can't be read; ask its owner to re-enter them")
+		return
+	}
+	ctx := r.Context()
+	if apiDef.TimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(apiDef.TimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+	start := time.Now()
+	resp, sanitizedHeaders, err := s.proxy.Invoke(ctx, *apiDef, payload, inject)
+	apiLabel := strconv.Itoa(apiDef.ID)
+	auditFill(r, func(e *models.AuditLog) {
+		e.SanitizedHeader = marshalJSON(sanitizedHeaders)
+		if resp != nil {
+			// The portal call succeeded; record what the upstream answered.
+			e.StatusCode, e.RequestBytes, e.ResponseBytes = resp.StatusCode, resp.RequestBytes, resp.ResponseBytes
+		}
+	})
 	if err != nil {
 		status, message := invokeErrorResponse(err)
-		entry.Blocked = status == http.StatusForbidden
-		entry.ErrorMessage = err.Error()
-		entry.StatusCode = status
-		s.recordAudit(r, entry)
+		if status == http.StatusForbidden {
+			auditBlocked(r)
+		}
+		auditReason(r, err.Error())
 		s.metrics.Invocations.Inc(apiLabel, invokeOutcome(status))
 		writeError(w, r, status, message)
 		return
 	}
 	s.metrics.Invocations.Inc(apiLabel, "ok")
 	s.metrics.UpstreamDuration.Observe(time.Since(start).Seconds(), apiLabel)
-	entry.StatusCode = resp.StatusCode
-	entry.RequestBytes = resp.RequestBytes
-	entry.ResponseBytes = resp.ResponseBytes
-	s.recordAudit(r, entry)
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"statusCode": resp.StatusCode, "headers": resp.Headers, "bodyBase64": resp.BodyB64, "contentType": resp.ContentType,
+		"truncated": resp.Truncated, "requestBytes": resp.RequestBytes, "responseBytes": resp.ResponseBytes,
+		"durationMs": time.Since(start).Milliseconds(),
+		"rateLimit":  map[string]int{"limitPerMinute": perMinute, "remaining": max(remaining, 0)},
+	})
+}
+
+// queryParamNames lists the parameter names of a query string; values are left
+// out of the audit log (they can carry tokens).
+func queryParamNames(raw string) []string {
+	values, err := url.ParseQuery(strings.TrimPrefix(raw, "?"))
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func invokeOutcome(status int) string {

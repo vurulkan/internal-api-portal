@@ -240,6 +240,58 @@ var migrations = []migration{
 		}
 		return addColumn(ctx, tx, `ALTER TABLE azure_ad_config ADD COLUMN allowed_groups TEXT NOT NULL DEFAULT '[]'`)
 	}},
+	{7, "authorization v2, per-API settings, group mapping, audit outcome (1.5.0)", false, authzV2},
+}
+
+func authzV2(ctx context.Context, tx *sql.Tx) error {
+	columns := []string{
+		// API ownership: members of the owner group manage the API.
+		`ALTER TABLE api_definitions ADD COLUMN owner_group_id INTEGER REFERENCES "groups"(id) ON DELETE SET NULL`,
+		// Try-it header policy. Existing APIs keep forwarding every X-* header
+		// (set below); new ones forward only the allow-list.
+		`ALTER TABLE api_definitions ADD COLUMN allowed_request_headers TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE api_definitions ADD COLUMN forward_all_x_headers INTEGER NOT NULL DEFAULT 0`,
+		// Headers the portal adds upstream (e.g. a service API key), keyring-encrypted JSON.
+		`ALTER TABLE api_definitions ADD COLUMN inject_headers_enc TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE api_definitions ADD COLUMN rate_limit_per_minute INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE api_definitions ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 0`,
+		// Directory groups whose members are kept in sync with this group at sign-in.
+		`ALTER TABLE "groups" ADD COLUMN azure_group_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE "groups" ADD COLUMN ldap_group_dn TEXT NOT NULL DEFAULT ''`,
+		// Audit: outcome (success / denied / failed), the actor's identity source,
+		// and the names of the fields a change touched (never their values).
+		`ALTER TABLE audit_logs ADD COLUMN outcome TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN actor_source TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN changes TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range columns {
+		if err := addColumn(ctx, tx, stmt); err != nil {
+			return err
+		}
+	}
+	return execAll(ctx, tx,
+		`UPDATE api_definitions SET forward_all_x_headers = 1`,
+		// Per-API access granted by an API's managers, outside the role system.
+		`CREATE TABLE IF NOT EXISTS api_access (
+			api_id INTEGER NOT NULL REFERENCES api_definitions(id) ON DELETE CASCADE,
+			group_id INTEGER NOT NULL REFERENCES "groups"(id) ON DELETE CASCADE,
+			level TEXT NOT NULL CHECK (level IN ('view', 'invoke')),
+			PRIMARY KEY (api_id, group_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_access_group ON api_access(group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_definitions_owner ON api_definitions(owner_group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_outcome ON audit_logs(outcome)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON audit_logs(resource_type, resource_id)`,
+		// Scope renames: ldap.manage became idp.manage.
+		`UPDATE permissions SET scope = 'idp.manage' WHERE scope = 'ldap.manage'
+			AND NOT EXISTS (SELECT 1 FROM permissions p2 WHERE p2.role_id = permissions.role_id AND p2.scope = 'idp.manage')`,
+		`DELETE FROM permissions WHERE scope = 'ldap.manage'`,
+		// Export was part of audit.view; keep it for roles that had it.
+		`INSERT INTO permissions (role_id, scope, description, created_at)
+			SELECT role_id, 'audit.export', 'added by the 1.5.0 migration (export used to be part of audit.view)', CURRENT_TIMESTAMP
+			FROM permissions p WHERE p.scope = 'audit.view'
+			AND NOT EXISTS (SELECT 1 FROM permissions p2 WHERE p2.role_id = p.role_id AND p2.scope = 'audit.export')`,
+	)
 }
 
 // Migrate applies every pending migration.

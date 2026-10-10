@@ -44,6 +44,7 @@ func (s *Server) handleMySessions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRevokeMySession(w http.ResponseWriter, r *http.Request) {
 	identity, _ := s.identityForRequest(r)
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	auditTarget(r, "session", strconv.Itoa(id), "")
 	session, err := s.store.GetSession(r.Context(), id)
 	if err != nil || session.UserID != identity.User.ID {
 		writeError(w, r, http.StatusNotFound, "session not found")
@@ -59,7 +60,8 @@ func (s *Server) handleRevokeMyOtherSessions(w http.ResponseWriter, r *http.Requ
 		writeError(w, r, http.StatusInternalServerError, "could not end the sessions")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{Action: "session.revoke_others", ResourceType: "session", StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]int{"sessionsRevoked": revoked})})
+	auditTarget(r, "session", "", "")
+	auditDetails(r, map[string]int{"sessionsRevoked": revoked})
 	writeJSON(w, http.StatusOK, map[string]int{"sessionsRevoked": revoked})
 }
 
@@ -74,6 +76,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	auditTarget(r, "session", strconv.Itoa(id), "")
 	session, err := s.store.GetSession(r.Context(), id)
 	if err != nil {
 		writeError(w, r, http.StatusNotFound, "session not found")
@@ -90,6 +93,6 @@ func (s *Server) revokeSession(w http.ResponseWriter, r *http.Request, session *
 	if current := currentSession(r); current != nil && current.ID == session.ID {
 		s.clearSessionCookies(w, r)
 	}
-	s.recordAudit(r, models.AuditLog{Action: "session.revoke", ResourceType: "session", ResourceID: strconv.Itoa(session.ID), ResourceName: session.Username, StatusCode: http.StatusOK})
+	auditTarget(r, "session", strconv.Itoa(session.ID), session.Username)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

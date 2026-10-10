@@ -19,7 +19,10 @@ import {
 } from '../components/ui';
 import {
   api,
+  ApiAccess,
   ApiDefinition,
+  auditQuery,
+  AuditFilter,
   ApiDefinitionPayload,
   AuditLog,
   AzureADConfig,
@@ -28,7 +31,9 @@ import {
   LdapConfig,
   LdapLoginStep,
   LdapUser,
+  MeResponse,
   Permission,
+  ScopeDef,
   Session,
   Role,
   RolePayload,
@@ -43,7 +48,26 @@ import {
 const tabs = ['Users', 'Groups', 'Roles', 'API Definitions', 'LDAP Settings', 'Azure AD', 'Session Settings', 'Sessions', 'Audit Logs', 'System Settings'] as const;
 type Tab = (typeof tabs)[number];
 
-const globalPermissionOptions = ['api.view', 'api.invoke'];
+// Which capability (GET /api/auth/me → capabilities.adminSections) opens each tab.
+const TAB_SECTION: Record<Tab, string> = {
+  Users: 'users',
+  Groups: 'groups',
+  Roles: 'roles',
+  'API Definitions': 'apis',
+  'LDAP Settings': 'ldap',
+  'Azure AD': 'azureAd',
+  'Session Settings': 'sessionSettings',
+  Sessions: 'sessions',
+  'Audit Logs': 'audit',
+  'System Settings': 'system',
+};
+
+const FAMILY_STYLE: Record<ScopeDef['family'], string> = {
+  read: 'border-gray-300 text-gray-700',
+  write: 'border-amber-300 text-amber-900',
+  destructive: 'border-red-300 text-red-800',
+};
+const PER_API_ACTIONS = ['view', 'invoke', 'manage', 'delete'] as const;
 
 type UserForm = {
   id?: number;
@@ -58,7 +82,7 @@ type UserForm = {
   groupIds: number[];
 };
 
-type GroupForm = { id?: number; name: string; description: string; roleIds: number[] };
+type GroupForm = { id?: number; name: string; description: string; roleIds: number[]; azureGroupId: string; ldapGroupDn: string };
 type RoleForm = { id?: number; name: string; description: string; scopes: string[] };
 type ApiForm = {
   id?: number;
@@ -73,29 +97,27 @@ type ApiForm = {
   allowedPathPrefixes: string[];
   ownerTeam: string;
   tags: string[];
+  ownerGroupId: number | null;
+  allowedRequestHeaders: string[];
+  forwardAllXHeaders: boolean;
+  // value '' keeps the stored value of an existing header
+  injectHeaders: { name: string; value: string }[];
+  rateLimitPerMinute: number;
+  timeoutSeconds: number;
+  access: ApiAccess[];
 };
 
 function emptyUserForm(): UserForm {
   return { username: '', displayName: '', email: '', password: '', authSource: 'local', mustChangePassword: true, isActive: true, isAdmin: false, groupIds: [] };
 }
-function emptyGroupForm(): GroupForm { return { name: '', description: '', roleIds: [] }; }
+function emptyGroupForm(): GroupForm { return { name: '', description: '', roleIds: [], azureGroupId: '', ldapGroupDn: '' }; }
 function emptyRoleForm(): RoleForm { return { name: '', description: '', scopes: [] }; }
 function emptyApiForm(): ApiForm {
-  return { name: '', slug: '', description: '', internalOpenapiUrl: '', internalBaseUrl: '', isActive: true, tryItEnabled: true, allowedMethods: [], allowedPathPrefixes: [], ownerTeam: '', tags: [] };
+  return { name: '', slug: '', description: '', internalOpenapiUrl: '', internalBaseUrl: '', isActive: true, tryItEnabled: true, allowedMethods: [], allowedPathPrefixes: [], ownerTeam: '', tags: [], ownerGroupId: null, allowedRequestHeaders: [], forwardAllXHeaders: false, injectHeaders: [], rateLimitPerMinute: 0, timeoutSeconds: 0, access: [] };
 }
 
 function splitList(value: string) {
   return value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
-}
-
-function buildAuditQuery(user: string, action: string, limit: number, offset: number) {
-  const params = new URLSearchParams();
-  if (user.trim()) params.set('user', user.trim());
-  if (action.trim()) params.set('action', action.trim());
-  params.set('limit', String(limit));
-  params.set('offset', String(offset));
-  const q = params.toString();
-  return q ? `?${q}` : '';
 }
 
 // ── Sub-layouts ────────────────────────────────────────────────────────────────
@@ -156,8 +178,11 @@ function FormCard({ title, actions, children }: { title: string; actions?: React
 
 // ── AdminPage ──────────────────────────────────────────────────────────────────
 
-export function AdminPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('Users');
+export function AdminPage({ me }: { me: MeResponse }) {
+  const caps = me.capabilities;
+  const sections = useMemo(() => new Set(caps?.adminSections ?? (me.user.isAdmin ? Object.values(TAB_SECTION) : [])), [caps, me.user.isAdmin]);
+  const visibleTabs = useMemo(() => tabs.filter((t) => sections.has(TAB_SECTION[t])), [sections]);
+  const [activeTab, setActiveTab] = useState<Tab>(visibleTabs[0] ?? 'Users');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -178,8 +203,8 @@ export function AdminPage() {
   const [ldapTestSteps, setLdapTestSteps] = useState<LdapLoginStep[] | null>(null);
   const [system, setSystem] = useState<SystemSettings>({ brandTitle: '', logoDataUrl: '' });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [auditUser, setAuditUser] = useState('');
-  const [auditAction, setAuditAction] = useState('');
+  const [auditFilter, setAuditFilter] = useState<AuditFilter>({});
+  const [scopeCatalog, setScopeCatalog] = useState<ScopeDef[]>([]);
   const [auditPageSize, setAuditPageSize] = useState(25);
   const [auditOffset, setAuditOffset] = useState(0);
   const [auditTotal, setAuditTotal] = useState(0);
@@ -201,12 +226,22 @@ export function AdminPage() {
     setLoading(true);
     setError('');
     try {
-      const [usersData, groupsData, rolesData, apisData, ldapData, azureAdData, sessionData, systemData, auditData, sessionsData] = await Promise.all([
-        api.users(), api.groups(), api.roles(), api.adminApis(),
-        api.ldap(), api.azureAd(), api.session(), api.system(),
-        api.auditLogs(buildAuditQuery(auditUser, auditAction, auditPageSize, auditOffset)),
-        api.sessions(),
+      // Only fetch what this user may see: a delegated administrator gets 403 for the rest.
+      const when = <T,>(section: string, load: () => Promise<T>, fallback: T) => (sections.has(section) ? load() : Promise.resolve(fallback));
+      const [usersData, groupsData, rolesData, apisData, ldapData, azureAdData, sessionData, systemData, auditData, sessionsData, catalogData] = await Promise.all([
+        when('users', api.users, [] as User[]),
+        sections.size > 0 ? api.groups() : Promise.resolve([] as Group[]),
+        sections.size > 0 ? api.roles() : Promise.resolve([] as Role[]),
+        when('apis', api.adminApis, [] as ApiDefinition[]),
+        when('ldap', api.ldap, null as LdapConfig | null),
+        when('azureAd', api.azureAd, null as AzureADConfig | null),
+        when('sessionSettings', api.session, null as SessionSettings | null),
+        when('system', api.system, null as SystemSettings | null),
+        when('audit', () => api.auditLogs(auditQuery(auditFilter, { limit: auditPageSize, offset: auditOffset })), null),
+        when('sessions', api.sessions, { items: [] as Session[] }),
+        when('roles', api.permissionCatalog, { items: [] as ScopeDef[] }),
       ]);
+      setScopeCatalog(catalogData?.items ?? []);
 
       const nextUsers = usersData ?? [];
       const nextGroups = groupsData ?? [];
@@ -230,8 +265,8 @@ export function AdminPage() {
       const nextRolePermissions: Record<number, Permission[]> = {};
 
       await Promise.all(nextUsers.map(async (u) => { nextUserGroups[u.id] = (await api.userGroups(u.id)) ?? []; }));
-      await Promise.all(nextGroups.map(async (g) => { nextGroupRoles[g.id] = (await api.groupRoles(g.id)) ?? []; }));
-      await Promise.all(nextRoles.map(async (r) => { nextRolePermissions[r.id] = (await api.permissions(r.id)) ?? []; }));
+      if (sections.has('groups')) await Promise.all(nextGroups.map(async (g) => { nextGroupRoles[g.id] = (await api.groupRoles(g.id)) ?? []; }));
+      if (sections.has('roles')) await Promise.all(nextRoles.map(async (r) => { nextRolePermissions[r.id] = (await api.permissions(r.id)) ?? []; }));
 
       setUserGroupMap(nextUserGroups);
       setGroupRoleMap(nextGroupRoles);
@@ -273,7 +308,7 @@ export function AdminPage() {
   }
   function selectGroup(group?: Group) {
     if (!group) { setGroupForm(emptyGroupForm()); return; }
-    setGroupForm({ id: group.id, name: group.name, description: group.description ?? '', roleIds: groupRoleMap[group.id] ?? [] });
+    setGroupForm({ id: group.id, name: group.name, description: group.description ?? '', roleIds: groupRoleMap[group.id] ?? [], azureGroupId: group.azureGroupId ?? '', ldapGroupDn: group.ldapGroupDn ?? '' });
   }
   function selectRole(role?: Role) {
     if (!role) { setRoleForm(emptyRoleForm()); return; }
@@ -281,7 +316,14 @@ export function AdminPage() {
   }
   function selectApi(apiItem?: ApiDefinition) {
     if (!apiItem) { setApiForm(emptyApiForm()); return; }
-    setApiForm({ id: apiItem.id, name: apiItem.name, slug: apiItem.slug, description: apiItem.description ?? '', internalOpenapiUrl: apiItem.internalOpenapiUrl ?? '', internalBaseUrl: apiItem.internalBaseUrl ?? '', isActive: apiItem.isActive, tryItEnabled: apiItem.tryItEnabled, allowedMethods: apiItem.allowedMethods ?? [], allowedPathPrefixes: apiItem.allowedPathPrefixes ?? [], ownerTeam: apiItem.ownerTeam ?? '', tags: apiItem.tags ?? [] });
+    const form: ApiForm = {
+      id: apiItem.id, name: apiItem.name, slug: apiItem.slug, description: apiItem.description ?? '', internalOpenapiUrl: apiItem.internalOpenapiUrl ?? '', internalBaseUrl: apiItem.internalBaseUrl ?? '',
+      isActive: apiItem.isActive, tryItEnabled: apiItem.tryItEnabled, allowedMethods: apiItem.allowedMethods ?? [], allowedPathPrefixes: apiItem.allowedPathPrefixes ?? [], ownerTeam: apiItem.ownerTeam ?? '', tags: apiItem.tags ?? [],
+      ownerGroupId: apiItem.ownerGroupId ?? null, allowedRequestHeaders: apiItem.allowedRequestHeaders ?? [], forwardAllXHeaders: apiItem.forwardAllXHeaders ?? false,
+      injectHeaders: (apiItem.injectHeaderNames ?? []).map((name) => ({ name, value: '' })), rateLimitPerMinute: apiItem.rateLimitPerMinute ?? 0, timeoutSeconds: apiItem.timeoutSeconds ?? 0, access: [],
+    };
+    setApiForm(form);
+    api.apiAccess(apiItem.id).then((r) => setApiForm((prev) => (prev.id === apiItem.id ? { ...prev, access: r.items ?? [] } : prev))).catch(() => undefined);
   }
 
   function toggleScope(scope: string, enabled: boolean) {
@@ -310,7 +352,7 @@ export function AdminPage() {
 
   async function submitGroup() {
     if (!groupForm.name.trim()) { setError('Group name is required.'); return; }
-    const payload: GroupPayload = { name: groupForm.name.trim(), description: groupForm.description.trim() };
+    const payload: GroupPayload = { name: groupForm.name.trim(), description: groupForm.description.trim(), azureGroupId: groupForm.azureGroupId.trim(), ldapGroupDn: groupForm.ldapGroupDn.trim() };
     await run(async () => {
       if (groupForm.id) {
         await api.updateGroup(groupForm.id, payload);
@@ -338,11 +380,24 @@ export function AdminPage() {
   async function submitApi() {
     if (!apiForm.name.trim() || !apiForm.slug.trim()) { setError('API name and slug are required.'); return; }
     if (!apiForm.internalOpenapiUrl.trim() || !apiForm.internalBaseUrl.trim()) { setError('Internal OpenAPI URL and Internal Base URL are required.'); return; }
-    const payload: ApiDefinitionPayload = { name: apiForm.name.trim(), slug: apiForm.slug.trim(), description: apiForm.description.trim(), internalOpenapiUrl: apiForm.internalOpenapiUrl.trim(), internalBaseUrl: apiForm.internalBaseUrl.trim(), isActive: apiForm.isActive, tryItEnabled: apiForm.tryItEnabled, allowedMethods: apiForm.allowedMethods.map((m) => m.toUpperCase()), allowedPathPrefixes: apiForm.allowedPathPrefixes, ownerTeam: apiForm.ownerTeam.trim(), tags: apiForm.tags };
+    const payload: ApiDefinitionPayload = {
+      name: apiForm.name.trim(), slug: apiForm.slug.trim(), description: apiForm.description.trim(), internalOpenapiUrl: apiForm.internalOpenapiUrl.trim(), internalBaseUrl: apiForm.internalBaseUrl.trim(),
+      isActive: apiForm.isActive, tryItEnabled: apiForm.tryItEnabled, allowedMethods: apiForm.allowedMethods.map((m) => m.toUpperCase()), allowedPathPrefixes: apiForm.allowedPathPrefixes, ownerTeam: apiForm.ownerTeam.trim(), tags: apiForm.tags,
+      ownerGroupId: apiForm.ownerGroupId, allowedRequestHeaders: apiForm.allowedRequestHeaders, forwardAllXHeaders: apiForm.forwardAllXHeaders,
+      injectHeaders: apiForm.injectHeaders.filter((h) => h.name.trim()).map((h) => ({ name: h.name.trim(), value: h.value })),
+      rateLimitPerMinute: Number.isFinite(apiForm.rateLimitPerMinute) ? apiForm.rateLimitPerMinute : 0, timeoutSeconds: Number.isFinite(apiForm.timeoutSeconds) ? apiForm.timeoutSeconds : 0,
+    };
     await run(async () => {
-      if (apiForm.id) await api.updateApi(apiForm.id, payload);
-      else await api.createApi(payload);
-      setApiForm(emptyApiForm());
+      if (apiForm.id) {
+        await api.updateApi(apiForm.id, payload);
+        await api.setApiAccess(apiForm.id, apiForm.access);
+        // Stay on the API; drop typed header values so they don't linger on screen.
+        setApiForm((prev) => ({ ...prev, injectHeaders: prev.injectHeaders.filter((h) => h.name.trim()).map((h) => ({ name: h.name.trim(), value: '' })) }));
+      } else {
+        const created = (await api.createApi(payload)) as { id: number };
+        if (apiForm.access.length) await api.setApiAccess(created.id, apiForm.access);
+        setApiForm(emptyApiForm());
+      }
     }, apiForm.id ? 'API updated.' : 'API created.');
   }
 
@@ -402,7 +457,7 @@ export function AdminPage() {
       {/* Tab bar */}
       <div className="mb-5 overflow-x-auto">
         <div className="flex min-w-max border-b border-gray-200">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab}
               type="button"
@@ -549,6 +604,12 @@ export function AdminPage() {
                   value={roleOptions.filter((o) => groupForm.roleIds.includes(o.value))}
                   onChange={(v: MultiSelectOption[]) => setGroupForm({ ...groupForm, roleIds: v.map((i) => i.value) })}
                 />
+                <div className="space-y-3 rounded-lg border border-gray-200 p-3">
+                  <p className="text-sm font-semibold text-gray-700">Directory mapping (optional)</p>
+                  <p className="text-xs text-gray-500">Members of the mapped directory group join this group at sign-in, and leave it when they're no longer members. Mapping a group whose roles you don't hold yourself is refused.</p>
+                  <Input label="Azure AD group object ID" value={groupForm.azureGroupId} onChange={(v) => setGroupForm({ ...groupForm, azureGroupId: v })} placeholder="00000000-0000-0000-0000-000000000000" />
+                  <Input label="LDAP group DN" value={groupForm.ldapGroupDn} onChange={(v) => setGroupForm({ ...groupForm, ldapGroupDn: v })} placeholder="CN=API Owners,OU=Groups,DC=corp,DC=example" helperText="Matched against the user's memberOf." />
+                </div>
               </div>
             </FormCard>
           }
@@ -586,37 +647,42 @@ export function AdminPage() {
                 <Input label="Role Name" value={roleForm.name} onChange={(v) => setRoleForm({ ...roleForm, name: v })} required />
                 <Textarea label="Description" value={roleForm.description} onChange={(v) => setRoleForm({ ...roleForm, description: v })} rows={2} />
 
-                <div>
-                  <p className="mb-2 text-sm font-semibold text-gray-700">Global Permissions</p>
-                  <div className="flex flex-wrap gap-2">
-                    {globalPermissionOptions.map((scope) => (
-                      <button
-                        key={scope}
-                        type="button"
-                        onClick={() => toggleScope(scope, !currentRoleScopes.has(scope))}
-                        className={cn(
-                          'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                          currentRoleScopes.has(scope)
-                            ? 'border-blue-600 bg-blue-600 text-white'
-                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                        )}
-                      >
-                        {scope}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {Array.from(new Set(scopeCatalog.filter((d) => !d.perApi).map((d) => d.group))).map((group) => (
+                  <fieldset key={group}>
+                    <legend className="mb-2 text-sm font-semibold text-gray-700">{group}</legend>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {scopeCatalog.filter((d) => !d.perApi && d.group === group).map((def) => (
+                        <label key={def.scope} className={cn('flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-sm', FAMILY_STYLE[def.family], currentRoleScopes.has(def.scope) && 'bg-blue-50')}>
+                          <input type="checkbox" className="mt-0.5 h-4 w-4" checked={currentRoleScopes.has(def.scope)} onChange={(e) => toggleScope(def.scope, e.target.checked)} />
+                          <span>
+                            <span className="font-mono text-xs font-semibold">{def.scope}</span>
+                            <span className="ml-1.5 text-[11px] uppercase tracking-wide opacity-80">{def.family}</span>
+                            <span className="block text-xs text-gray-600">{def.description}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                ))}
+                {currentRoleScopes.has('ldap.manage') && (
+                  <Alert variant="info">This role has <code>ldap.manage</code>, the old name of <code>idp.manage</code>; saving converts it.</Alert>
+                )}
 
                 <div>
-                  <p className="mb-2 text-sm font-semibold text-gray-700">Per-API Permissions</p>
-                  <div className="overflow-hidden rounded-lg border border-gray-200">
+                  <p className="mb-2 text-sm font-semibold text-gray-700">Per-API permissions</p>
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
                     <table className="min-w-full text-sm">
                       <thead className="bg-gray-50">
                         <tr>
-                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">API</th>
-                          <th className="px-3 py-2 text-center text-xs font-medium uppercase text-gray-500">View</th>
-                          <th className="px-3 py-2 text-center text-xs font-medium uppercase text-gray-500">Invoke</th>
-                          <th className="px-3 py-2 text-center text-xs font-medium uppercase text-gray-500">Manage</th>
+                          <th scope="col" className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">API</th>
+                          {PER_API_ACTIONS.map((action) => {
+                            const def = scopeCatalog.find((d) => d.perApi && d.action === action);
+                            return (
+                              <th key={action} scope="col" className="px-3 py-2 text-center text-xs font-medium uppercase text-gray-500" title={def?.description}>
+                                {action}{def?.family === 'destructive' ? ' ⚠' : ''}
+                              </th>
+                            );
+                          })}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -626,12 +692,13 @@ export function AdminPage() {
                               <p className="font-medium text-gray-800">{apiItem.name}</p>
                               <p className="text-xs text-gray-400">{apiItem.slug}</p>
                             </td>
-                            {['view', 'invoke', 'manage'].map((action) => {
+                            {PER_API_ACTIONS.map((action) => {
                               const scope = `api:${apiItem.id}:${action}`;
                               return (
                                 <td key={scope} className="px-3 py-2 text-center">
                                   <input
                                     type="checkbox"
+                                    aria-label={`${apiItem.name}: ${action}`}
                                     checked={currentRoleScopes.has(scope)}
                                     onChange={(e) => toggleScope(scope, e.target.checked)}
                                     className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -641,6 +708,9 @@ export function AdminPage() {
                             })}
                           </tr>
                         ))}
+                        {apis.length === 0 && (
+                          <tr><td colSpan={5} className="px-3 py-4 text-center text-xs text-gray-500">No APIs you can see. API owners can also grant access per API from API Definitions → Access.</td></tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -658,7 +728,7 @@ export function AdminPage() {
             <EntityList
               title="Registered APIs"
               subtitle="Internal URLs remain server-side. Select an API to edit or refresh its cached spec."
-              action={<Button size="sm" onClick={() => selectApi()}>New API</Button>}
+              action={caps?.canCreateApi || me.user.isAdmin ? <Button size="sm" onClick={() => selectApi()}>New API</Button> : undefined}
             >
               {apis.map((apiItem) => (
                 <EntityItem
@@ -671,7 +741,11 @@ export function AdminPage() {
               ))}
             </EntityList>
           }
-          right={
+          right={!apiForm.id && !(caps?.canCreateApi || me.user.isAdmin) ? (
+            <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">
+              Select one of your APIs on the left to edit it, refresh its spec or manage who may use it.
+            </div>
+          ) : (
             <FormCard
               title={apiForm.id ? `Edit API #${apiForm.id}` : 'Create API'}
               actions={
@@ -681,7 +755,10 @@ export function AdminPage() {
                       <Button size="sm" onClick={() => run(async () => { await api.refreshApiSpec(apiForm.id!); }, 'API spec refreshed.')}>
                         <RefreshCw className="h-3.5 w-3.5" /> Refresh Spec
                       </Button>
-                      <Button variant="danger" size="sm" onClick={() => run(async () => { await api.deleteApi(apiForm.id!); setApiForm(emptyApiForm()); }, 'API deleted.')}>
+                      <Button variant="danger" size="sm" onClick={() => {
+                        if (!window.confirm(`Delete ${apiForm.name}? Its permissions and access grants are removed too.`)) return;
+                        void run(async () => { await api.deleteApi(apiForm.id!); setApiForm(emptyApiForm()); }, 'API deleted.');
+                      }}>
                         <Trash2 className="h-3.5 w-3.5" /> Delete
                       </Button>
                     </>
@@ -725,9 +802,79 @@ export function AdminPage() {
                   <Checkbox label="Active" checked={apiForm.isActive} onChange={(v) => setApiForm({ ...apiForm, isActive: v })} />
                   <Checkbox label="Try It Enabled" checked={apiForm.tryItEnabled} onChange={(v) => setApiForm({ ...apiForm, tryItEnabled: v })} />
                 </div>
+
+                <NativeSelect
+                  label="Owner group"
+                  value={apiForm.ownerGroupId ? String(apiForm.ownerGroupId) : ''}
+                  onChange={(v) => setApiForm({ ...apiForm, ownerGroupId: v ? Number(v) : null })}
+                  options={[{ label: 'No owner group', value: '' }, ...groups.map((g) => ({ label: g.name, value: String(g.id) }))]}
+                  disabled={!caps?.managesAllApis && !me.user.isAdmin}
+                  helperText="Members of the owner group manage this API (edit, refresh, access). Set by API administrators."
+                />
+
+                <fieldset className="space-y-3 rounded-lg border border-gray-200 p-3">
+                  <legend className="px-1 text-sm font-semibold text-gray-700">Try-it requests</legend>
+                  <ChipInput
+                    label="Headers users may send"
+                    helperText="Besides Content-Type, Accept, Accept-Language and User-Agent. Routing headers (X-Forwarded-*, X-HTTP-Method-Override, …) are never forwarded."
+                    options={['Authorization', 'X-Api-Key', 'X-Tenant-Id', 'X-Correlation-Id']}
+                    value={apiForm.allowedRequestHeaders}
+                    onChange={(v) => setApiForm({ ...apiForm, allowedRequestHeaders: v })}
+                  />
+                  <Checkbox label="Also forward any other X-* header (behaviour before 1.5.0)" checked={apiForm.forwardAllXHeaders} onChange={(v) => setApiForm({ ...apiForm, forwardAllXHeaders: v })} />
+                  <div>
+                    <p className="mb-1 text-sm font-medium text-gray-700">Headers the portal adds</p>
+                    <p className="mb-2 text-xs text-gray-500">E.g. a service API key. Values are stored encrypted, never shown again, and override what users send. Leave a value empty to keep the stored one.</p>
+                    {apiForm.injectHeaders.map((header, index) => (
+                      <div key={index} className="mb-2 flex gap-2">
+                        <input aria-label="Header name" className={cn(fieldBase, 'font-mono')} value={header.name} placeholder="X-Api-Key"
+                          onChange={(e) => setApiForm({ ...apiForm, injectHeaders: apiForm.injectHeaders.map((h, i) => (i === index ? { ...h, name: e.target.value } : h)) })} />
+                        <input aria-label="Header value" type="password" autoComplete="off" className={fieldBase} value={header.value} placeholder={apiForm.id ? '(unchanged)' : 'value'}
+                          onChange={(e) => setApiForm({ ...apiForm, injectHeaders: apiForm.injectHeaders.map((h, i) => (i === index ? { ...h, value: e.target.value } : h)) })} />
+                        <Button size="sm" variant="ghost" onClick={() => setApiForm({ ...apiForm, injectHeaders: apiForm.injectHeaders.filter((_, i) => i !== index) })}>
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /><span className="sr-only">Remove header</span>
+                        </Button>
+                      </div>
+                    ))}
+                    <Button size="sm" onClick={() => setApiForm({ ...apiForm, injectHeaders: [...apiForm.injectHeaders, { name: '', value: '' }] })}>Add header</Button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <FieldWrap label="Rate limit (calls per minute per user)" helperText="0 = default (120).">
+                      <input type="number" min={0} max={10000} className={fieldBase} value={Number.isFinite(apiForm.rateLimitPerMinute) ? apiForm.rateLimitPerMinute : ''}
+                        onChange={(e) => setApiForm({ ...apiForm, rateLimitPerMinute: e.target.valueAsNumber })} />
+                    </FieldWrap>
+                    <FieldWrap label="Timeout (seconds)" helperText="0 = portal default.">
+                      <input type="number" min={0} max={300} className={fieldBase} value={Number.isFinite(apiForm.timeoutSeconds) ? apiForm.timeoutSeconds : ''}
+                        onChange={(e) => setApiForm({ ...apiForm, timeoutSeconds: e.target.valueAsNumber })} />
+                    </FieldWrap>
+                  </div>
+                </fieldset>
+
+                <fieldset className="space-y-2 rounded-lg border border-gray-200 p-3">
+                  <legend className="px-1 text-sm font-semibold text-gray-700">Access</legend>
+                  <p className="text-xs text-gray-500">Groups that may see (view) or call (invoke) this API, in addition to roles.</p>
+                  {apiForm.access.map((entry, index) => (
+                    <div key={entry.groupId} className="flex items-center gap-2">
+                      <span className="flex-1 text-sm">{groups.find((g) => g.id === entry.groupId)?.name ?? entry.groupName ?? `group ${entry.groupId}`}</span>
+                      <select aria-label="Access level" className={cn(fieldBase, 'w-32')} value={entry.level}
+                        onChange={(e) => setApiForm({ ...apiForm, access: apiForm.access.map((a, i) => (i === index ? { ...a, level: e.target.value as ApiAccess['level'] } : a)) })}>
+                        <option value="view">view</option>
+                        <option value="invoke">invoke</option>
+                      </select>
+                      <Button size="sm" variant="ghost" onClick={() => setApiForm({ ...apiForm, access: apiForm.access.filter((_, i) => i !== index) })}>
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /><span className="sr-only">Remove access</span>
+                      </Button>
+                    </div>
+                  ))}
+                  <select aria-label="Grant access to a group" className={fieldBase} value=""
+                    onChange={(e) => { const id = Number(e.target.value); if (id) setApiForm({ ...apiForm, access: [...apiForm.access, { groupId: id, level: 'view' }] }); }}>
+                    <option value="">Add a group…</option>
+                    {groups.filter((g) => !apiForm.access.some((a) => a.groupId === g.id)).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                </fieldset>
               </div>
             </FormCard>
-          }
+          )}
         />
       )}
 
@@ -1001,8 +1148,10 @@ export function AdminPage() {
                 <RefreshCw className="h-3.5 w-3.5" /> Refresh
               </Button>
               <Button
+                disabled={!caps?.canExportAudit && !me.user.isAdmin}
                 onClick={async () => {
-                  const csv = await api.exportAuditLogs();
+                  const { csv, truncated, rows } = await api.exportAuditLogs(auditFilter);
+                  if (truncated) setMessage(`Export contains the newest ${rows} matching entries only (AUDIT_EXPORT_MAX_ROWS). Narrow the filters for the rest.`);
                   const blob = new Blob([csv], { type: 'text/csv' });
                   const url = window.URL.createObjectURL(blob);
                   const link = document.createElement('a');
@@ -1019,8 +1168,20 @@ export function AdminPage() {
         >
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
-              <Input label="Filter by User" value={auditUser} onChange={setAuditUser} />
-              <Input label="Filter by Action" value={auditAction} onChange={setAuditAction} />
+              <Input label="User" value={auditFilter.user ?? ''} onChange={(v) => setAuditFilter({ ...auditFilter, user: v })} />
+              <Input label="Action starts with" value={auditFilter.action ?? ''} onChange={(v) => setAuditFilter({ ...auditFilter, action: v })} placeholder="user. · api.invoke · auth.login" />
+              <NativeSelect
+                label="Outcome"
+                value={auditFilter.outcome ?? ''}
+                onChange={(v) => setAuditFilter({ ...auditFilter, outcome: v })}
+                options={[{ label: 'Any', value: '' }, { label: 'Success', value: 'success' }, { label: 'Denied', value: 'denied' }, { label: 'Failed', value: 'failed' }]}
+              />
+              <FieldWrap label="From">
+                <input type="date" className={fieldBase} value={auditFilter.from ?? ''} onChange={(e) => setAuditFilter({ ...auditFilter, from: e.target.value })} />
+              </FieldWrap>
+              <FieldWrap label="To (exclusive)">
+                <input type="date" className={fieldBase} value={auditFilter.to ?? ''} onChange={(e) => setAuditFilter({ ...auditFilter, to: e.target.value })} />
+              </FieldWrap>
               <NativeSelect
                 label="Rows per page"
                 value={String(auditPageSize)}
@@ -1036,8 +1197,8 @@ export function AdminPage() {
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    {['Timestamp', 'User', 'Action', 'Resource', 'Status', 'Error'].map((h) => (
-                      <th key={h} className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">{h}</th>
+                    {['Timestamp', 'User', 'Action', 'Outcome', 'Target', 'Changed', 'Status', 'Reason'].map((h) => (
+                      <th key={h} scope="col" className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1046,8 +1207,12 @@ export function AdminPage() {
                     <tr key={entry.id} className="hover:bg-gray-50">
                       <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-600">{new Date(entry.timestamp).toLocaleString()}</td>
                       <td className="px-3 py-2 font-medium text-gray-800">{entry.user}</td>
-                      <td className="px-3 py-2 text-gray-700">{entry.action}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-gray-700">{entry.action}</td>
+                      <td className="px-3 py-2">
+                        {entry.outcome ? <Badge variant={entry.outcome === 'success' ? 'green' : entry.outcome === 'denied' ? 'amber' : 'red'}>{entry.outcome}</Badge> : <span className="text-xs text-gray-400">–</span>}
+                      </td>
                       <td className="px-3 py-2 text-gray-600">{[entry.resourceType, entry.resourceName || entry.resourceId].filter(Boolean).join(' / ')}</td>
+                      <td className="max-w-[12rem] px-3 py-2 text-xs text-gray-500 [overflow-wrap:anywhere]">{entry.changes || '–'}</td>
                       <td className="px-3 py-2">
                         <Badge variant={entry.statusCode >= 200 && entry.statusCode < 300 ? 'green' : 'red'}>
                           {entry.statusCode}
@@ -1058,7 +1223,7 @@ export function AdminPage() {
                   ))}
                   {auditLogs.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-3 py-8 text-center text-sm text-gray-400">No audit records found.</td>
+                      <td colSpan={8} className="px-3 py-8 text-center text-sm text-gray-400">No audit records found.</td>
                     </tr>
                   )}
                 </tbody>

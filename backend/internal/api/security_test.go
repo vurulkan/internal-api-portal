@@ -55,6 +55,7 @@ func newEnv(t *testing.T) *testEnv {
 		ProxyAllowLoopback: true,
 		MetricsEnabled:     true,
 		PasswordMinLength:  12,
+		Features:           config.Features{TryIt: true, LDAP: true, AzureAD: true, AuditExport: true},
 	}
 	srv := NewServer(st, audit.New(st), cfg)
 	return &testEnv{t: t, srv: srv, handler: srv.Router(), store: st, dbConn: database.Conn}
@@ -159,7 +160,7 @@ func (e *testEnv) loginWith(username, pw string) string {
 }
 
 func (e *testEnv) auditActions() []string {
-	logs, _, _ := e.store.ListAuditLogs(context.Background(), 500, 0, "", "")
+	logs, _, _ := e.store.ListAuditLogs(context.Background(), models.AuditFilter{}, 500, 0)
 	var out []string
 	for _, l := range logs {
 		out = append(out, l.Action)
@@ -219,8 +220,8 @@ func TestLoginLockout(t *testing.T) {
 	}
 	// Locked now, even with the right password.
 	e.expect(http.MethodPost, "/api/auth/login", "", map[string]string{"username": "bob", "password": testPassword}, http.StatusTooManyRequests)
-	if !contains(e.auditActions(), "login.locked") {
-		t.Fatal("no login.locked audit entry")
+	if !contains(e.auditActions(), "auth.login.denied") {
+		t.Fatal("no auth.login.denied audit entry")
 	}
 	// Other users from the same address are unaffected.
 	e.user("carol", false)
@@ -260,7 +261,7 @@ func TestUserManagerCannotEscalate(t *testing.T) {
 	for _, path := range []string{"/api/admin/azure-ad", "/api/admin/session", "/api/admin/system"} {
 		e.expect(http.MethodGet, path, token, nil, http.StatusForbidden)
 	}
-	if !contains(e.auditActions(), "authz.denied") {
+	if !contains(e.auditActions(), "user.create.denied") {
 		t.Fatal("denials are not audited")
 	}
 }

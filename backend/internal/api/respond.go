@@ -22,6 +22,7 @@ type errorBody struct {
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	auditReason(r, message)
 	writeJSON(w, status, errorBody{Error: message, Code: errorCode(status), RequestID: logging.RequestID(r.Context())})
 }
 

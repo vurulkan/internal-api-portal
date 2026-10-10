@@ -123,43 +123,55 @@ Primary tables:
 
 ## RBAC Model
 
-Authorization is app-layer only.
-
-Relationship model:
+Authorization happens in the portal (not in the upstream APIs):
 
 ```text
-User -> Group -> Role -> Permission
+User -> Group -> Role -> Permission (scope)
 ```
 
-Supported permission patterns include:
+plus two per-API shortcuts that don't need roles:
 
-- `user.manage`
-- `group.manage`
-- `role.manage`
-- `ldap.manage`
-- `audit.view`
-- `api.manage`
-- `api.view`
-- `api.invoke`
-- `api:<api_id>:view`
-- `api:<api_id>:invoke`
-- `api:<api_id>:manage`
+- **Owner group** of an API: its members get `api:<id>:manage` on that API.
+- **Access** of an API (Admin → API Definitions → Access): groups get `api:<id>:view` or `api:<id>:invoke` on that API.
 
-Recommended operational model:
+`isAdmin` users hold every scope. The full list with descriptions is served at `GET /api/permissions/catalog`, and the role editor is built from it:
 
-- use global admin permissions for platform administrators
-- use API-scoped permissions for application teams
+| Scope | Family | Allows |
+|---|---|---|
+| `api.view` | read | See every API (docs, spec) |
+| `api.invoke` | write | Call every API through try-it (includes view) |
+| `api.create` | write | Register new APIs |
+| `api.manage` | write | Edit, refresh, create, delete every API and manage its access; set owner groups |
+| `api.delete` | destructive | Delete any API |
+| `api:<id>:view` / `:invoke` | read / write | The same for one API |
+| `api:<id>:manage` | write | Edit and refresh one API, manage who may view / call it (not delete it, not change its owner group) |
+| `api:<id>:delete` | destructive | Delete one API |
+| `user.view` / `user.manage` | read / write | See users; create / edit / deactivate / delete non-administrators, reset passwords |
+| `group.manage` | write | Groups, their roles and directory mappings |
+| `role.manage` | write | Roles and their permissions |
+| `session.manage` | destructive | See and end anyone's sessions |
+| `idp.manage` | write | LDAP and Azure AD configuration, LDAP import. **Security-sensitive:** whoever configures the identity providers can make the portal accept any LDAP / Azure AD sign-in; give it to administrators only |
+| `settings.manage` | write | Session timeouts, branding |
+| `audit.view` / `audit.export` | read | Read the audit log / export it as CSV |
 
-Delegation rules (since 1.1.0):
+`ldap.manage` (before 1.5.0) is still accepted as `idp.manage`; the 1.5.0 migration renames it and gives `audit.export` to every role that had `audit.view` (export used to be part of it). Unknown scopes are refused.
+
+The admin console opens for anyone with at least one admin section: an API owner sees only *API Definitions* and only their APIs; a user manager sees only *Users*, and so on (`GET /api/auth/me` → `capabilities`).
+
+Delegation rules:
 
 - only administrators (`isAdmin`) can create, edit, delete or regroup administrator accounts
-- a delegated manager (`user.manage`, `group.manage`, `role.manage`) can only hand out scopes they hold themselves, whether by adding a scope to a role, a role to a group, or a group to a user
+- a delegated manager can only hand out scopes they hold themselves: adding a scope to a role, a role to a group, a group to a user, or mapping a group to a directory group (its members would get the group's scopes)
 - nobody can deactivate, demote or delete their own account, and the last active administrator can't be deactivated, demoted or deleted
-- Azure AD, session and system / branding settings are administrator-only
-- a user's authentication source (local / LDAP / Azure AD) can't be changed from the admin UI, and passwords can only be set for local users
-- attach permissions to roles
-- attach roles to groups
-- attach users to groups
+- a user's authentication source can't be changed from the admin UI; passwords can only be set for local users
+
+### Directory group mapping
+
+A portal group can be mapped to an Azure AD group (object id) or an LDAP group (DN, matched against the user's `memberOf`). At each sign-in through that provider the user joins the mapped groups they are a member of and leaves the ones they no longer are. Groups without a mapping are never touched. Azure AD needs the *groups* claim in the token; when the user is in too many groups (overage) the sync is skipped and logged.
+
+### Feature switches
+
+`FEATURE_TRY_IT`, `FEATURE_LDAP`, `FEATURE_AZURE_AD`, `FEATURE_AUDIT_EXPORT` (default `true`): `false` turns the capability off for everyone, administrators included — the endpoints answer `403` (audited), the UI hides it, and `GET /api/features` reports the state.
 
 ## Authentication
 
@@ -227,6 +239,8 @@ The LDAP bind password and the Azure AD client secret are stored encrypted (AES-
 | `BOOTSTRAP_ADMIN_USERNAME` | `admin` | First start only: the administrator account to create |
 | `BOOTSTRAP_ADMIN_PASSWORD` / `_FILE` | _(generated)_ | First start only: its password (changed at first sign-in) |
 | `PASSWORD_MIN_LENGTH` | `12` | Minimum length of new local passwords (at least 8) |
+| `FEATURE_TRY_IT` / `FEATURE_LDAP` / `FEATURE_AZURE_AD` / `FEATURE_AUDIT_EXPORT` | `true` | `false` switches the capability off for everyone (see Feature switches) |
+| `AUDIT_EXPORT_MAX_ROWS` | `100000` | Rows in one audit CSV export |
 | `PROXY_TIMEOUT_SECONDS` | `30` | Upstream request timeout |
 | `MAX_REQUEST_BYTES` | `1048576` | Max proxied request body size |
 | `MAX_RESPONSE_BYTES` | `5242880` | Max proxied response body size |
@@ -384,6 +398,12 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
 
+### Upgrading to 1.5.0
+
+- Scopes: `ldap.manage` becomes `idp.manage`; roles with `audit.view` also get `audit.export`. Session / branding settings need `settings.manage` and other people's sessions `session.manage` (administrators have both); Azure AD settings need `idp.manage` (before: administrators only).
+- Audit action names changed (table in Audit Logging); update saved searches and log alerts.
+- APIs registered before the upgrade keep forwarding every `X-*` try-it header; new APIs forward only their allow-list.
+
 ### Upgrading to 1.4.0
 
 - Everyone signs in again once: sessions moved from browser-stored tokens to server-side sessions in a cookie.
@@ -430,17 +450,17 @@ Every API error is JSON:
 
 Each API definition includes:
 
-- `name`
-- `slug`
-- `description`
-- `internalOpenapiUrl`
-- `internalBaseUrl`
-- `isActive`
-- `tryItEnabled`
-- `allowedMethods`
-- `allowedPathPrefixes`
-- `ownerTeam`
-- `tags`
+- `name`, `slug`, `description`, `tags`, `ownerTeam` (free text)
+- `internalOpenapiUrl`, `internalBaseUrl` (absolute http(s) URLs; never shown to non-managers)
+- `isActive`, `tryItEnabled`
+- `allowedMethods`, `allowedPathPrefixes` (see below)
+- `ownerGroupId`: members of this group manage the API (set by `api.manage` holders)
+- try-it header policy:
+  - `allowedRequestHeaders`: headers users may send besides `Content-Type`, `Accept`, `Accept-Language`, `User-Agent` (e.g. `Authorization`, `X-Tenant-Id`)
+  - `forwardAllXHeaders`: also forward any other `X-*` header — the behaviour before 1.5.0, kept on for APIs registered before the upgrade
+  - `injectHeaders`: headers the portal adds upstream, e.g. a service API key. Values are stored encrypted (see Encryption at Rest), never returned (`injectHeaderNames` lists them), override user headers, and never reach the audit log
+- `rateLimitPerMinute`: try-it calls per user per minute (0 = 120). Responses carry `X-RateLimit-Limit` / `X-RateLimit-Remaining`, the UI shows what's left, and a `429` says when to retry
+- `timeoutSeconds`: upstream timeout for this API (0 = `PROXY_TIMEOUT_SECONDS`)
 
 ### Important: `internalBaseUrl` vs `allowedPathPrefixes`
 
@@ -650,50 +670,25 @@ This first phase does not require Microsoft Graph permissions.
 
 ## Audit Logging
 
-The portal logs:
+Every state-changing request writes exactly one entry named `<domain>.<verb>.<outcome>`, e.g. `user.update.success`, `role.permission_add.denied`, `api.invoke.failed`. The outcome comes from the response: `success`, `denied` (401 / 403 / 429: not allowed, locked out, rate limited, feature off) or `failed` (anything else). This is enforced per route, and a test fails if a write route is added without it.
 
-- login success
-- login failure
-- password changes
-- API detail views
-- API spec views
-- API spec refreshes
-- API invocation attempts
-- API invocation failures
-- refused admin actions (`authz.denied`) and login lockouts (`login.locked`)
-- LDAP update and LDAP test actions
-- user create / update / delete and group membership changes
-- group role assignments, role permission add / replace
-- session and system / logo changes
+Each entry has: time, actor and their identity source, action and outcome, target (type, id, name), **changed field names** (never values; secrets show up only as e.g. `bindPassword`), the reason for a denial or failure, source IP, request id, and details. Try-it entries add method, path, query parameter *names*, the upstream status code, sizes, duration and the sent header names (values masked except `Content-Type`, `Accept`, `Accept-Language`, `User-Agent`).
 
-Not yet audited (planned for M5): group create / update / delete, role create / update / delete, permission delete, LDAP import and API definition create / update / delete.
+Reads that are audited too: API detail and spec views, sign-ins through Azure AD (`auth.login.*`), and audit exports (`audit.export.success`).
 
-For API invocation logs, the system records:
+| Before 1.5.0 | Since 1.5.0 |
+|---|---|
+| `login.success` / `login.failed` / `login.locked` | `auth.login.success` / `auth.login.denied` (wrong credentials and lockouts) |
+| `logout`, `password.change.*` | `auth.logout.success`, `auth.password_change.*` |
+| `admin.user.create`, `admin.group.create`, … | `user.create.success`, `group.create.success`, … |
+| `api.invoke`, `api.invoke.blocked` | `api.invoke.success` / `.denied` / `.failed` |
+| `authz.denied` | `<action>.denied` |
 
-- timestamp
-- user
-- source IP
-- API ID and API name
-- status code
-- duration
-- request size
-- response size
-- request header names; values are kept only for `Content-Type`, `Accept`, `Accept-Language` and `User-Agent`, every other value is stored as `***`
-- blocked or allowed status
-- error message when present
+Older entries keep their names.
 
-Audit exports are available from the admin UI as CSV. Cells starting with `=`, `+`, `-`, `@`, TAB or CR are prefixed with `'` so spreadsheets don't evaluate them.
+### Filtering and export
 
-### Audit Log Pagination
-
-The Audit Logs screen supports server-side pagination.
-
-- default page size: `25`
-- selectable page sizes: `25`, `50`, `100`
-- filters apply to the full audit dataset first
-- pagination is applied after filtering
-
-This means user/action searches are not limited to only the currently visible page.
+`GET /api/admin/audit-logs` and the CSV export accept the same filters: `from`, `to` (RFC 3339 or `YYYY-MM-DD`; `to` is exclusive), `user`, `action` (prefix: `user.` finds every user action), `outcome`, `targetType`, `targetId`, `apiId`. The list is paged (`limit` up to 500, `offset`). The export streams the newest matching rows up to `AUDIT_EXPORT_MAX_ROWS` (default 100,000); when more matched, the response has `X-Audit-Export-Truncated: true` and the UI says so. CSV cells starting with `=`, `+`, `-`, `@`, TAB or CR are prefixed with `'` so spreadsheets don't evaluate them.
 
 ## Branding
 
@@ -750,7 +745,7 @@ Never forwarded upstream:
 - `Authorization`, `Cookie`, `Set-Cookie`, `Host`
 - headers that change routing, the method or the client identity: `X-Forwarded-*`, `X-Real-IP`, `X-Client-IP`, `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`, `X-Original-Method`, `X-Original-URL`, `X-Original-URI`, `X-Rewrite-URL`, `X-Host`
 
-Other `X-*` headers (e.g. `X-Api-Key`) plus `Content-Type`, `Accept`, `Accept-Language` and `User-Agent` are forwarded. Their values are masked in the audit log.
+Forwarded: `Content-Type`, `Accept`, `Accept-Language`, `User-Agent`, the API's `allowedRequestHeaders`, and — only for APIs with `forwardAllXHeaders` (those registered before 1.5.0) — any other `X-*` header. Values are masked in the audit log. Headers the API's managers configured as `injectHeaders` are added by the portal and override user headers.
 
 Response headers:
 

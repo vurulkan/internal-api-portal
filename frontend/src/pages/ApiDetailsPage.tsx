@@ -126,6 +126,11 @@ export function ApiDetailsPage() {
   const [requestBody, setRequestBody] = useState('');
   const [selectedOperationTag, setSelectedOperationTag] = useState('__all__');
   const [result, setResult] = useState<InvokeResponse | null>(null);
+  // FEATURE_TRY_IT=false turns try-it off portal-wide.
+  const [tryItFeature, setTryItFeature] = useState(true);
+  useEffect(() => {
+    api.features().then((f) => setTryItFeature(f.tryIt)).catch(() => undefined);
+  }, []);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -268,7 +273,9 @@ export function ApiDetailsPage() {
             )}
           </div>
 
-          {!details.permissions?.invoke || !details.tryItEnabled ? (
+          {!tryItFeature ? (
+            <p className="text-sm text-gray-500">Try-it is turned off on this portal.</p>
+          ) : !details.permissions?.invoke || !details.tryItEnabled ? (
             <p className="text-sm text-gray-500">Invocation is not enabled for your account or this API.</p>
           ) : operations.length === 0 ? (
             <Alert variant="warning">No operations were parsed from the OpenAPI document.</Alert>
@@ -382,6 +389,12 @@ export function ApiDetailsPage() {
                 </Badge>
                 {result.contentType && <Badge variant="blue">{result.contentType}</Badge>}
                 {result.truncated && <Badge variant="amber">Body truncated</Badge>}
+                {result.durationMs !== undefined && <Badge variant="gray">{result.durationMs} ms</Badge>}
+                {result.rateLimit && (
+                  <Badge variant={result.rateLimit.remaining <= 1 ? 'amber' : 'gray'}>
+                    {result.rateLimit.remaining} of {result.rateLimit.limitPerMinute}/min left
+                  </Badge>
+                )}
               </div>
 
               {/* Response headers */}

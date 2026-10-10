@@ -35,7 +35,7 @@ type Server struct {
 	staticDir  string
 	passwords  password.Policy
 	timezone   *time.Location
-	limiters   map[int]*userLimiter
+	limiters   map[limiterKey]*userLimiter
 	limitersMu sync.Mutex
 	metrics    *metrics.Portal
 	logins     *loginGate
@@ -61,7 +61,7 @@ func NewServer(store *store.Store, auditLogger *audit.Logger, cfg config.Config)
 		staticDir: cfg.StaticDir,
 		passwords: password.NewPolicy(cfg.PasswordMinLength),
 		timezone:  tz,
-		limiters:  map[int]*userLimiter{},
+		limiters:  map[limiterKey]*userLimiter{},
 		metrics:   metrics.NewPortal(),
 		logins:    newLoginGate(),
 		dummyHash: dummyHash,
@@ -81,84 +81,94 @@ func (s *Server) Router() http.Handler {
 		r.Get("/metrics", s.MetricsHandler().ServeHTTP)
 	}
 
-	r.Post("/api/auth/login", s.handleLogin)
+	// Every state-changing route goes through s.audited (see audit_trail.go).
+	r.With(s.audited("auth.login")).Post("/api/auth/login", s.handleLogin)
 	r.Get("/api/auth/providers", s.handleAuthProviders)
 	r.Get("/api/auth/azure/start", s.handleAzureStart)
 	r.Get("/api/auth/azure/callback", s.handleAzureCallback)
-
+	r.Get("/api/features", s.handleFeatures)
 	r.Get("/api/system/public", s.handlePublicSettings)
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireSession)
+		perm := s.requirePermission
+		a := s.audited
+
 		r.Get("/api/auth/me", s.handleMe)
-		r.Post("/api/auth/change-password", s.handleChangePassword)
-		r.Post("/api/auth/logout", s.handleLogout)
+		r.With(a("auth.password_change")).Post("/api/auth/change-password", s.handleChangePassword)
+		r.With(a("auth.logout")).Post("/api/auth/logout", s.handleLogout)
 		r.Get("/api/auth/sessions", s.handleMySessions)
-		r.Delete("/api/auth/sessions/{id}", s.handleRevokeMySession)
-		r.Post("/api/auth/sessions/revoke-others", s.handleRevokeMyOtherSessions)
+		r.With(a("session.revoke")).Delete("/api/auth/sessions/{id}", s.handleRevokeMySession)
+		r.With(a("session.revoke_others")).Post("/api/auth/sessions/revoke-others", s.handleRevokeMyOtherSessions)
+		r.Get("/api/permissions/catalog", s.handlePermissionCatalog)
+
 		r.Get("/api/catalog", s.handleCatalog)
 		r.Get("/api/apis/{id}", s.handleAPIDetails)
 		r.Get("/api/apis/{id}/spec", s.handleAPISpec)
-		r.Post("/api/apis/{id}/invoke", s.handleInvoke)
-	})
+		r.With(a("api.invoke"), s.requireFeature("tryIt")).Post("/api/apis/{id}/invoke", s.handleInvoke)
 
-	r.Group(func(r chi.Router) {
-		r.Use(s.requireSession)
-		r.With(s.requirePermission("user.manage")).Get("/api/admin/users", s.handleListUsers)
-		r.With(s.requirePermission("user.manage")).Post("/api/admin/users", s.handleCreateUser)
-		r.With(s.requirePermission("user.manage")).Put("/api/admin/users/{id}", s.handleUpdateUser)
-		r.With(s.requirePermission("user.manage")).Delete("/api/admin/users/{id}", s.handleDeleteUser)
-		r.With(s.requirePermission("user.manage")).Get("/api/admin/users/{id}/groups", s.handleGetUserGroups)
-		r.With(s.requirePermission("user.manage")).Put("/api/admin/users/{id}/groups", s.handleSetUserGroups)
-		r.With(s.requirePermission("user.manage")).Post("/api/admin/users/{id}/reset-password", s.handleResetPassword)
-		r.With(s.requirePermission("user.manage")).Post("/api/admin/users/{id}/revoke-sessions", s.handleRevokeUserSessions)
+		r.With(perm("user.view")).Get("/api/admin/users", s.handleListUsers)
+		r.With(a("user.create"), perm("user.manage")).Post("/api/admin/users", s.handleCreateUser)
+		r.With(a("user.update"), perm("user.manage")).Put("/api/admin/users/{id}", s.handleUpdateUser)
+		r.With(a("user.delete"), perm("user.manage")).Delete("/api/admin/users/{id}", s.handleDeleteUser)
+		r.With(perm("user.view")).Get("/api/admin/users/{id}/groups", s.handleGetUserGroups)
+		r.With(a("user.groups_set"), perm("user.manage")).Put("/api/admin/users/{id}/groups", s.handleSetUserGroups)
+		r.With(a("user.password_reset"), perm("user.manage")).Post("/api/admin/users/{id}/reset-password", s.handleResetPassword)
+		r.With(a("user.sessions_revoke"), perm("user.manage")).Post("/api/admin/users/{id}/revoke-sessions", s.handleRevokeUserSessions)
 
-		r.With(s.requireAdmin).Get("/api/admin/sessions", s.handleListSessions)
-		r.With(s.requireAdmin).Delete("/api/admin/sessions/{id}", s.handleRevokeSession)
+		r.With(perm("session.manage")).Get("/api/admin/sessions", s.handleListSessions)
+		r.With(a("session.revoke"), perm("session.manage")).Delete("/api/admin/sessions/{id}", s.handleRevokeSession)
 
-		r.With(s.requirePermission("group.manage")).Get("/api/admin/groups", s.handleListGroups)
-		r.With(s.requirePermission("group.manage")).Post("/api/admin/groups", s.handleCreateGroup)
-		r.With(s.requirePermission("group.manage")).Put("/api/admin/groups/{id}", s.handleUpdateGroup)
-		r.With(s.requirePermission("group.manage")).Delete("/api/admin/groups/{id}", s.handleDeleteGroup)
-		r.With(s.requirePermission("group.manage")).Get("/api/admin/groups/{id}/roles", s.handleGetGroupRoles)
-		r.With(s.requirePermission("group.manage")).Put("/api/admin/groups/{id}/roles", s.handleSetGroupRoles)
+		// Group and role names are needed by anyone who assigns them (user managers,
+		// API owners granting access); editing them still needs group / role.manage.
+		r.With(s.requireAnyAdminSection).Get("/api/admin/groups", s.handleListGroups)
+		r.With(a("group.create"), perm("group.manage")).Post("/api/admin/groups", s.handleCreateGroup)
+		r.With(a("group.update"), perm("group.manage")).Put("/api/admin/groups/{id}", s.handleUpdateGroup)
+		r.With(a("group.delete"), perm("group.manage")).Delete("/api/admin/groups/{id}", s.handleDeleteGroup)
+		r.With(perm("group.manage")).Get("/api/admin/groups/{id}/roles", s.handleGetGroupRoles)
+		r.With(a("group.roles_set"), perm("group.manage")).Put("/api/admin/groups/{id}/roles", s.handleSetGroupRoles)
 
-		r.With(s.requirePermission("role.manage")).Get("/api/admin/roles", s.handleListRoles)
-		r.With(s.requirePermission("role.manage")).Post("/api/admin/roles", s.handleCreateRole)
-		r.With(s.requirePermission("role.manage")).Put("/api/admin/roles/{id}", s.handleUpdateRole)
-		r.With(s.requirePermission("role.manage")).Delete("/api/admin/roles/{id}", s.handleDeleteRole)
-		r.With(s.requirePermission("role.manage")).Get("/api/admin/roles/{id}/permissions", s.handleRolePermissions)
-		r.With(s.requirePermission("role.manage")).Post("/api/admin/roles/{id}/permissions", s.handleAddRolePermission)
-		r.With(s.requirePermission("role.manage")).Put("/api/admin/roles/{id}/permissions", s.handleReplaceRolePermissions)
-		r.With(s.requirePermission("role.manage")).Delete("/api/admin/permissions/{id}", s.handleDeletePermission)
+		r.With(s.requireAnyAdminSection).Get("/api/admin/roles", s.handleListRoles)
+		r.With(a("role.create"), perm("role.manage")).Post("/api/admin/roles", s.handleCreateRole)
+		r.With(a("role.update"), perm("role.manage")).Put("/api/admin/roles/{id}", s.handleUpdateRole)
+		r.With(a("role.delete"), perm("role.manage")).Delete("/api/admin/roles/{id}", s.handleDeleteRole)
+		r.With(perm("role.manage")).Get("/api/admin/roles/{id}/permissions", s.handleRolePermissions)
+		r.With(a("role.permission_add"), perm("role.manage")).Post("/api/admin/roles/{id}/permissions", s.handleAddRolePermission)
+		r.With(a("role.permissions_set"), perm("role.manage")).Put("/api/admin/roles/{id}/permissions", s.handleReplaceRolePermissions)
+		r.With(a("role.permission_delete"), perm("role.manage")).Delete("/api/admin/permissions/{id}", s.handleDeletePermission)
 
-		r.With(s.requirePermission("ldap.manage")).Get("/api/admin/ldap", s.handleGetLDAP)
-		r.With(s.requirePermission("ldap.manage")).Put("/api/admin/ldap", s.handleUpdateLDAP)
-		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/test", s.handleTestLDAP)
-		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/test-login", s.handleTestLDAPLogin)
-		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/search", s.handleSearchLDAP)
-		r.With(s.requirePermission("ldap.manage")).Post("/api/admin/ldap/import", s.handleImportLDAP)
+		ldap := s.requireFeature("ldap")
+		r.With(perm("idp.manage"), ldap).Get("/api/admin/ldap", s.handleGetLDAP)
+		r.With(a("idp.ldap_update"), perm("idp.manage"), ldap).Put("/api/admin/ldap", s.handleUpdateLDAP)
+		r.With(a("idp.ldap_test"), perm("idp.manage"), ldap).Post("/api/admin/ldap/test", s.handleTestLDAP)
+		r.With(a("idp.ldap_test_login"), perm("idp.manage"), ldap).Post("/api/admin/ldap/test-login", s.handleTestLDAPLogin)
+		r.With(a("idp.ldap_search"), perm("idp.manage"), ldap).Post("/api/admin/ldap/search", s.handleSearchLDAP)
+		r.With(a("idp.ldap_import"), perm("idp.manage"), ldap).Post("/api/admin/ldap/import", s.handleImportLDAP)
 
-		r.With(s.requireAdmin).Get("/api/admin/azure-ad", s.handleGetAzureAD)
-		r.With(s.requireAdmin).Put("/api/admin/azure-ad", s.handleUpdateAzureAD)
-		r.With(s.requireAdmin).Post("/api/admin/azure-ad/test", s.handleTestAzureAD)
+		azure := s.requireFeature("azureAd")
+		r.With(perm("idp.manage"), azure).Get("/api/admin/azure-ad", s.handleGetAzureAD)
+		r.With(a("idp.azure_update"), perm("idp.manage"), azure).Put("/api/admin/azure-ad", s.handleUpdateAzureAD)
+		r.With(a("idp.azure_test"), perm("idp.manage"), azure).Post("/api/admin/azure-ad/test", s.handleTestAzureAD)
 
-		r.With(s.requirePermission("api.manage")).Get("/api/admin/apis", s.handleAdminAPIs)
-		r.With(s.requirePermission("api.manage")).Post("/api/admin/apis", s.handleCreateAPI)
-		r.With(s.requirePermission("api.manage")).Put("/api/admin/apis/{id}", s.handleUpdateAPI)
-		r.With(s.requirePermission("api.manage")).Delete("/api/admin/apis/{id}", s.handleDeleteAPI)
-		r.With(s.requirePermission("api.manage")).Post("/api/admin/apis/{id}/refresh", s.handleRefreshAPISpec)
+		// API management: global (api.manage / api.create) or per API
+		// (api:<id>:manage, api:<id>:delete). Per-API checks are in the handlers.
+		r.With(s.requireAPIManagement).Get("/api/admin/apis", s.handleAdminAPIs)
+		r.With(a("api.create"), perm("api.create")).Post("/api/admin/apis", s.handleCreateAPI)
+		r.With(a("api.update"), s.requireAPIManagement).Put("/api/admin/apis/{id}", s.handleUpdateAPI)
+		r.With(a("api.delete"), s.requireAPIManagement).Delete("/api/admin/apis/{id}", s.handleDeleteAPI)
+		r.With(a("api.spec_refresh"), s.requireAPIManagement).Post("/api/admin/apis/{id}/refresh", s.handleRefreshAPISpec)
+		r.With(s.requireAPIManagement).Get("/api/admin/apis/{id}/access", s.handleGetAPIAccess)
+		r.With(a("api.access_set"), s.requireAPIManagement).Put("/api/admin/apis/{id}/access", s.handleSetAPIAccess)
 
-		r.With(s.requirePermission("audit.view")).Get("/api/admin/audit-logs", s.handleAuditLogs)
-		r.With(s.requirePermission("audit.view")).Get("/api/admin/audit-logs/export", s.handleAuditLogsExport)
+		r.With(perm("audit.view")).Get("/api/admin/audit-logs", s.handleAuditLogs)
+		r.With(perm("audit.export"), s.requireFeature("auditExport")).Get("/api/admin/audit-logs/export", s.handleAuditLogsExport)
 
-		r.With(s.requireAdmin).Get("/api/admin/session", s.handleGetSession)
-		r.With(s.requireAdmin).Put("/api/admin/session", s.handleUpdateSession)
-
-		r.With(s.requireAdmin).Get("/api/admin/system", s.handleGetSystem)
-		r.With(s.requireAdmin).Put("/api/admin/system", s.handleUpdateSystem)
-		r.With(s.requireAdmin).Post("/api/admin/system/logo", s.handleUploadSystemLogo)
-		r.With(s.requireAdmin).Delete("/api/admin/system/logo", s.handleDeleteSystemLogo)
+		r.With(perm("settings.manage")).Get("/api/admin/session", s.handleGetSession)
+		r.With(a("settings.session_update"), perm("settings.manage")).Put("/api/admin/session", s.handleUpdateSession)
+		r.With(perm("settings.manage")).Get("/api/admin/system", s.handleGetSystem)
+		r.With(a("settings.system_update"), perm("settings.manage")).Put("/api/admin/system", s.handleUpdateSystem)
+		r.With(a("settings.logo_update"), perm("settings.manage")).Post("/api/admin/system/logo", s.handleUploadSystemLogo)
+		r.With(a("settings.logo_delete"), perm("settings.manage")).Delete("/api/admin/system/logo", s.handleDeleteSystemLogo)
 	})
 
 	r.NotFound(s.notFound)
@@ -227,31 +237,49 @@ type userLimiter struct {
 	lastSeen time.Time
 }
 
-// userLimiter returns the per-user try-it rate limiter (burst 5, then one every
-// 500 ms). Limiters idle for 10 minutes are dropped so the map can't grow forever.
-func (s *Server) userLimiter(userID int) *rate.Limiter {
+type limiterKey struct{ user, api int }
+
+// defaultInvokesPerMinute applies when an API sets no rate limit.
+const defaultInvokesPerMinute = 120
+
+// invokeLimiter returns the try-it limiter for one user on one API, from the API's
+// rate_limit_per_minute (default 120/min, burst up to 10). Limiters idle for 10
+// minutes are dropped so the map can't grow forever.
+func (s *Server) invokeLimiter(userID int, apiDef *models.APIDefinition) (*rate.Limiter, int) {
+	perMinute := apiDef.RateLimitPerMinute
+	if perMinute <= 0 {
+		perMinute = defaultInvokesPerMinute
+	}
 	s.limitersMu.Lock()
 	defer s.limitersMu.Unlock()
 	now := time.Now()
 	if len(s.limiters) > 256 {
-		for id, entry := range s.limiters {
+		for key, entry := range s.limiters {
 			if now.Sub(entry.lastSeen) > 10*time.Minute {
-				delete(s.limiters, id)
+				delete(s.limiters, key)
 			}
 		}
 	}
-	entry, ok := s.limiters[userID]
-	if !ok {
-		entry = &userLimiter{limiter: rate.NewLimiter(rate.Every(500*time.Millisecond), 5)}
-		s.limiters[userID] = entry
+	key := limiterKey{userID, apiDef.ID}
+	every := time.Minute / time.Duration(perMinute)
+	entry, ok := s.limiters[key]
+	if !ok || entry.limiter.Limit() != rate.Every(every) {
+		entry = &userLimiter{limiter: rate.NewLimiter(rate.Every(every), min(perMinute, 10))}
+		s.limiters[key] = entry
 	}
 	entry.lastSeen = now
-	return entry.limiter
+	return entry.limiter, perMinute
 }
 
 func (s *Server) recordAudit(r *http.Request, entry models.AuditLog) {
 	if entry.User == "" {
 		entry.User = s.usernameOrAnonymous(r)
+		if identity, ok := s.identityForRequest(r); ok && entry.ActorSource == "" {
+			entry.ActorSource = identity.User.AuthSource
+		}
+	}
+	if entry.Outcome == "" {
+		entry.Outcome = auditOutcome(entry.StatusCode)
 	}
 	if entry.SourceIP == "" {
 		entry.SourceIP = s.clientIP(r)

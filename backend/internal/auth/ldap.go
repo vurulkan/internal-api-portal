@@ -14,24 +14,29 @@ import (
 	"api-portal/backend/internal/models"
 )
 
-func LDAPAuthenticate(cfg models.LDAPConfig, username, password string) error {
+// LDAPAuthenticate binds as the user and returns the DNs of the groups the entry
+// lists in memberOf (used to sync mapped portal groups).
+func LDAPAuthenticate(cfg models.LDAPConfig, username, password string) ([]string, error) {
 	conn, err := dialLDAP(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer conn.Close()
 
 	if cfg.BindDN != "" {
 		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	userDN, _, err := findLDAPUser(conn, cfg, username)
+	userDN, entry, err := findLDAPUser(conn, cfg, username)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return conn.Bind(userDN, password)
+	if err := conn.Bind(userDN, password); err != nil {
+		return nil, err
+	}
+	return entry.GetAttributeValues("memberOf"), nil
 }
 
 func TestLDAPConnection(cfg models.LDAPConfig) error {
@@ -211,7 +216,7 @@ func findLDAPUser(conn *ldap.Conn, cfg models.LDAPConfig, username string) (stri
 	var found *ldap.Entry
 	for _, baseDN := range userBaseDNs(cfg) {
 		// Size limit 2: enough to detect an ambiguous filter without listing the directory.
-		req := ldap.NewSearchRequest(baseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false, filter, []string{"dn", attr}, nil)
+		req := ldap.NewSearchRequest(baseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false, filter, []string{"dn", attr, "memberOf"}, nil)
 		result, err := conn.Search(req)
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded) {
 			return "", nil, ErrLDAPAmbiguousUser

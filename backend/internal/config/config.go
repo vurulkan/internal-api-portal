@@ -62,6 +62,19 @@ type Config struct {
 	BootstrapAdminPassword string
 
 	PasswordMinLength int
+
+	// Feature switches; false turns a capability off for everyone, administrators too.
+	Features Features
+
+	// AuditExportMaxRows caps one CSV export (newest rows first).
+	AuditExportMaxRows int
+}
+
+type Features struct {
+	TryIt       bool `json:"tryIt"`
+	LDAP        bool `json:"ldap"`
+	AzureAD     bool `json:"azureAd"`
+	AuditExport bool `json:"auditExport"`
 }
 
 func Load() Config {
@@ -94,6 +107,13 @@ func Load() Config {
 		BootstrapAdminUsername: env("BOOTSTRAP_ADMIN_USERNAME", "admin"),
 		BootstrapAdminPassword: envSecret("BOOTSTRAP_ADMIN_PASSWORD"),
 		PasswordMinLength:      envInt("PASSWORD_MIN_LENGTH", 12),
+		AuditExportMaxRows:     envInt("AUDIT_EXPORT_MAX_ROWS", 100000),
+		Features: Features{
+			TryIt:       envBool("FEATURE_TRY_IT", true),
+			LDAP:        envBool("FEATURE_LDAP", true),
+			AzureAD:     envBool("FEATURE_AZURE_AD", true),
+			AuditExport: envBool("FEATURE_AUDIT_EXPORT", true),
+		},
 	}
 }
 

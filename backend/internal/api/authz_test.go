@@ -39,6 +39,7 @@ var authzTable = []routeRule{
 	{"GET", "/api/auth/azure/start", public, ""},
 	{"GET", "/api/auth/azure/callback", public, ""},
 	{"GET", "/api/system/public", public, ""},
+	{"GET", "/api/features", public, ""},
 
 	{"GET", "/api/auth/me", signedIn, ""},
 	{"POST", "/api/auth/change-password", signedIn, ""},
@@ -46,30 +47,31 @@ var authzTable = []routeRule{
 	{"GET", "/api/auth/sessions", signedIn, ""},
 	{"DELETE", "/api/auth/sessions/{id}", signedIn, ""},
 	{"POST", "/api/auth/sessions/revoke-others", signedIn, ""},
+	{"GET", "/api/permissions/catalog", signedIn, ""},
 	{"GET", "/api/catalog", signedIn, ""},
 	{"GET", "/api/apis/{id}", signedIn, ""},
 	{"GET", "/api/apis/{id}/spec", signedIn, ""},
 	{"POST", "/api/apis/{id}/invoke", signedIn, ""},
 
-	{"GET", "/api/admin/users", signedIn, "user.manage"},
+	{"GET", "/api/admin/users", signedIn, "user.view"},
 	{"POST", "/api/admin/users", signedIn, "user.manage"},
 	{"PUT", "/api/admin/users/{id}", signedIn, "user.manage"},
 	{"DELETE", "/api/admin/users/{id}", signedIn, "user.manage"},
-	{"GET", "/api/admin/users/{id}/groups", signedIn, "user.manage"},
+	{"GET", "/api/admin/users/{id}/groups", signedIn, "user.view"},
 	{"PUT", "/api/admin/users/{id}/groups", signedIn, "user.manage"},
 	{"POST", "/api/admin/users/{id}/reset-password", signedIn, "user.manage"},
 	{"POST", "/api/admin/users/{id}/revoke-sessions", signedIn, "user.manage"},
-	{"GET", "/api/admin/sessions", adminOnly, ""},
-	{"DELETE", "/api/admin/sessions/{id}", adminOnly, ""},
+	{"GET", "/api/admin/sessions", signedIn, "session.manage"},
+	{"DELETE", "/api/admin/sessions/{id}", signedIn, "session.manage"},
 
-	{"GET", "/api/admin/groups", signedIn, "group.manage"},
+	{"GET", "/api/admin/groups", signedIn, "any admin section"},
 	{"POST", "/api/admin/groups", signedIn, "group.manage"},
 	{"PUT", "/api/admin/groups/{id}", signedIn, "group.manage"},
 	{"DELETE", "/api/admin/groups/{id}", signedIn, "group.manage"},
 	{"GET", "/api/admin/groups/{id}/roles", signedIn, "group.manage"},
 	{"PUT", "/api/admin/groups/{id}/roles", signedIn, "group.manage"},
 
-	{"GET", "/api/admin/roles", signedIn, "role.manage"},
+	{"GET", "/api/admin/roles", signedIn, "any admin section"},
 	{"POST", "/api/admin/roles", signedIn, "role.manage"},
 	{"PUT", "/api/admin/roles/{id}", signedIn, "role.manage"},
 	{"DELETE", "/api/admin/roles/{id}", signedIn, "role.manage"},
@@ -78,31 +80,33 @@ var authzTable = []routeRule{
 	{"PUT", "/api/admin/roles/{id}/permissions", signedIn, "role.manage"},
 	{"DELETE", "/api/admin/permissions/{id}", signedIn, "role.manage"},
 
-	{"GET", "/api/admin/ldap", signedIn, "ldap.manage"},
-	{"PUT", "/api/admin/ldap", signedIn, "ldap.manage"},
-	{"POST", "/api/admin/ldap/test", signedIn, "ldap.manage"},
-	{"POST", "/api/admin/ldap/test-login", signedIn, "ldap.manage"},
-	{"POST", "/api/admin/ldap/search", signedIn, "ldap.manage"},
-	{"POST", "/api/admin/ldap/import", signedIn, "ldap.manage"},
+	{"GET", "/api/admin/ldap", signedIn, "idp.manage"},
+	{"PUT", "/api/admin/ldap", signedIn, "idp.manage"},
+	{"POST", "/api/admin/ldap/test", signedIn, "idp.manage"},
+	{"POST", "/api/admin/ldap/test-login", signedIn, "idp.manage"},
+	{"POST", "/api/admin/ldap/search", signedIn, "idp.manage"},
+	{"POST", "/api/admin/ldap/import", signedIn, "idp.manage"},
 
 	{"GET", "/api/admin/apis", signedIn, "api.manage"},
 	{"POST", "/api/admin/apis", signedIn, "api.manage"},
 	{"PUT", "/api/admin/apis/{id}", signedIn, "api.manage"},
 	{"DELETE", "/api/admin/apis/{id}", signedIn, "api.manage"},
 	{"POST", "/api/admin/apis/{id}/refresh", signedIn, "api.manage"},
+	{"GET", "/api/admin/apis/{id}/access", signedIn, "api.manage"},
+	{"PUT", "/api/admin/apis/{id}/access", signedIn, "api.manage"},
 
 	{"GET", "/api/admin/audit-logs", signedIn, "audit.view"},
-	{"GET", "/api/admin/audit-logs/export", signedIn, "audit.view"},
+	{"GET", "/api/admin/audit-logs/export", signedIn, "audit.export"},
 
-	{"GET", "/api/admin/azure-ad", adminOnly, ""},
-	{"PUT", "/api/admin/azure-ad", adminOnly, ""},
-	{"POST", "/api/admin/azure-ad/test", adminOnly, ""},
-	{"GET", "/api/admin/session", adminOnly, ""},
-	{"PUT", "/api/admin/session", adminOnly, ""},
-	{"GET", "/api/admin/system", adminOnly, ""},
-	{"PUT", "/api/admin/system", adminOnly, ""},
-	{"POST", "/api/admin/system/logo", adminOnly, ""},
-	{"DELETE", "/api/admin/system/logo", adminOnly, ""},
+	{"GET", "/api/admin/azure-ad", signedIn, "idp.manage"},
+	{"PUT", "/api/admin/azure-ad", signedIn, "idp.manage"},
+	{"POST", "/api/admin/azure-ad/test", signedIn, "idp.manage"},
+	{"GET", "/api/admin/session", signedIn, "settings.manage"},
+	{"PUT", "/api/admin/session", signedIn, "settings.manage"},
+	{"GET", "/api/admin/system", signedIn, "settings.manage"},
+	{"PUT", "/api/admin/system", signedIn, "settings.manage"},
+	{"POST", "/api/admin/system/logo", signedIn, "settings.manage"},
+	{"DELETE", "/api/admin/system/logo", signedIn, "settings.manage"},
 }
 
 func concretePath(pattern string) string {
@@ -151,7 +155,8 @@ func TestAuthzMatrix(t *testing.T) {
 	plain := e.user("plain", false)
 	e.grant(plain.ID, "api.view")
 	manager := e.user("manager", false)
-	e.grant(manager.ID, "user.manage", "group.manage", "role.manage", "ldap.manage", "api.manage", "audit.view")
+	// ldap.manage is the retired name of idp.manage: it must keep working.
+	e.grant(manager.ID, "user.manage", "group.manage", "role.manage", "ldap.manage", "api.manage", "audit.view", "audit.export", "settings.manage", "session.manage")
 
 	rootToken := e.login("root")
 	plainToken := e.login("plain")

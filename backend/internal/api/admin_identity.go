@@ -27,11 +27,18 @@ func (s *Server) handleUpdateLDAP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
+	auditTarget(r, "ldap", "", "")
+	before, _ := s.store.GetLDAPConfig(r.Context())
 	if err := s.store.UpdateLDAPConfig(r.Context(), payload); err != nil {
 		writeError(w, r, http.StatusBadRequest, "failed to update ldap config")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.ldap.update", ResourceType: "ldap", StatusCode: http.StatusOK})
+	if before != nil {
+		auditChanges(r, before, payload, "bindPassword", "passwordConfigured")
+	}
+	if payload.BindPassword != "" {
+		auditChanged(r, "bindPassword")
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -49,11 +56,10 @@ func (s *Server) handleTestLDAP(w http.ResponseWriter, r *http.Request) {
 	// The LDAP / Azure test endpoints return the directory's error text: they exist to
 	// diagnose the connection, and only identity administrators can call them.
 	if err := auth.TestLDAPConnection(payload); err != nil {
-		s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.ldap.test", ResourceType: "ldap", ErrorMessage: err.Error(), StatusCode: http.StatusBadRequest})
 		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.ldap.test", ResourceType: "ldap", StatusCode: http.StatusOK})
+	auditTarget(r, "ldap", "", "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -90,8 +96,8 @@ func (s *Server) handleImportLDAP(w http.ResponseWriter, r *http.Request) {
 	if skipped == nil {
 		skipped = []string{}
 	}
-	s.recordAudit(r, models.AuditLog{Action: "admin.ldap.import", ResourceType: "ldap", StatusCode: http.StatusOK,
-		DetailsJSON: marshalJSON(map[string]any{"requested": len(payload), "skipped": skipped})})
+	auditTarget(r, "ldap", "", "")
+	auditDetails(r, map[string]any{"requested": len(payload), "skipped": skipped})
 	// skipped lists usernames that already belong to a local or Azure AD account;
 	// those accounts are not converted to LDAP.
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "imported": len(payload) - len(skipped), "skipped": skipped})
@@ -112,11 +118,21 @@ func (s *Server) handleUpdateAzureAD(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &payload) {
 		return
 	}
+	auditTarget(r, "azuread", "", "")
+	before, _ := s.store.GetAzureADConfig(r.Context())
 	if err := s.store.UpdateAzureADConfig(r.Context(), payload); err != nil {
 		writeError(w, r, http.StatusBadRequest, "failed to update azure ad config")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.azuread.update", ResourceType: "azuread", StatusCode: http.StatusOK})
+	if before != nil {
+		if payload.AllowedGroups == nil {
+			payload.AllowedGroups = []string{}
+		}
+		auditChanges(r, before, payload, "clientSecret", "passwordConfigured")
+	}
+	if payload.ClientSecret != "" {
+		auditChanged(r, "clientSecret")
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -132,11 +148,10 @@ func (s *Server) handleTestAzureAD(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := auth.TestAzureADConnection(r.Context(), payload); err != nil {
-		s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.azuread.test", ResourceType: "azuread", ErrorMessage: err.Error(), StatusCode: http.StatusBadRequest})
 		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.recordAudit(r, models.AuditLog{User: s.usernameOrAnonymous(r), Action: "admin.azuread.test", ResourceType: "azuread", StatusCode: http.StatusOK})
+	auditTarget(r, "azuread", "", "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -161,6 +176,7 @@ func (s *Server) handleTestLDAPLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	steps := auth.LDAPTestLogin(*cfg, payload.Username, payload.Password)
 	ok := len(steps) > 0 && steps[len(steps)-1].OK && steps[len(steps)-1].Name == "user bind"
-	s.recordAudit(r, models.AuditLog{Action: "admin.ldap.test_login", ResourceType: "ldap", ResourceName: auditUsername(payload.Username), StatusCode: http.StatusOK, DetailsJSON: marshalJSON(map[string]bool{"ok": ok})})
+	auditTarget(r, "ldap", "", auditUsername(payload.Username))
+	auditDetails(r, map[string]bool{"ok": ok})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "steps": steps})
 }

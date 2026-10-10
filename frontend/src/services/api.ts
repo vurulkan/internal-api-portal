@@ -12,7 +12,18 @@ export type User = {
 };
 
 export type Role = { id: number; name: string; description: string; createdAt: string };
-export type Group = { id: number; name: string; description: string; createdAt: string };
+export type Group = { id: number; name: string; description: string; createdAt: string; azureGroupId?: string; ldapGroupDn?: string };
+export type ScopeDef = { scope: string; group: string; family: 'read' | 'write' | 'destructive'; description: string; perApi?: boolean; action?: string };
+export type ApiAccess = { groupId: number; groupName?: string; level: 'view' | 'invoke' };
+export type Features = { tryIt: boolean; ldap: boolean; azureAd: boolean; auditExport: boolean };
+export type Capabilities = {
+  adminSections: string[];
+  managesAllApis: boolean;
+  managedApis: number[];
+  canCreateApi: boolean;
+  canExportAudit: boolean;
+};
+export type AuditFilter = { from?: string; to?: string; user?: string; action?: string; outcome?: string; targetType?: string; targetId?: string };
 export type Permission = { id: number; roleId: number; scope: string; description: string };
 export type LdapUser = { username: string; displayName: string; email: string; dn: string };
 export type AuditLog = {
@@ -29,6 +40,10 @@ export type AuditLog = {
   blocked: boolean;
   errorMessage: string;
   detailsJson: string;
+  requestId?: string;
+  outcome?: 'success' | 'denied' | 'failed' | '';
+  actorSource?: string;
+  changes?: string;
 };
 export type ApiSummary = {
   id: number;
@@ -63,6 +78,12 @@ export type ApiDefinition = {
   lastSpecRefreshAt?: string;
   lastSpecStatus?: string;
   permissions?: { view: boolean; invoke: boolean; manage: boolean };
+  ownerGroupId?: number | null;
+  allowedRequestHeaders?: string[];
+  forwardAllXHeaders?: boolean;
+  injectHeaderNames?: string[];
+  rateLimitPerMinute?: number;
+  timeoutSeconds?: number;
 };
 export type LdapConfig = {
   enabled: boolean;
@@ -121,6 +142,8 @@ export type MeResponse = {
   session?: { expiresAt: string; idleMinutes: number };
   // e.g. "encryption_key_in_database" (administrators only)
   warnings?: string[];
+  capabilities?: Capabilities;
+  features?: Features;
 };
 export type InvokeResponse = {
   statusCode: number;
@@ -130,6 +153,8 @@ export type InvokeResponse = {
   truncated: boolean;
   requestBytes: number;
   responseBytes: number;
+  durationMs?: number;
+  rateLimit?: { limitPerMinute: number; remaining: number };
 };
 
 export type PaginatedAuditLogs = {
@@ -153,6 +178,8 @@ export type UserPayload = {
 export type GroupPayload = {
   name: string;
   description?: string;
+  azureGroupId?: string;
+  ldapGroupDn?: string;
 };
 
 export type RolePayload = {
@@ -172,7 +199,23 @@ export type ApiDefinitionPayload = {
   allowedPathPrefixes: string[];
   ownerTeam?: string;
   tags: string[];
+  ownerGroupId?: number | null;
+  allowedRequestHeaders?: string[];
+  forwardAllXHeaders?: boolean;
+  // Name + value sets / replaces a header; name with an empty value keeps the stored value.
+  injectHeaders?: { name: string; value?: string }[];
+  rateLimitPerMinute?: number;
+  timeoutSeconds?: number;
 };
+
+export function auditQuery(filter: AuditFilter, extra: Record<string, string | number> = {}) {
+  const params = new URLSearchParams();
+  Object.entries({ ...filter, ...extra }).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  });
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
 
 // Sessions live in an HttpOnly cookie the page can't read. Tokens kept in
 // localStorage by 1.3.0 and older are removed.
@@ -309,13 +352,18 @@ export const api = {
   deleteApi: (id: number) => request(`/api/admin/apis/${id}`, { method: 'DELETE' }),
   refreshApiSpec: (id: number) => request(`/api/admin/apis/${id}/refresh`, { method: 'POST' }),
   auditLogs: (query = '') => request<PaginatedAuditLogs>(`/api/admin/audit-logs${query}`),
-  exportAuditLogs: async () => {
-    const response = await fetch('/api/admin/audit-logs/export', { credentials: 'same-origin' });
+  // Same filters as the list. truncated: more rows matched than AUDIT_EXPORT_MAX_ROWS.
+  exportAuditLogs: async (filter: AuditFilter = {}) => {
+    const response = await fetch(`/api/admin/audit-logs/export${auditQuery(filter)}`, { credentials: 'same-origin' });
     if (!response.ok) {
       throw await toApiError(response);
     }
-    return response.text();
+    return { csv: await response.text(), truncated: response.headers.get('X-Audit-Export-Truncated') === 'true', rows: Number(response.headers.get('X-Audit-Export-Rows') ?? 0) };
   },
+  features: () => request<Features>('/api/features'),
+  permissionCatalog: () => request<{ items: ScopeDef[] }>('/api/permissions/catalog'),
+  apiAccess: (id: number) => request<{ items: ApiAccess[] }>(`/api/admin/apis/${id}/access`),
+  setApiAccess: (id: number, access: ApiAccess[]) => request(`/api/admin/apis/${id}/access`, { method: 'PUT', body: JSON.stringify(access) }),
   session: () => request<SessionSettings>('/api/admin/session'),
   updateSession: (payload: SessionSettings) => request('/api/admin/session', { method: 'PUT', body: JSON.stringify(payload) }),
   system: () => request<SystemSettings>('/api/admin/system'),
