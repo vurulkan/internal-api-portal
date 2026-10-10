@@ -72,10 +72,9 @@ jobs:
 
   # Pull requests and main: build the image to prove the Dockerfile works.
   # Release tags (1.6.0): build linux/amd64 + linux/arm64 with an SBOM and SLSA
-  # provenance, publish :X.Y.Z and :latest only, and record a signed build
-  # attestation in GitHub (verify: gh attestation verify oci://IMAGE:X.Y.Z -R REPO).
-  # The attestation is stored in GitHub rather than as an extra registry tag:
-  # GHCR has no OCI referrers API, so cosign signatures would add a sha256-*.sig tag.
+  # provenance, publish :X.Y.Z and :latest only, and sign the digest with cosign
+  # (keyless, GitHub OIDC). GHCR has no OCI referrers API, so the signature is
+  # stored as a sha256-<digest>.sig tag next to the image.
   #
   # Publishing also needs the repository variable PUBLISH_IMAGES=true, and the GHCR
   # package must grant this repository write access (package settings -> Manage
@@ -87,7 +86,6 @@ jobs:
       contents: read
       packages: write
       id-token: write
-      attestations: write
     env:
       IMAGE: ghcr.io/${{ github.repository }}
       PUBLISH: ${{ startsWith(github.ref, 'refs/tags/') && vars.PUBLISH_IMAGES == 'true' }}
@@ -134,10 +132,8 @@ jobs:
           provenance: ${{ env.PUBLISH == 'true' && 'mode=max' || 'false' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: attest
+      - uses: sigstore/cosign-installer@v3
         if: env.PUBLISH == 'true'
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: false
+      - name: sign
+        if: env.PUBLISH == 'true'
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
