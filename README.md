@@ -62,7 +62,7 @@ The portal backend is the security boundary.
 backend/
   cmd/server          entry point; also the healthcheck / backup / version commands
   internal/api        HTTP handlers (one file per area), middleware, authorization table test
-  internal/auth       passwords, JWT, LDAP, Azure AD
+  internal/auth       passwords, LDAP, Azure AD
   internal/audit      audit log writer and retention
   internal/config     environment variables
   internal/db         SQLite connection, versioned migrations, backups
@@ -76,9 +76,12 @@ backend/
   internal/store      queries, one file per entity
 
 frontend/
-  src/components
-  src/pages
-  src/services
+  src/components/ui     design-system components (Radix primitives + tokens)
+  src/components/shell  top bar, nav rail, section panel, navigation drawer
+  src/pages             routes (admin sections lazy-loaded one by one)
+  src/lib               API client, query client, theme, formatting, OpenAPI parsing
+  src/i18n              English and Turkish dictionaries
+  src/styles/app.css    design tokens (light / dark)
 
 deploy/               kustomize manifests (+ optional ingress / network policy examples)
 deploy/logging/       Elasticsearch templates, ILM, Fluent Bit / Filebeat examples
@@ -92,17 +95,21 @@ deploy/logging/       Elasticsearch templates, ILM, Fluent Bit / Filebeat exampl
 - Go (1.26+; images are built with the latest Go 1.27 patch)
 - chi router
 - SQLite (WAL, foreign keys, versioned migrations)
-- JWT
+- server-side sessions (HttpOnly cookie), Argon2id passwords
 - go-ldap
 - `log/slog` structured logging, Prometheus metrics
 
 ### Frontend
 
-- React
-- TypeScript
-- Vite
-- Tailwind CSS + lucide-react icons
-- `swagger-ui-react` for read-only documentation rendering
+- React 18, TypeScript, Vite, React Router (lazy routes)
+- Tailwind CSS 4 with design tokens (CSS variables) for the light and dark themes; Radix UI primitives for accessible dialogs, menus, selects and tooltips; lucide-react icons
+- TanStack Query (cache, targeted refetch after writes), react-hook-form + zod
+- react-i18next: English and Turkish (language picker, else the browser's language)
+- Self-hosted Fira Sans / Fira Code (no third-party requests; the CSP allows none)
+- `swagger-ui-react` for read-only documentation rendering, loaded only on the documentation tab
+- Vitest, Testing Library and axe-core for tests; ESLint (typescript-eslint, react-hooks, jsx-a11y) and Prettier
+
+The design rules (tokens, contrast pairs, spacing, component contracts) are in the milestones repository (`DESIGN_SYSTEM.md`). Components use only token classes (`bg-background`, `text-muted-foreground`, …); a lint rule rejects palette classes and raw hex colors. `npm run dev` serves a component gallery at `/__ui` (development builds only).
 
 ## Data Model
 
@@ -133,7 +140,7 @@ User -> Group -> Role -> Permission (scope)
 plus two per-API shortcuts that don't need roles:
 
 - **Owner group** of an API: its members get `api:<id>:manage` on that API.
-- **Access** of an API (Admin → API Definitions → Access): groups get `api:<id>:view` or `api:<id>:invoke` on that API.
+- **Access** of an API (Admin → API definitions → Access): groups get `api:<id>:view` or `api:<id>:invoke` on that API.
 
 `isAdmin` users hold every scope. The full list with descriptions is served at `GET /api/permissions/catalog`, and the role editor is built from it:
 
@@ -157,7 +164,7 @@ plus two per-API shortcuts that don't need roles:
 
 `ldap.manage` (before 1.5.0) is still accepted as `idp.manage`; the 1.5.0 migration renames it and gives `audit.export` to every role that had `audit.view` (export used to be part of it). Unknown scopes are refused.
 
-The admin console opens for anyone with at least one admin section: an API owner sees only *API Definitions* and only their APIs; a user manager sees only *Users*, and so on (`GET /api/auth/me` → `capabilities`).
+The admin console opens for anyone with at least one admin section: an API owner sees only *API definitions* and only their APIs; a user manager sees only *Users*, and so on (`GET /api/auth/me` → `capabilities`).
 
 Delegation rules:
 
@@ -179,8 +186,8 @@ A portal group can be mapped to an Azure AD group (object id) or an LDAP group (
 ### Sessions
 
 - Signing in (password or Microsoft) creates a **server-side session**. The browser holds only an opaque random token in an `HttpOnly`, `SameSite=Strict` cookie (`__Host-portal_session` over HTTPS, `portal_session` over plain HTTP); page scripts can't read it, and the database stores only its SHA-256.
-- A session ends after the **idle timeout** (Admin → Session Settings, default 60 minutes, seeded from `SESSION_MINUTES` on first start) or the **maximum session age** (default 12 hours), whichever comes first. Every request checks the session, so ending one takes effect immediately.
-- Sessions end on sign-out, when a user changes their password (other sessions), when an administrator resets the password, deactivates the user, removes admin rights or deletes the user, and when ended from **Account → Active sessions** (own) or **Admin → Sessions** (anyone's, administrators only). Ended and expired sessions are purged after a day.
+- A session ends after the **idle timeout** (Admin → Session settings, default 60 minutes, seeded from `SESSION_MINUTES` on first start) or the **maximum session age** (default 12 hours), whichever comes first. Every request checks the session, so ending one takes effect immediately.
+- Sessions end on sign-out, when a user changes their password (other sessions), when an administrator resets the password, deactivates the user, removes admin rights or deletes the user, and when ended from **Account → Signed-in devices** (own) or **Admin → Active sessions** (anyone's, administrators only). Ended and expired sessions are purged after a day.
 - If the session store can't be read, requests fail with `503` rather than being let through.
 - **CSRF**: besides `SameSite=Strict`, every state-changing API request must send the `X-CSRF-Protection` header (any value); requests whose `Origin` is another site, or that the browser marks `Sec-Fetch-Site: cross-site`, are refused. A cross-site page can't add the header without a CORS preflight, which the portal never answers.
 - Scripts: there are no bearer tokens. Sign in with a cookie jar and send the header, e.g. `curl -c jar -H 'X-CSRF-Protection: 1' -d '{"username":"…","password":"…"}' https://portal/api/auth/login`, then `curl -b jar -H 'X-CSRF-Protection: 1' …`.
@@ -234,7 +241,7 @@ The LDAP bind password and the Azure AD client secret are stored encrypted (AES-
 | `STATIC_DIR` | `/app/public` | Frontend build directory served by backend |
 | `TIMEZONE` | `UTC` | Time zone for audit formatting and time display |
 | `LOG_RETENTION_DAYS` | `30` | Days audit entries are kept in the database (the log stream is the long-term record, see Logs) |
-| `SESSION_MINUTES` | `60` | Idle timeout seeded on the first start; afterwards Admin → Session Settings is used (with the maximum session age, default 12 hours) |
+| `SESSION_MINUTES` | `60` | Idle timeout seeded on the first start; afterwards Admin → Session settings is used (with the maximum session age, default 12 hours) |
 | `DATA_ENCRYPTION_KEY` / `_FILE` | _(empty)_ | Key for secrets at rest (see Encryption at Rest) |
 | `DATA_ENCRYPTION_KEY_PREVIOUS` / `_FILE` | _(empty)_ | Previous key, during a rotation |
 | `BOOTSTRAP_ADMIN_USERNAME` | `admin` | First start only: the administrator account to create |
@@ -291,7 +298,11 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 cd ../frontend
 npm ci
 npx tsc --noEmit
+npm run lint            # includes the design-token rule
+npm run format:check
+npm test                # Vitest + Testing Library + axe (both themes), i18n parity
 npm run build
+npm run budget          # first page view ≤ 300 KB of JavaScript (gzip)
 ```
 
 `internal/api/authz_test.go` holds the authorization table: one row per route with who may call it. A route added without a row fails the build, and every row is checked for anonymous (401), unauthorized (403) and authorized access.
@@ -505,7 +516,7 @@ ES|QL, e.g. the slowest routes:
 FROM logs-portal.http-* | STATS requests = COUNT(*), p95_ms = PERCENTILE(event.duration, 95) / 1000000 BY http.route | SORT p95_ms DESC
 ```
 
-The database keeps audit entries for `LOG_RETENTION_DAYS` (default 30) as an operational copy behind Admin → Audit Logs and the CSV export; the log stream in Elasticsearch is the long-term audit record. With `LOG_INCLUDE_AUDIT=false` audit entries are written to the database only.
+The database keeps audit entries for `LOG_RETENTION_DAYS` (default 30) as an operational copy behind Admin → Audit log and the CSV export; the log stream in Elasticsearch is the long-term audit record. With `LOG_INCLUDE_AUDIT=false` audit entries are written to the database only.
 
 Every response carries an `X-Request-Id` header. An incoming `X-Request-Id` (letters, digits, `._:-`, up to 64 characters) is kept, so ids from an ingress carry through. The id is stored with each audit entry and returned in error bodies.
 
@@ -517,7 +528,7 @@ Every API error is JSON:
 {"error": "you can only grant permissions you hold yourself; missing: audit.view", "code": "forbidden", "requestId": "Kguzvp0W4Jf6ngXw"}
 ```
 
-`error` is safe to show to users; `code` is one of `bad_request`, `unauthorized`, `forbidden`, `not_found`, `method_not_allowed`, `conflict`, `payload_too_large`, `rate_limited`, `upstream_error`, `upstream_timeout`, `unavailable`, `internal_error`. Internal details (directory, identity provider, upstream errors) are logged under the request id instead of being returned, except on the administrator-only LDAP / Azure AD test endpoints and spec refresh, where the detail is needed to fix the configuration.
+`error` is safe to show to users; `code` is one of `bad_request`, `unauthorized`, `forbidden`, `not_found`, `method_not_allowed`, `conflict`, `payload_too_large`, `rate_limited`, `upstream_error`, `upstream_timeout`, `unavailable`, `internal_error`, or a more specific code a form acts on: `invalid_current_password` and `password_policy` (password change, both with status 400). Internal details (directory, identity provider, upstream errors) are logged under the request id instead of being returned, except on the administrator-only LDAP / Azure AD test endpoints and spec refresh, where the detail is needed to fix the configuration.
 
 ## API Definition Management
 
@@ -659,7 +670,7 @@ The browser never calls the upstream service directly.
 
 Admin flow:
 
-1. Open `Admin -> LDAP Settings`
+1. Open `Admin → LDAP`
 2. Configure host, port, bind DN, bind password, search bases, filter, and attribute mappings
 3. Test the connection
 4. Save
@@ -765,14 +776,14 @@ Older entries keep their names.
 
 ## Branding
 
-System Settings support:
+Admin → Branding sets:
 
-- brand title
-- logo upload
+- the portal name
+- a logo
 
 Branding behavior:
 
-- updating `Brand Title` also updates the browser tab title
+- the portal name is the browser tab title too ("Payments API · Acme API Portal")
 - logo upload updates the application chrome and login screen branding
 
 Supported logo upload types:
