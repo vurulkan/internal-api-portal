@@ -99,7 +99,7 @@ describe('session end', () => {
       ...publicRoutes,
       'GET /api/auth/me': () => (expired ? unauthorized() : meResponse()),
       'GET /api/catalog': () => (expired ? unauthorized() : catalog),
-      'GET /api/admin/users': () => unauthorized(),
+      'GET /api/admin/overview': () => unauthorized(),
     });
     const user = userEvent.setup();
     const { router } = renderApp('/');
@@ -107,7 +107,7 @@ describe('session end', () => {
     expired = true;
     await user.click(screen.getByRole('link', { name: 'Admin' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
-    expect(router.state.location.search).toBe(`?next=${encodeURIComponent('/admin/users')}`);
+    expect(router.state.location.search).toBe(`?next=${encodeURIComponent('/admin/overview')}`);
     expect(await screen.findAllByText('Your session has ended. Sign in again to continue.')).toHaveLength(1);
   });
 });
@@ -200,10 +200,18 @@ describe('admin', () => {
         },
       ),
       'GET /api/admin/apis': [{ ...catalog[0], allowedMethods: [], allowedPathPrefixes: [] }],
+      'GET /api/admin/overview': {
+        generatedAt: '2026-01-01T00:00:00Z',
+        apis: { total: 1, active: 1, specErrors: 0, specMissing: 0, stale: 0 },
+        attention: [],
+      },
     });
     const { router } = renderApp('/admin');
-    await screen.findByRole('heading', { level: 1, name: 'API definitions' });
-    expect(router.state.location.pathname).toBe('/admin/apis');
+    // /admin opens on the overview, which shows only the blocks this user may see.
+    await screen.findByRole('heading', { level: 1, name: 'Overview' });
+    expect(router.state.location.pathname).toBe('/admin/overview');
+    expect(await screen.findByText('Active APIs')).toBeInTheDocument();
+    expect(screen.queryByText('Active users')).not.toBeInTheDocument();
     // The rail marks where you are (regression: the tooltip used to break NavLink's className).
     const rail = screen.getByRole('navigation', { name: 'Main navigation' });
     expect(within(rail).getByRole('link', { name: 'Admin' })).toHaveAttribute('aria-current', 'page');
@@ -212,7 +220,14 @@ describe('admin', () => {
     expect(adminLink.classList.contains('bg-muted')).toBe(true);
     expect(within(rail).getByRole('link', { name: 'API Catalog' })).not.toHaveAttribute('aria-current');
     const sections = screen.getByRole('navigation', { name: 'Admin sections' });
-    expect(within(sections).getAllByRole('link')).toHaveLength(1);
+    expect(
+      within(sections)
+        .getAllByRole('link')
+        .map((l) => l.textContent),
+    ).toEqual(['Overview', 'API definitions']);
+    expect(screen.queryByRole('link', { name: 'New API' })).not.toBeInTheDocument();
+    await router.navigate('/admin/apis');
+    await screen.findByRole('heading', { level: 1, name: 'API definitions' });
     expect(screen.queryByRole('button', { name: 'New API' })).not.toBeInTheDocument();
     await router.navigate('/admin/users');
     expect(await screen.findByText('You don’t have access to this')).toBeInTheDocument();
@@ -231,6 +246,7 @@ describe('admin', () => {
       'GET /api/admin/users/2/groups': [7],
       'PUT /api/admin/users/2': () => json({ ok: true }),
       'PUT /api/admin/users/2/groups': () => json({ ok: true }),
+      'GET /api/admin/users/2/permissions': { userId: 2, isAdmin: false, groupIds: [7], scopes: [], sources: [] },
     });
     const user = userEvent.setup();
     renderApp('/admin/users');
@@ -239,8 +255,10 @@ describe('admin', () => {
     bobRow.focus();
     await user.keyboard('{Enter}');
     const drawer = await screen.findByRole('dialog', { name: 'Edit bob' });
+    await user.click(within(drawer).getByRole('tab', { name: 'Groups & permissions' }));
     await waitFor(() => expect(within(drawer).getByText('payments-team')).toBeInTheDocument());
     await expectNoA11yViolations();
+    await user.click(within(drawer).getByRole('tab', { name: 'Profile' }));
     const name = within(drawer).getByLabelText(/Display name/);
     await user.clear(name);
     await user.type(name, 'Robert');
@@ -249,13 +267,12 @@ describe('admin', () => {
     expect(await screen.findByText('User updated.')).toBeInTheDocument();
     const after = calls.slice(before).map((c) => `${c.method} ${c.url}`);
     expect(after).toContain('PUT /api/admin/users/2');
-    expect(after).toContain('PUT /api/admin/users/2/groups');
-    // Targeted refetch: no other admin section is reloaded.
+    // Groups unchanged: not re-sent, and no other admin section is reloaded.
+    expect(after).not.toContain('PUT /api/admin/users/2/groups');
     expect(after.filter((c) => c.startsWith('GET /api/admin/') && !c.includes('/users'))).toEqual([]);
     expect(calls.find((c) => c.method === 'PUT' && c.url === '/api/admin/users/2')?.body).toMatchObject({
       displayName: 'Robert',
     });
-    expect(calls.find((c) => c.method === 'PUT' && c.url === '/api/admin/users/2/groups')?.body).toEqual([7]);
   });
 });
 

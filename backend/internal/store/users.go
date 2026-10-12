@@ -8,7 +8,7 @@ import (
 	"api-portal/backend/internal/models"
 )
 
-const userColumns = `id, username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, external_id, created_at, updated_at`
+const userColumns = `id, username, display_name, email, password_hash, auth_source, must_change_password, is_active, is_admin, external_id, created_at, updated_at, last_login_at`
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	row := s.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE username = ?`, username)
@@ -40,6 +40,32 @@ func (s *Store) GetUnboundAzureUser(ctx context.Context, email, username string)
 func (s *Store) SetUserExternalID(ctx context.Context, userID int, externalID string) error {
 	_, err := s.conn.ExecContext(ctx, `UPDATE users SET external_id = ?, updated_at = ? WHERE id = ?`, externalID, time.Now().UTC(), userID)
 	return err
+}
+
+// RecordLogin stamps a successful sign-in.
+func (s *Store) RecordLogin(ctx context.Context, userID int, at time.Time) error {
+	_, err := s.conn.ExecContext(ctx, `UPDATE users SET last_login_at = ? WHERE id = ?`, at.UTC(), userID)
+	return err
+}
+
+// SetUsersActive activates or deactivates several accounts at once and returns the
+// ids it changed (already in that state: left out).
+func (s *Store) SetUsersActive(ctx context.Context, ids []int, active bool) ([]int, error) {
+	var changed []int
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		now := time.Now().UTC()
+		for _, id := range ids {
+			res, err := tx.ExecContext(ctx, `UPDATE users SET is_active = ?, updated_at = ? WHERE id = ? AND is_active <> ?`, boolInt(active), now, id, boolInt(active))
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				changed = append(changed, id)
+			}
+		}
+		return nil
+	})
+	return changed, err
 }
 
 func (s *Store) CountActiveAdmins(ctx context.Context) (int, error) {
@@ -131,8 +157,13 @@ func (s *Store) ImportLDAPUsers(ctx context.Context, users []models.LDAPUser) (s
 func scanUser(scanner interface{ Scan(...any) error }) (*models.User, error) {
 	var user models.User
 	var mustChange, isActive, isAdmin int
-	if err := scanner.Scan(&user.ID, &user.Username, &user.DisplayName, &user.Email, &user.PasswordHash, &user.AuthSource, &mustChange, &isActive, &isAdmin, &user.ExternalID, &user.CreatedAt, &user.UpdatedAt); err != nil {
+	var lastLogin sql.NullTime
+	if err := scanner.Scan(&user.ID, &user.Username, &user.DisplayName, &user.Email, &user.PasswordHash, &user.AuthSource, &mustChange, &isActive, &isAdmin, &user.ExternalID, &user.CreatedAt, &user.UpdatedAt, &lastLogin); err != nil {
 		return nil, err
+	}
+	if lastLogin.Valid {
+		t := lastLogin.Time.UTC()
+		user.LastLoginAt = &t
 	}
 	user.MustChangePassword = mustChange == 1
 	user.IsActive = isActive == 1

@@ -65,8 +65,10 @@ func (s *Server) handleRevokeMyOtherSessions(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]int{"sessionsRevoked": revoked})
 }
 
+// handleListSessions lists everyone's active sessions, or one user's with ?userId=.
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.activeSessions(r, 0)
+	userID, _ := strconv.Atoi(r.URL.Query().Get("userId"))
+	sessions, err := s.activeSessions(r, max(userID, 0))
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "could not load sessions")
 		return

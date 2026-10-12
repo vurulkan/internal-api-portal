@@ -84,6 +84,8 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user *mode
 	if _, err := s.store.CreateSession(r.Context(), hashToken(token), session); err != nil {
 		return err
 	}
+	// Best effort: a failed stamp must not block the sign-in.
+	_ = s.store.RecordLogin(r.Context(), user.ID, now)
 	s.clearSessionCookies(w, r)
 	secure := s.secureRequest(r)
 	name := sessionCookiePlain

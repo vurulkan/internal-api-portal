@@ -38,21 +38,28 @@ func New(store *store.Store, client *http.Client) *Service {
 	return &Service{store: store, client: &guarded}
 }
 
-func (s *Service) Refresh(ctx context.Context, api models.APIDefinition) (*models.APISpecCache, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api.InternalOpenAPIURL, nil)
+// Fetched is a spec as downloaded and sanitized, not yet stored.
+type Fetched struct {
+	Spec   json.RawMessage
+	Format string // json or yaml
+	ETag   string
+	Bytes  int
+}
+
+// Fetch downloads and sanitizes the spec at rawURL without storing anything; the
+// API form uses it to preview a spec before the API is saved.
+func (s *Service) Fetch(ctx context.Context, rawURL string) (*Fetched, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		_ = s.store.MarkSpecRefreshFailure(ctx, api.ID, err.Error())
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		err := fmt.Errorf("spec fetch failed with status %d", resp.StatusCode)
-		_ = s.store.MarkSpecRefreshFailure(ctx, api.ID, err.Error())
-		return nil, err
+		return nil, fmt.Errorf("spec fetch failed with status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
@@ -67,20 +74,28 @@ func (s *Service) Refresh(ctx context.Context, api models.APIDefinition) (*model
 		}
 	}
 	if err != nil {
+		return nil, err
+	}
+	return &Fetched{Spec: sanitized, Format: format, ETag: resp.Header.Get("ETag"), Bytes: len(body)}, nil
+}
+
+func (s *Service) Refresh(ctx context.Context, api models.APIDefinition) (*models.APISpecCache, error) {
+	fetched, err := s.Fetch(ctx, api.InternalOpenAPIURL)
+	if err != nil {
 		_ = s.store.MarkSpecRefreshFailure(ctx, api.ID, err.Error())
 		return nil, err
 	}
 	cache := models.APISpecCache{
 		APIID:        api.ID,
-		SpecJSON:     sanitized,
-		ETag:         resp.Header.Get("ETag"),
+		SpecJSON:     fetched.Spec,
+		ETag:         fetched.ETag,
 		FetchedAt:    time.Now().UTC(),
-		SourceFormat: format,
+		SourceFormat: fetched.Format,
 	}
 	if err := s.store.SaveSpecCache(ctx, api.ID, cache); err != nil {
 		return nil, err
 	}
-	s.index(ctx, api.ID, sanitized)
+	s.index(ctx, api.ID, fetched.Spec)
 	return &cache, nil
 }
 

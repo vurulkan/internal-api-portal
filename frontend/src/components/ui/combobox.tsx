@@ -199,6 +199,8 @@ export const MultiCombobox = forwardRef<HTMLInputElement, Props>(function MultiC
       </PopoverPrimitive.Anchor>
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
+          // Radix gives the popover role="dialog", which needs a name.
+          aria-label={aria['aria-label'] ?? t('combobox.options')}
           align="start"
           sideOffset={4}
           onOpenAutoFocus={(event) => event.preventDefault()}

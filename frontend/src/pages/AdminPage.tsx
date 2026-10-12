@@ -3,14 +3,13 @@ import { Navigate, NavLink, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import {
   Fingerprint,
-  KeyRound,
+  Gauge,
   Layers,
   LayoutList,
   MonitorSmartphone,
-  Palette,
   ScrollText,
+  Settings,
   ShieldCheck,
-  Timer,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -21,42 +20,119 @@ import { SectionPanel } from '@/components/shell/shell-context';
 import { ErrorState, LoadingRegion, PageHeader, Skeleton } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 
-type Section = { id: string; path: string; icon: LucideIcon; Component: ComponentType };
+type Section = {
+  id: string;
+  path: string;
+  icon: LucideIcon;
+  group: 'start' | 'people' | 'apis' | 'platform';
+  /** Open when the server lists any of these capability sections. */
+  needs: string[] | 'any';
+  Component: ComponentType;
+};
 
 const SECTIONS: Section[] = [
-  { id: 'users', path: 'users', icon: Users, Component: lazy(() => import('./admin/UsersSection')) },
-  { id: 'groups', path: 'groups', icon: Layers, Component: lazy(() => import('./admin/GroupsSection')) },
-  { id: 'roles', path: 'roles', icon: ShieldCheck, Component: lazy(() => import('./admin/RolesSection')) },
-  { id: 'apis', path: 'apis', icon: LayoutList, Component: lazy(() => import('./admin/ApisSection')) },
-  { id: 'ldap', path: 'ldap', icon: KeyRound, Component: lazy(() => import('./admin/LdapSection')) },
-  { id: 'azureAd', path: 'azure-ad', icon: Fingerprint, Component: lazy(() => import('./admin/AzureSection')) },
   {
-    id: 'sessionSettings',
-    path: 'session-settings',
-    icon: Timer,
-    Component: lazy(() => import('./admin/SessionSettingsSection')),
+    id: 'overview',
+    path: 'overview',
+    icon: Gauge,
+    group: 'start',
+    needs: 'any',
+    Component: lazy(() => import('./admin/OverviewSection')),
+  },
+  {
+    id: 'users',
+    path: 'users',
+    icon: Users,
+    group: 'people',
+    needs: ['users'],
+    Component: lazy(() => import('./admin/UsersSection')),
+  },
+  {
+    id: 'groups',
+    path: 'groups',
+    icon: Layers,
+    group: 'people',
+    needs: ['groups'],
+    Component: lazy(() => import('./admin/GroupsSection')),
+  },
+  {
+    id: 'roles',
+    path: 'roles',
+    icon: ShieldCheck,
+    group: 'people',
+    needs: ['roles'],
+    Component: lazy(() => import('./admin/RolesSection')),
   },
   {
     id: 'sessions',
     path: 'sessions',
     icon: MonitorSmartphone,
+    group: 'people',
+    needs: ['sessions'],
     Component: lazy(() => import('./admin/SessionsSection')),
   },
-  { id: 'audit', path: 'audit', icon: ScrollText, Component: lazy(() => import('./admin/AuditSection')) },
-  { id: 'system', path: 'system', icon: Palette, Component: lazy(() => import('./admin/SystemSection')) },
+  {
+    id: 'apis',
+    path: 'apis',
+    icon: LayoutList,
+    group: 'apis',
+    needs: ['apis'],
+    Component: lazy(() => import('./admin/ApisSection')),
+  },
+  {
+    id: 'identity',
+    path: 'identity',
+    icon: Fingerprint,
+    group: 'platform',
+    needs: ['ldap', 'azureAd'],
+    Component: lazy(() => import('./admin/IdentitySection')),
+  },
+  {
+    id: 'audit',
+    path: 'audit',
+    icon: ScrollText,
+    group: 'platform',
+    needs: ['audit'],
+    Component: lazy(() => import('./admin/AuditSection')),
+  },
+  {
+    id: 'settings',
+    path: 'settings',
+    icon: Settings,
+    group: 'platform',
+    needs: ['sessionSettings', 'system'],
+    Component: lazy(() => import('./admin/SettingsSection')),
+  },
 ];
+
+const GROUPS = ['start', 'people', 'apis', 'platform'] as const;
+
+// Paths of 1.x sections that now live inside another one.
+const MOVED: Record<string, string> = {
+  ldap: '/admin/identity?tab=ldap',
+  'azure-ad': '/admin/identity?tab=azure',
+  'session-settings': '/admin/settings?tab=session',
+  system: '/admin/settings?tab=branding',
+};
 
 export default function AdminPage() {
   const { t } = useTranslation();
   const { section: path } = useParams();
   const allowed = useAdminSections();
-  const visible = useMemo(() => SECTIONS.filter((s) => allowed.includes(s.id)), [allowed]);
+  const visible = useMemo(
+    () =>
+      allowed.length === 0
+        ? []
+        : SECTIONS.filter((s) => s.needs === 'any' || s.needs.some((need) => allowed.includes(need))),
+    [allowed],
+  );
   const current = visible.find((s) => s.path === path);
   useDocumentTitle(current ? t(`admin.sections.${current.id}`) : t('nav.admin'));
 
   if (visible.length === 0) {
     return <ErrorState error={new ApiError(403, '')} />;
   }
+  if (path && MOVED[path]) return <Navigate to={MOVED[path]} replace />;
   if (!path) return <Navigate to={`/admin/${visible[0].path}`} replace />;
   if (!current) {
     // Unknown section, or one this user may not open.
@@ -68,25 +144,41 @@ export default function AdminPage() {
   return (
     <>
       <SectionPanel title={t('nav.admin')}>
-        <nav aria-label={t('admin.sectionsLabel')}>
-          <ul className="space-y-0.5">
-            {visible.map((section) => (
-              <li key={section.id}>
-                <NavLink
-                  to={`/admin/${section.path}`}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex h-9 items-center gap-2.5 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
-                      isActive && 'bg-muted font-medium text-foreground',
-                    )
-                  }
-                >
-                  <section.icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
-                  {t(`admin.sections.${section.id}`)}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
+        <nav aria-label={t('admin.sectionsLabel')} className="space-y-4">
+          {GROUPS.map((group) => {
+            const items = visible.filter((s) => s.group === group);
+            if (items.length === 0) return null;
+            return (
+              <div key={group}>
+                {group !== 'start' && (
+                  <p
+                    id={`admin-nav-${group}`}
+                    className="mb-1 px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
+                  >
+                    {t(`admin.navGroups.${group}`)}
+                  </p>
+                )}
+                <ul className="space-y-0.5" aria-labelledby={group !== 'start' ? `admin-nav-${group}` : undefined}>
+                  {items.map((section) => (
+                    <li key={section.id}>
+                      <NavLink
+                        to={`/admin/${section.path}`}
+                        className={({ isActive }) =>
+                          cn(
+                            'flex h-9 items-center gap-2.5 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+                            isActive && 'bg-muted font-medium text-foreground',
+                          )
+                        }
+                      >
+                        <section.icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                        {t(`admin.sections.${section.id}`)}
+                      </NavLink>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
         </nav>
       </SectionPanel>
       <PageHeader

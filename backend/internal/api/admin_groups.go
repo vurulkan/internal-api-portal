@@ -10,15 +10,6 @@ import (
 	"api-portal/backend/internal/models"
 )
 
-func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
-	groups, err := s.store.ListGroups(r.Context())
-	if err != nil {
-		writeError(w, r, http.StatusInternalServerError, "failed to load groups")
-		return
-	}
-	writeJSON(w, http.StatusOK, groups)
-}
-
 func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	var payload models.Group
 	if !decodeJSON(w, r, &payload) {

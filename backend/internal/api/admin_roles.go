@@ -10,15 +10,6 @@ import (
 	"api-portal/backend/internal/rbac"
 )
 
-func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
-	roles, err := s.store.ListRoles(r.Context())
-	if err != nil {
-		writeError(w, r, http.StatusInternalServerError, "failed to load roles")
-		return
-	}
-	writeJSON(w, http.StatusOK, roles)
-}
-
 func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 	var payload models.Role
 	if !decodeJSON(w, r, &payload) {

@@ -73,7 +73,21 @@ describe('i18n dictionaries', () => {
 
   it('keys built at runtime exist', () => {
     const dynamic = [
-      ...ALL_ADMIN_SECTIONS.flatMap((id) => [`admin.sections.${id}`, `admin.descriptions.${id}`]),
+      ...[...ALL_ADMIN_SECTIONS, 'overview', 'identity', 'settings'].flatMap((id) => [
+        `admin.sections.${id}`,
+        `admin.descriptions.${id}`,
+      ]),
+      ...['people', 'apis', 'platform'].map((s) => `admin.navGroups.${s}`),
+      ...['active', 'inactive', 'admins', 'mustChange'].map((s) => `admin.users.statusFilter.${s}`),
+      ...['1h', '24h', '7d', '30d', 'custom'].map((s) => `admin.audit.presets.${s}`),
+      ...['spec_error', 'spec_missing', 'spec_stale', 'encryption_key_in_database', 'ldap_skip_verify'].map(
+        (s) => `admin.overview.kinds.${s}`,
+      ),
+      ...['warning', 'danger'].map((s) => `admin.overview.severity.${s}`),
+      ...['environment', 'database'].map((s) => `admin.settings.keySources.${s}`),
+      ...['viewer', 'consumer', 'apiOwner', 'auditor', 'admin'].map((s) => `admin.roles.templates.${s}`),
+      ...['source', 'access', 'review'].map((s) => `admin.apis.steps.${s}`),
+      ...['general', 'tryIt', 'headers', 'access'].map((s) => `admin.apis.tabs.${s}`),
       ...['local', 'ldap', 'azuread'].map((s) => `authSource.${s}`),
       ...['light', 'dark', 'system'].map((s) => `theme.${s}`),
       ...['en', 'tr'].map((s) => `language.${s}`),

@@ -1,9 +1,10 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Download, RotateCw, ScrollText } from 'lucide-react';
 import { api, auditQuery, type AuditFilter, type AuditLog } from '@/lib/api';
-import { formatDateTime, formatNumber } from '@/lib/format';
+import { formatDateTime, formatNumber, formatRelative } from '@/lib/format';
 import { queryKeys } from '@/lib/query';
 import { useMe } from '@/hooks/queries';
 import {
@@ -11,40 +12,88 @@ import {
   Button,
   Card,
   CardContent,
-  CodeBlock,
   DataTable,
-  Drawer,
   EmptyState,
   ErrorState,
   Field,
   Input,
-  KeyValueList,
   notifyError,
   Select,
   StatusBadge,
   toast,
   type Column,
 } from '@/components/ui';
-import { TableSkeleton } from './UsersSection';
+import { downloadText, TableSkeleton } from './common';
+import { AuditDrawer, outcomeVariant } from './audit/AuditDrawer';
 
 const PAGE_SIZES = [25, 50, 100];
 
-function outcomeVariant(outcome?: string) {
-  return outcome === 'success'
-    ? 'success'
-    : outcome === 'denied'
-      ? 'warning'
-      : outcome === 'failed'
-        ? 'destructive'
-        : 'neutral';
+const PRESETS = ['1h', '24h', '7d', '30d'] as const;
+const PRESET_MS: Record<(typeof PRESETS)[number], number> = {
+  '1h': 3_600_000,
+  '24h': 86_400_000,
+  '7d': 7 * 86_400_000,
+  '30d': 30 * 86_400_000,
+};
+// Suggestions for the action prefix: every area, and the actions people look for most.
+const ACTION_SUGGESTIONS = [
+  'auth.',
+  'auth.login',
+  'auth.login.denied',
+  'api.',
+  'api.invoke',
+  'api.invoke.denied',
+  'api.create',
+  'api.update',
+  'api.delete',
+  'api.access_set',
+  'user.',
+  'user.create',
+  'user.update',
+  'user.bulk_status',
+  'group.',
+  'group.members_add',
+  'role.',
+  'role.permissions_set',
+  'session.',
+  'idp.',
+  'settings.',
+  'audit.export',
+];
+const FILTER_KEYS = ['user', 'action', 'outcome', 'from', 'to', 'range'] as const;
+
+/** The filter in the URL; a preset range becomes "from" rounded to the minute (a stable query key). */
+function filterFromParams(params: URLSearchParams): AuditFilter {
+  const range = params.get('range') as (typeof PRESETS)[number] | null;
+  const from =
+    range && PRESET_MS[range]
+      ? new Date(Math.floor((Date.now() - PRESET_MS[range]) / 60_000) * 60_000).toISOString()
+      : (params.get('from') ?? undefined);
+  return {
+    user: params.get('user') ?? undefined,
+    action: params.get('action') ?? undefined,
+    outcome: params.get('outcome') ?? undefined,
+    from,
+    to: range ? undefined : (params.get('to') ?? undefined),
+    targetType: params.get('targetType') ?? undefined,
+    targetId: params.get('targetId') ?? undefined,
+  };
 }
 
 export default function AuditSection() {
   const { t } = useTranslation();
   const me = useMe();
   const canExport = !!me.data?.capabilities?.canExportAudit || !!me.data?.user.isAdmin;
-  const [draft, setDraft] = useState<AuditFilter>({});
-  const [filter, setFilter] = useState<AuditFilter>({});
+  // Filters live in the URL: a filtered view can be linked and survives a reload.
+  const [params, setParams] = useSearchParams();
+  const filter = filterFromParams(params);
+  const [draft, setDraft] = useState<Record<(typeof FILTER_KEYS)[number], string>>(
+    () =>
+      Object.fromEntries(FILTER_KEYS.map((k) => [k, params.get(k) ?? ''])) as Record<
+        (typeof FILTER_KEYS)[number],
+        string
+      >,
+  );
   const [limit, setLimit] = useState(PAGE_SIZES[0]);
   const [offset, setOffset] = useState(0);
   const [open, setOpen] = useState<AuditLog | null>(null);
@@ -56,17 +105,31 @@ export default function AuditSection() {
     placeholderData: keepPreviousData,
   });
 
+  function apply(next: typeof draft) {
+    const out = new URLSearchParams();
+    for (const key of ['targetType', 'targetId']) {
+      const v = params.get(key);
+      if (v) out.set(key, v);
+    }
+    for (const key of FILTER_KEYS) {
+      if (next[key] && !(next.range && (key === 'from' || key === 'to'))) out.set(key, next[key]);
+    }
+    setOffset(0);
+    setParams(out, { replace: true });
+  }
+  function reset() {
+    const empty = Object.fromEntries(FILTER_KEYS.map((k) => [k, ''])) as typeof draft;
+    setDraft(empty);
+    setOffset(0);
+    setParams({}, { replace: true });
+  }
+
   async function exportCsv() {
     setExporting(true);
     try {
       const { csv, truncated, rows } = await api.exportAuditLogs(filter);
       if (truncated) toast.warning(t('admin.audit.truncated', { count: rows }), { duration: Infinity });
-      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'audit-logs.csv';
-      link.click();
-      URL.revokeObjectURL(url);
+      downloadText('audit-logs.csv', csv);
     } catch (error) {
       notifyError(error, t('admin.audit.exportFailed'));
     } finally {
@@ -78,7 +141,11 @@ export default function AuditSection() {
     {
       id: 'time',
       header: t('admin.audit.time'),
-      cell: (e) => formatDateTime(e.timestamp),
+      cell: (e) => (
+        <time dateTime={e.timestamp} title={formatDateTime(e.timestamp)}>
+          {formatRelative(e.timestamp)}
+        </time>
+      ),
       className: 'whitespace-nowrap text-[13px] tabular-nums',
     },
     { id: 'user', header: t('admin.audit.user'), cell: (e) => <span className="font-medium">{e.user || '–'}</span> },
@@ -109,6 +176,29 @@ export default function AuditSection() {
       cell: (e) => (e.statusCode ? <StatusBadge status={e.statusCode} /> : '–'),
     },
     {
+      id: 'duration',
+      header: t('admin.audit.duration'),
+      cell: (e) => (e.durationMs ? `${formatNumber(e.durationMs)} ms` : '–'),
+      className: 'whitespace-nowrap text-right text-[13px] tabular-nums',
+    },
+    {
+      id: 'ip',
+      header: t('admin.audit.sourceIp'),
+      cell: (e) => <span className="font-mono text-xs">{e.sourceIp || '–'}</span>,
+    },
+    {
+      id: 'requestId',
+      header: t('errors.requestId'),
+      cell: (e) =>
+        e.requestId ? (
+          <span className="font-mono text-xs" title={e.requestId}>
+            {e.requestId.slice(0, 8)}
+          </span>
+        ) : (
+          '–'
+        ),
+    },
+    {
       id: 'reason',
       header: t('admin.audit.reason'),
       cell: (e) => (
@@ -129,24 +219,58 @@ export default function AuditSection() {
             className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
             onSubmit={(event) => {
               event.preventDefault();
-              setOffset(0);
-              setFilter(draft);
+              apply(draft);
             }}
           >
-            <Field label={t('admin.audit.user')} id="audit-user">
-              <Input value={draft.user ?? ''} onChange={(e) => setDraft({ ...draft, user: e.target.value })} />
+            <Field label={t('admin.audit.period')} id="audit-range">
+              <Select
+                value={draft.range || 'custom'}
+                onValueChange={(v) => {
+                  const next = { ...draft, range: v === 'custom' ? '' : v };
+                  setDraft(next);
+                  if (v !== 'custom') apply(next);
+                }}
+                options={[
+                  ...PRESETS.map((p) => ({ value: p, label: t(`admin.audit.presets.${p}`) })),
+                  { value: 'custom', label: t('admin.audit.presets.custom') },
+                ]}
+              />
             </Field>
-            <Field label={t('admin.audit.actionPrefix')} id="audit-action">
+            {!draft.range && (
+              <>
+                <Field label={t('admin.audit.from')} id="audit-from">
+                  <Input
+                    type="date"
+                    value={draft.from}
+                    onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+                  />
+                </Field>
+                <Field label={t('admin.audit.to')} id="audit-to" helper={t('admin.audit.toHelper')}>
+                  <Input type="date" value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
+                </Field>
+              </>
+            )}
+            <Field label={t('admin.audit.user')} id="audit-user">
+              <Input value={draft.user} onChange={(e) => setDraft({ ...draft, user: e.target.value })} />
+            </Field>
+            <Field label={t('admin.audit.actionPrefix')} id="audit-action" helper={t('admin.audit.actionHelper')}>
               <Input
                 className="font-mono text-[13px]"
+                list="audit-action-suggestions"
+                autoComplete="off"
                 placeholder="user. · api.invoke"
-                value={draft.action ?? ''}
+                value={draft.action}
                 onChange={(e) => setDraft({ ...draft, action: e.target.value })}
               />
             </Field>
+            <datalist id="audit-action-suggestions">
+              {ACTION_SUGGESTIONS.map((a) => (
+                <option key={a} value={a} />
+              ))}
+            </datalist>
             <Field label={t('admin.audit.outcome')} id="audit-outcome">
               <Select
-                value={draft.outcome ?? ''}
+                value={draft.outcome}
                 onValueChange={(v) => setDraft({ ...draft, outcome: v })}
                 options={[
                   { value: '', label: t('admin.audit.anyOutcome') },
@@ -156,28 +280,11 @@ export default function AuditSection() {
                 ]}
               />
             </Field>
-            <Field label={t('admin.audit.from')} id="audit-from">
-              <Input
-                type="date"
-                value={draft.from ?? ''}
-                onChange={(e) => setDraft({ ...draft, from: e.target.value })}
-              />
-            </Field>
-            <Field label={t('admin.audit.to')} id="audit-to" helper={t('admin.audit.toHelper')}>
-              <Input type="date" value={draft.to ?? ''} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
-            </Field>
             <div className="flex items-end gap-2">
               <Button type="submit" variant="primary">
                 {t('admin.audit.apply')}
               </Button>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setDraft({});
-                  setFilter({});
-                  setOffset(0);
-                }}
-              >
+              <Button variant="ghost" onClick={reset}>
                 {t('admin.audit.reset')}
               </Button>
             </div>
@@ -254,70 +361,5 @@ export default function AuditSection() {
       )}
       <AuditDrawer entry={open} onClose={() => setOpen(null)} />
     </div>
-  );
-}
-
-function AuditDrawer({ entry, onClose }: { entry: AuditLog | null; onClose: () => void }) {
-  const { t } = useTranslation();
-  let details = '';
-  if (entry?.detailsJson) {
-    try {
-      details = JSON.stringify(JSON.parse(entry.detailsJson), null, 2);
-    } catch {
-      details = entry.detailsJson;
-    }
-  }
-  return (
-    <Drawer
-      open={!!entry}
-      onOpenChange={(o) => !o && onClose()}
-      title={t('admin.audit.entry')}
-      description={entry?.action}
-      className="w-[min(100vw,36rem)]"
-    >
-      {entry && (
-        <div className="space-y-4 p-4">
-          <KeyValueList
-            items={[
-              { label: t('admin.audit.time'), value: formatDateTime(entry.timestamp) },
-              {
-                label: t('admin.audit.user'),
-                value: [entry.user, entry.actorSource && `(${entry.actorSource})`].filter(Boolean).join(' ') || '–',
-              },
-              { label: t('admin.audit.action'), value: entry.action, mono: true },
-              {
-                label: t('admin.audit.outcome'),
-                value: entry.outcome ? (
-                  <Badge variant={outcomeVariant(entry.outcome)}>{t(`admin.audit.outcomes.${entry.outcome}`)}</Badge>
-                ) : (
-                  '–'
-                ),
-              },
-              {
-                label: t('admin.audit.target'),
-                value:
-                  [entry.resourceType, entry.resourceName, entry.resourceId && `#${entry.resourceId}`]
-                    .filter(Boolean)
-                    .join(' ') || '–',
-              },
-              {
-                label: t('admin.audit.status'),
-                value: entry.statusCode ? <StatusBadge status={entry.statusCode} /> : '–',
-              },
-              { label: t('admin.audit.reason'), value: entry.errorMessage || '–' },
-              { label: t('admin.audit.changes'), value: entry.changes || '–', mono: !!entry.changes },
-              {
-                label: t('admin.audit.duration'),
-                value: entry.durationMs ? `${formatNumber(entry.durationMs)} ms` : '–',
-              },
-              { label: t('admin.audit.sourceIp'), value: entry.sourceIp || '–', mono: true },
-              { label: t('admin.audit.userAgent'), value: entry.userAgent || '–' },
-              { label: t('errors.requestId'), value: entry.requestId || '–', mono: true },
-            ]}
-          />
-          {details && <CodeBlock code={details} label={t('admin.audit.details')} />}
-        </div>
-      )}
-    </Drawer>
   );
 }

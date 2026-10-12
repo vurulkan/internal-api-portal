@@ -6,6 +6,7 @@ import { api, type AzureADConfig } from '@/lib/api';
 import { queryKeys } from '@/lib/query';
 import {
   Alert,
+  CopyButton,
   Button,
   Card,
   CardContent,
@@ -115,12 +116,15 @@ function AzureForm({ initial }: { initial: AzureADConfig }) {
             id="azure-redirect"
             helper={t('admin.azure.redirectUrlHelper', { url: callback })}
           >
-            <Input
-              type="url"
-              className="font-mono text-[13px]"
-              value={form.redirectUrl}
-              onChange={(e) => set('redirectUrl', e.target.value)}
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                type="url"
+                className="font-mono text-[13px]"
+                value={form.redirectUrl}
+                onChange={(e) => set('redirectUrl', e.target.value)}
+              />
+              <CopyButton value={form.redirectUrl || callback} label={t('admin.azure.copyRedirect')} />
+            </div>
           </Field>
           <Field
             label={t('admin.azure.allowedGroups')}

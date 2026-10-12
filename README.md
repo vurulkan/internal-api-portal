@@ -4,6 +4,15 @@ Self-hosted internal API documentation and controlled invocation portal for Open
 
 The browser never talks directly to internal service DNS names or upstream OpenAPI endpoints. All spec retrieval and API invocation flows are mediated by the Go backend.
 
+| | Light | Dark |
+|---|---|---|
+| Catalog | ![Catalog, light theme](docs/screenshots/catalog-light.png) | ![Catalog, dark theme](docs/screenshots/catalog-dark.png) |
+| API reference and try-it | ![API reference, light theme](docs/screenshots/api-reference-light.png) | ![Try-it console, dark theme](docs/screenshots/api-try-it-dark.png) |
+| Admin overview | ![Admin overview, light theme](docs/screenshots/admin-overview-light.png) | ![Admin overview, dark theme](docs/screenshots/admin-overview-dark.png) |
+| Users, API wizard | ![Users, light theme](docs/screenshots/admin-users-light.png) | ![New API wizard with a spec preview](docs/screenshots/admin-api-wizard-light.png) |
+
+The interface is in English and Turkish, follows the system light / dark setting (or a chosen one), and works from 375 px phones to wide screens.
+
 ## What This Product Is
 
 This application is an internal API portal for platform teams, backend teams, and internal consumers who need to:
@@ -29,7 +38,9 @@ This is not a Kubernetes resource dashboard. It does not manage pods, deployment
 - Per-API authorization with global and resource-scoped permissions
 - Backend-only OpenAPI fetch and cache
 - Backend-only try-it-out proxy: method / path allowlists, header filtering, no redirect following, and a network guard that refuses metadata, link-local and loopback addresses
-- Admin UI for users, groups, roles, LDAP, API definitions, audit logs, and branding
+- Catalog with search across APIs and their operations, favorites and recently viewed APIs, filters in the URL
+- API workspace: reference built from the spec, a schema-driven try-it console, code snippets, spec history
+- Admin console: an overview of what needs attention, users (bulk actions, effective permissions), groups and members, roles with templates, API registration wizard with spec preview, identity providers, sessions, audit log, settings
 - Audit retention with configurable purge window
 - `/healthz` for readiness and liveness probes
 
@@ -186,7 +197,7 @@ A portal group can be mapped to an Azure AD group (object id) or an LDAP group (
 ### Sessions
 
 - Signing in (password or Microsoft) creates a **server-side session**. The browser holds only an opaque random token in an `HttpOnly`, `SameSite=Strict` cookie (`__Host-portal_session` over HTTPS, `portal_session` over plain HTTP); page scripts can't read it, and the database stores only its SHA-256.
-- A session ends after the **idle timeout** (Admin → Session settings, default 60 minutes, seeded from `SESSION_MINUTES` on first start) or the **maximum session age** (default 12 hours), whichever comes first. Every request checks the session, so ending one takes effect immediately.
+- A session ends after the **idle timeout** (Admin → Settings → Session, default 60 minutes, seeded from `SESSION_MINUTES` on first start) or the **maximum session age** (default 12 hours), whichever comes first. Every request checks the session, so ending one takes effect immediately.
 - Sessions end on sign-out, when a user changes their password (other sessions), when an administrator resets the password, deactivates the user, removes admin rights or deletes the user, and when ended from **Account → Signed-in devices** (own) or **Admin → Active sessions** (anyone's, administrators only). Ended and expired sessions are purged after a day.
 - If the session store can't be read, requests fail with `503` rather than being let through.
 - **CSRF**: besides `SameSite=Strict`, every state-changing API request must send the `X-CSRF-Protection` header (any value); requests whose `Origin` is another site, or that the browser marks `Sec-Fetch-Site: cross-site`, are refused. A cross-site page can't add the header without a CORS preflight, which the portal never answers.
@@ -204,13 +215,13 @@ A portal group can be mapped to an Azure AD group (object id) or an LDAP group (
 
 - LDAP users are imported into the local catalog; sign-in is an LDAP bind.
 - Username, display name and e-mail come from the directory and can't be edited in the portal; the password is changed in the directory.
-- **Admin → LDAP → Test a sign-in** runs the login steps (connect, service bind, user search with the effective filter, user bind) for a username / password and shows where it fails, without changing anything.
+- **Admin → Identity providers → LDAP → Test a sign-in** runs the login steps (connect, service bind, user search with the effective filter, user bind) for a username / password and shows where it fails, without changing anything.
 
 ### Azure AD Users
 
 - Azure AD is an additional sign-in method (OIDC authorization code flow with state, nonce and **PKCE**; the ID token signature is verified).
 - On first sign-in the portal creates the user and binds it to the Azure identity (tenant id + object id).
-- **Allowed groups** (optional, Admin → Azure AD): when set, only members of these Azure AD group object ids may sign in. Add the *groups* claim in the app registration's token configuration; users in too many groups for the token (overage) are refused with a message.
+- **Allowed groups** (optional, Admin → Identity providers → Azure AD): when set, only members of these Azure AD group object ids may sign in. Add the *groups* claim in the app registration's token configuration; users in too many groups for the token (overage) are refused with a message.
 - Authorization stays in the portal (groups and roles). Signing out ends the portal session, not the Microsoft session.
 
 ## Default Bootstrap
@@ -241,7 +252,7 @@ The LDAP bind password and the Azure AD client secret are stored encrypted (AES-
 | `STATIC_DIR` | `/app/public` | Frontend build directory served by backend |
 | `TIMEZONE` | `UTC` | Time zone for audit formatting and time display |
 | `LOG_RETENTION_DAYS` | `30` | Days audit entries are kept in the database (the log stream is the long-term record, see Logs) |
-| `SESSION_MINUTES` | `60` | Idle timeout seeded on the first start; afterwards Admin → Session settings is used (with the maximum session age, default 12 hours) |
+| `SESSION_MINUTES` | `60` | Idle timeout seeded on the first start; afterwards Admin → Settings → Session is used (with the maximum session age, default 12 hours) |
 | `DATA_ENCRYPTION_KEY` / `_FILE` | _(empty)_ | Key for secrets at rest (see Encryption at Rest) |
 | `DATA_ENCRYPTION_KEY_PREVIOUS` / `_FILE` | _(empty)_ | Previous key, during a rotation |
 | `BOOTSTRAP_ADMIN_USERNAME` | `admin` | First start only: the administrator account to create |
@@ -328,7 +339,7 @@ Published to GHCR by CI for every release tag, for `linux/amd64` and `linux/arm6
 
 | Tag | Points to |
 |---|---|
-| `X.Y.Z` (e.g. `1.6.0`) | that release |
+| `X.Y.Z` (e.g. `2.0.0`) | that release |
 | `latest` | the newest release |
 
 Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requests are built, not published. CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access*).
@@ -336,7 +347,7 @@ Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requ
 Each image carries an SBOM and SLSA provenance (inside the image index) and is signed with cosign (keyless, GitHub OIDC); the signature sits next to the image as a `sha256-<digest>.sig` tag. Verify before deploying:
 
 ```bash
-cosign verify ghcr.io/vurulkan/internal-api-portal:1.6.0 \
+cosign verify ghcr.io/vurulkan/internal-api-portal:2.0.0 \
   --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -413,6 +424,24 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
 
+### Upgrading to 2.0.0
+
+2.0.0 is the redesign (M6–M9): a new interface in two themes and two languages, catalog search, the API workspace and the admin console. The API, sessions and permissions stay compatible. Back up first (`server backup`, see Backups): migrations 9–11 run at the first start. 1.x still starts on the migrated database but doesn't keep the new tables (operation index, spec history) up to date, so go back by restoring the backup.
+
+- **Migrations:**
+  - 9: operation index (SQLite FTS5), favorites, recently viewed.
+  - 10: spec history and operation fingerprints.
+  - 11: `users.last_login_at`.
+  Specs cached by 1.x are indexed at startup. The last sign-in is recorded from 2.0.0 on; earlier users show *Never* until they sign in.
+- **Specs are now fetched in the background:** right after an API is saved, then every `SPEC_REFRESH_INTERVAL` (default `6h`). Expect regular requests from the portal to the spec URLs; `SPEC_REFRESH_INTERVAL=0` restores the 1.x behaviour (fetched when opened or refreshed by hand).
+- **Spec error texts** (they can name internal hosts) are shown only to the API's managers; viewers see *Spec error*.
+- **Addresses:**
+  - API pages are addressed by slug (`/apis/payments/reference`); links from before redirect.
+  - Admin sections moved (`/admin/ldap` → `/admin/identity?tab=ldap`, `/admin/system` → `/admin/settings?tab=branding`, …), with redirects, and `/admin` opens the Overview.
+- **New audit actions:** `user.bulk_status`, `group.members_add`, `group.member_remove`, `api.spec_preview`, `api.favorite_add`, `api.favorite_remove`.
+- **New endpoints:** `GET /api/search`, `GET /api/apis/{id}/activity`, `GET /api/admin/overview`, `GET /api/admin/system/info`, `GET /api/admin/users/{id}/permissions`, `POST /api/admin/users/bulk-status`, `POST`/`DELETE /api/admin/groups/{id}/members…`, `POST /api/admin/apis/spec-preview`, `GET /api/admin/apis/{id}/impact`; `GET /api/admin/sessions` accepts `?userId=`. `/api/auth/me` capabilities gain `canManageUsers`.
+- **Preferences:** theme, language, table density and try-it history (opt-in values) are kept in the browser per user; nothing secret is stored there.
+
 ### Upgrading to 1.6.0
 
 - `LOG_FORMAT=json` is now ECS: the field names change (`time` → `@timestamp` in UTC, `level` → `log.level`, `msg` → `message`, `user` → `user.name`, `ip` → `source.ip`, `request_id` → `http.request.id`, `status` → `http.response.status_code`, `action` → `portal.audit.action`, …; other keys move under `portal.*`). Update log alerts or parsers that read the old names. `LOG_FORMAT=text` is unchanged apart from the key names.
@@ -466,7 +495,7 @@ A try-it call produces two lines with the same `http.request.id`:
 
 ```json
 {"@timestamp":"2026-10-12T06:58:25.354331203Z","log":{"level":"info"},"message":"root api.invoke success api Payments API",
- "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"1.6.0","environment":"prod","type":"api-portal"},
+ "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.0.0","environment":"prod","type":"api-portal"},
  "event":{"dataset":"portal.audit","kind":"event","category":["web"],"type":["access"],"action":"api.invoke","outcome":"success","duration":150000000},
  "user":{"name":"root","domain":"local"},"source":{"ip":"10.244.3.17"},"user_agent":{"original":"Mozilla/5.0 …"},
  "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"response":{"status_code":201}},"url":{"path":"/v1/charges"},
@@ -693,11 +722,52 @@ All requests go through `/api/apis/:id/invoke`; the browser never calls the upst
 
 The page also has *Add to favorites*, a *Spec* menu (download JSON / YAML, Classic view, refresh for managers) and *Edit definition* for managers, which opens Admin → API definitions.
 
+## Admin Console
+
+`/admin` opens on the **Overview**. Each section has its own address, and only the sections the user may open are listed (the server decides; a section opened by URL without permission shows a 403 page):
+
+| Section | Address | Needs |
+|---|---|---|
+| Overview | `/admin/overview` | any admin section |
+| Users | `/admin/users` | `user.view` (changes: `user.manage`) |
+| Groups | `/admin/groups` | `group.manage` (members: `user.manage`) |
+| Roles | `/admin/roles` | `role.manage` |
+| Active sessions | `/admin/sessions` | `session.manage` |
+| API definitions | `/admin/apis` | `api.manage`, `api.create`, or managing one API |
+| Identity providers | `/admin/identity?tab=ldap` / `?tab=azure` | `idp.manage` |
+| Audit log | `/admin/audit` | `audit.view` |
+| Settings | `/admin/settings?tab=session` / `branding` / `system` | `settings.manage` |
+
+The 1.x addresses (`/admin/ldap`, `/admin/azure-ad`, `/admin/session-settings`, `/admin/system`) redirect to their new place.
+
+- **Overview:** active APIs and failing specs, active users and sign-ins in the last 24 hours, active sessions, try-it calls and denied requests in the last 24 hours. *Needs attention* lists failing, missing or stale specs, an encryption key kept in the database and LDAP with TLS verification off, each with a link to where it is fixed. Every block appears only for the matching permission, and spec error texts only for the API's managers. `GET /api/admin/overview`.
+- **Users:**
+  - The table shows source, groups, **last sign-in** and status. Filters (search, source, status, group) are in the URL.
+  - The active switch in the row applies at once and flips back if the server refuses.
+  - Bulk actions on the selection: activate, deactivate, add to a group, and export as CSV. Without a selection, the filtered list can be exported.
+  - The rules the server enforces are shown up front: nobody deactivates or demotes themselves, and the last active administrator stays.
+  - The editor has three tabs: Profile, Groups & permissions, and Sessions. **Groups & permissions** lists every scope the user has and where it comes from (`payments-team → api-consumer`). While the group selection is changed, it previews the result and marks what the change adds and removes (`GET /api/admin/users/{id}/permissions?groupIds=…`).
+- **Groups:** member and role counts; members are added and removed in the editor, each change audited and checked like a grant (`POST /api/admin/groups/{id}/members`, `DELETE …/members/{userId}`).
+- **Roles:**
+  - The table shows the scope count and the groups that use the role.
+  - A new role can start from a template (Viewer, API consumer, API owner, Auditor, Delegated administrator) or copy another role's scopes.
+  - Changing the scopes of a role in use asks first, with the added and removed scopes and how many groups it affects.
+  - The permission matrix is keyboard-usable, and every checkbox is named ("Payments API: Invoke").
+- **API definitions:**
+  - A new API is registered in three steps: source, then access & try-it, then review.
+  - *Preview spec* fetches the URL through the same guarded client as a refresh and shows the title, version, operation count and a few operations. Nothing is stored (`POST /api/admin/apis/spec-preview`, audited as `api.spec_preview`).
+  - Editing is tabbed: General, Try-it policy, Headers, Access.
+  - Each row has its own *Refresh spec*.
+  - The delete dialog lists what goes with the API: access grants, role scopes, favorites, indexed operations and history (`GET /api/admin/apis/{id}/impact`).
+- **Audit log:** period presets (last hour, 24 hours, 7 days, 30 days, or dates), action prefix suggestions, outcome; filters are in the URL, so a filtered view can be linked. Columns include duration, source IP and request id.
+- **Settings → System:** version, Go runtime, start time, database size, schema version and the encryption key's source and id (never the key), plus the spec refresh, retention, backup and metrics settings (`GET /api/admin/system/info`).
+- Editors don't lose work: closing one with unsaved changes (Escape, the close button, Cancel) asks first. Saves refetch only what they changed.
+
 ## LDAP Setup
 
 Admin flow:
 
-1. Open `Admin → LDAP`
+1. Open `Admin → Identity providers → LDAP`
 2. Configure host, port, bind DN, bind password, search bases, filter, and attribute mappings
 3. Test the connection
 4. Save
@@ -752,7 +822,7 @@ LDAP search results depend heavily on:
 
 Admin flow:
 
-1. Open `Admin -> Azure AD`
+1. Open `Admin → Identity providers → Azure AD` (copy the redirect URL with the button next to it)
 2. Enable Azure AD
 3. Enter the tenant ID, client ID, redirect URL, and client secret
 4. Test the connection
@@ -795,7 +865,7 @@ Reads that are audited too: API detail and spec views, sign-ins through Azure AD
 | `api.invoke`, `api.invoke.blocked` | `api.invoke.success` / `.denied` / `.failed` |
 | `authz.denied` | `<action>.denied` |
 
-Older entries keep their names.
+Older entries keep their names. 2.0.0 adds `user.bulk_status`, `group.members_add`, `group.member_remove` and `api.spec_preview`.
 
 ### Filtering and export
 
@@ -803,7 +873,7 @@ Older entries keep their names.
 
 ## Branding
 
-Admin → Branding sets:
+Admin → Settings → Branding sets:
 
 - the portal name
 - a logo

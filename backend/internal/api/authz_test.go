@@ -48,6 +48,7 @@ var authzTable = []routeRule{
 	{"DELETE", "/api/auth/sessions/{id}", signedIn, ""},
 	{"POST", "/api/auth/sessions/revoke-others", signedIn, ""},
 	{"GET", "/api/permissions/catalog", signedIn, ""},
+	{"GET", "/api/admin/overview", signedIn, "any admin section"},
 	{"GET", "/api/catalog", signedIn, ""},
 	{"GET", "/api/search", signedIn, ""},
 	{"PUT", "/api/me/favorites/{id}", signedIn, ""},
@@ -59,9 +60,11 @@ var authzTable = []routeRule{
 
 	{"GET", "/api/admin/users", signedIn, "user.view"},
 	{"POST", "/api/admin/users", signedIn, "user.manage"},
+	{"POST", "/api/admin/users/bulk-status", signedIn, "user.manage"},
 	{"PUT", "/api/admin/users/{id}", signedIn, "user.manage"},
 	{"DELETE", "/api/admin/users/{id}", signedIn, "user.manage"},
 	{"GET", "/api/admin/users/{id}/groups", signedIn, "user.view"},
+	{"GET", "/api/admin/users/{id}/permissions", signedIn, "user.view"},
 	{"PUT", "/api/admin/users/{id}/groups", signedIn, "user.manage"},
 	{"POST", "/api/admin/users/{id}/reset-password", signedIn, "user.manage"},
 	{"POST", "/api/admin/users/{id}/revoke-sessions", signedIn, "user.manage"},
@@ -74,6 +77,8 @@ var authzTable = []routeRule{
 	{"DELETE", "/api/admin/groups/{id}", signedIn, "group.manage"},
 	{"GET", "/api/admin/groups/{id}/roles", signedIn, "group.manage"},
 	{"PUT", "/api/admin/groups/{id}/roles", signedIn, "group.manage"},
+	{"POST", "/api/admin/groups/{id}/members", signedIn, "user.manage"},
+	{"DELETE", "/api/admin/groups/{id}/members/{userId}", signedIn, "user.manage"},
 
 	{"GET", "/api/admin/roles", signedIn, "any admin section"},
 	{"POST", "/api/admin/roles", signedIn, "role.manage"},
@@ -93,6 +98,8 @@ var authzTable = []routeRule{
 
 	{"GET", "/api/admin/apis", signedIn, "api.manage"},
 	{"POST", "/api/admin/apis", signedIn, "api.manage"},
+	{"POST", "/api/admin/apis/spec-preview", signedIn, "api.manage"},
+	{"GET", "/api/admin/apis/{id}/impact", signedIn, "api.manage"},
 	{"PUT", "/api/admin/apis/{id}", signedIn, "api.manage"},
 	{"DELETE", "/api/admin/apis/{id}", signedIn, "api.manage"},
 	{"POST", "/api/admin/apis/{id}/refresh", signedIn, "api.manage"},
@@ -108,13 +115,14 @@ var authzTable = []routeRule{
 	{"GET", "/api/admin/session", signedIn, "settings.manage"},
 	{"PUT", "/api/admin/session", signedIn, "settings.manage"},
 	{"GET", "/api/admin/system", signedIn, "settings.manage"},
+	{"GET", "/api/admin/system/info", signedIn, "settings.manage"},
 	{"PUT", "/api/admin/system", signedIn, "settings.manage"},
 	{"POST", "/api/admin/system/logo", signedIn, "settings.manage"},
 	{"DELETE", "/api/admin/system/logo", signedIn, "settings.manage"},
 }
 
 func concretePath(pattern string) string {
-	return strings.ReplaceAll(pattern, "{id}", "999")
+	return strings.NewReplacer("{id}", "999", "{userId}", "998").Replace(pattern)
 }
 
 func TestEveryRouteIsInTheAuthzTable(t *testing.T) {

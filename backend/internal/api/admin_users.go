@@ -14,15 +14,6 @@ import (
 	"api-portal/backend/internal/password"
 )
 
-func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := s.store.ListUsers(r.Context())
-	if err != nil {
-		writeError(w, r, http.StatusInternalServerError, "failed to load users")
-		return
-	}
-	writeJSON(w, http.StatusOK, users)
-}
-
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	actor, _ := s.identityForRequest(r)
 	var payload struct {
