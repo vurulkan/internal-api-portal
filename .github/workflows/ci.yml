@@ -127,6 +127,8 @@ jobs:
           path: |
             frontend/e2e/.screens/
             frontend/e2e/.report/
+          # The output folders start with a dot (kept out of git and Prettier).
+          include-hidden-files: true
           retention-days: 14
 
   # Pull requests and main: build the image to prove the Dockerfile works.
