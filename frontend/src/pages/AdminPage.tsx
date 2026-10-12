@@ -13,6 +13,7 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
+import { ADMIN_SECTIONS, visibleAdminSections, type AdminSectionDef } from '@/lib/admin-sections';
 import { cn } from '@/lib/cn';
 import { useAdminSections } from '@/hooks/queries';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
@@ -20,90 +21,21 @@ import { SectionPanel } from '@/components/shell/shell-context';
 import { ErrorState, LoadingRegion, PageHeader, Skeleton } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 
-type Section = {
-  id: string;
-  path: string;
-  icon: LucideIcon;
-  group: 'start' | 'people' | 'apis' | 'platform';
-  /** Open when the server lists any of these capability sections. */
-  needs: string[] | 'any';
-  Component: ComponentType;
+type Section = AdminSectionDef & { icon: LucideIcon; Component: ComponentType };
+
+const COMPONENTS: Record<string, { icon: LucideIcon; Component: ComponentType }> = {
+  overview: { icon: Gauge, Component: lazy(() => import('./admin/OverviewSection')) },
+  users: { icon: Users, Component: lazy(() => import('./admin/UsersSection')) },
+  groups: { icon: Layers, Component: lazy(() => import('./admin/GroupsSection')) },
+  roles: { icon: ShieldCheck, Component: lazy(() => import('./admin/RolesSection')) },
+  sessions: { icon: MonitorSmartphone, Component: lazy(() => import('./admin/SessionsSection')) },
+  apis: { icon: LayoutList, Component: lazy(() => import('./admin/ApisSection')) },
+  identity: { icon: Fingerprint, Component: lazy(() => import('./admin/IdentitySection')) },
+  audit: { icon: ScrollText, Component: lazy(() => import('./admin/AuditSection')) },
+  settings: { icon: Settings, Component: lazy(() => import('./admin/SettingsSection')) },
 };
 
-const SECTIONS: Section[] = [
-  {
-    id: 'overview',
-    path: 'overview',
-    icon: Gauge,
-    group: 'start',
-    needs: 'any',
-    Component: lazy(() => import('./admin/OverviewSection')),
-  },
-  {
-    id: 'users',
-    path: 'users',
-    icon: Users,
-    group: 'people',
-    needs: ['users'],
-    Component: lazy(() => import('./admin/UsersSection')),
-  },
-  {
-    id: 'groups',
-    path: 'groups',
-    icon: Layers,
-    group: 'people',
-    needs: ['groups'],
-    Component: lazy(() => import('./admin/GroupsSection')),
-  },
-  {
-    id: 'roles',
-    path: 'roles',
-    icon: ShieldCheck,
-    group: 'people',
-    needs: ['roles'],
-    Component: lazy(() => import('./admin/RolesSection')),
-  },
-  {
-    id: 'sessions',
-    path: 'sessions',
-    icon: MonitorSmartphone,
-    group: 'people',
-    needs: ['sessions'],
-    Component: lazy(() => import('./admin/SessionsSection')),
-  },
-  {
-    id: 'apis',
-    path: 'apis',
-    icon: LayoutList,
-    group: 'apis',
-    needs: ['apis'],
-    Component: lazy(() => import('./admin/ApisSection')),
-  },
-  {
-    id: 'identity',
-    path: 'identity',
-    icon: Fingerprint,
-    group: 'platform',
-    needs: ['ldap', 'azureAd'],
-    Component: lazy(() => import('./admin/IdentitySection')),
-  },
-  {
-    id: 'audit',
-    path: 'audit',
-    icon: ScrollText,
-    group: 'platform',
-    needs: ['audit'],
-    Component: lazy(() => import('./admin/AuditSection')),
-  },
-  {
-    id: 'settings',
-    path: 'settings',
-    icon: Settings,
-    group: 'platform',
-    needs: ['sessionSettings', 'system'],
-    Component: lazy(() => import('./admin/SettingsSection')),
-  },
-];
+const SECTIONS: Section[] = ADMIN_SECTIONS.map((s) => ({ ...s, ...COMPONENTS[s.id] }));
 
 const GROUPS = ['start', 'people', 'apis', 'platform'] as const;
 
@@ -119,13 +51,10 @@ export default function AdminPage() {
   const { t } = useTranslation();
   const { section: path } = useParams();
   const allowed = useAdminSections();
-  const visible = useMemo(
-    () =>
-      allowed.length === 0
-        ? []
-        : SECTIONS.filter((s) => s.needs === 'any' || s.needs.some((need) => allowed.includes(need))),
-    [allowed],
-  );
+  const visible = useMemo(() => {
+    const ids = visibleAdminSections(allowed).map((s) => s.id);
+    return SECTIONS.filter((s) => ids.includes(s.id));
+  }, [allowed]);
   const current = visible.find((s) => s.path === path);
   useDocumentTitle(current ? t(`admin.sections.${current.id}`) : t('nav.admin'));
 

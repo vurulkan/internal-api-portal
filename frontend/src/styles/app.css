@@ -231,6 +231,35 @@
       scroll-behavior: auto !important;
     }
   }
+  /*
+   * Windows high contrast: backgrounds are replaced by system colours, so states
+   * shown only by a background (current nav item, selected option or tab, switch
+   * on / off, selected row) get an outline or a system colour instead.
+   */
+  @media (forced-colors: active) {
+    [aria-current='page'],
+    [role='option'][aria-selected='true'],
+    [role='tab'][aria-selected='true'] {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
+    [role='switch'] {
+      border: 1px solid ButtonText;
+    }
+    [role='switch'][aria-checked='true'] > span,
+    [role='switch'][data-state='checked'] > span {
+      forced-color-adjust: none;
+      background: Highlight;
+    }
+    [role='switch'][aria-checked='false'] > span,
+    [role='switch'][data-state='unchecked'] > span {
+      forced-color-adjust: none;
+      background: ButtonText;
+    }
+    :focus-visible {
+      outline-color: Highlight;
+    }
+  }
 }
 
 @keyframes nav-progress {

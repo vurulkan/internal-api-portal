@@ -1,58 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  Link,
-  NavLink,
-  Outlet,
-  useLocation,
-  useMatch,
-  useNavigate,
-  useNavigation,
-  useSearchParams,
-} from 'react-router';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate, useNavigation } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { useQueryClient } from '@tanstack/react-query';
-import {
-  CircleHelp,
-  Languages,
-  LayoutGrid,
-  LogOut,
-  Menu,
-  MonitorSmartphone,
-  Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Search,
-  ShieldCheck,
-  Sun,
-  UserRound,
-} from 'lucide-react';
-import { api } from '@/lib/api';
+import { CircleHelp, Command, LayoutGrid, Menu, PanelLeftClose, PanelLeftOpen, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { markSessionEstablished } from '@/lib/query';
+import { clickShortcutTarget, modKey, moveInList, moveTab, useShortcuts } from '@/lib/shortcuts';
 import { readPref, writePref } from '@/lib/storage';
-import { useTheme, type ThemePreference } from '@/lib/theme';
-import { setLocale, type Locale } from '@/i18n';
 import { useAdminSections, useBranding, useMe } from '@/hooks/queries';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
-import {
-  Alert,
-  Button,
-  Dialog,
-  Drawer,
-  DrawerBody,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  IconButton,
-  Kbd,
-  Tooltip,
-} from '@/components/ui';
+import { Alert, Drawer, DrawerBody, IconButton, Tooltip } from '@/components/ui';
+import { CommandPalette } from './CommandPalette';
+import { ShortcutHelp } from './ShortcutHelp';
+import { GlobalSearch } from './GlobalSearch';
 import { ShellContext } from './shell-context';
+import { LanguageMenu, ThemeMenu, UserMenu, useSignOut } from './TopBarMenus';
 
 const PANEL_KEY = 'portal.panelCollapsed';
 
@@ -70,7 +30,28 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
   const [panels, setPanels] = useState<{ id: string; title: string }[]>([]);
   const [panelTarget, setPanelTarget] = useState<HTMLElement | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
+  const navigate = useNavigate();
+  const signOut = useSignOut();
+
+  useShortcuts(
+    [
+      { keys: 'k', mod: true, inDialog: true, run: () => setPaletteOpen((open) => !open) },
+      { keys: '?', run: () => setHelpOpen(true) },
+      { keys: '/', run: focusPageSearch },
+      { keys: 'g c', run: () => navigate('/') },
+      { keys: 'g a', run: () => sections.length > 0 && navigate('/admin') },
+      { keys: '[', inDialog: true, run: () => moveTab(-1) },
+      { keys: ']', inDialog: true, run: () => moveTab(1) },
+      { keys: 'j', run: () => moveInList(1) },
+      { keys: 'k', run: () => moveInList(-1) },
+      { keys: 'n', run: () => clickShortcutTarget('next-page') },
+      { keys: 'p', run: () => clickShortcutTarget('prev-page') },
+      { keys: 'f', run: () => clickShortcutTarget('favorite') },
+    ],
+    !restricted,
+  );
 
   const registerPanel = useCallback((id: string, title: string) => {
     setPanels((prev) => [...prev.filter((p) => p.id !== id), { id, title }]);
@@ -124,6 +105,7 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
       <TopBar
         restricted={restricted}
         onOpenMenu={() => setMobileOpen(true)}
+        onOpenPalette={() => setPaletteOpen(true)}
         panelToggle={
           isDesktop && panel ? (
             <IconButton
@@ -150,6 +132,8 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
             <div className="mt-auto">
               <IconButton
                 label={t('shell.help')}
+                shortcut="?"
+                aria-keyshortcuts="?"
                 icon={<CircleHelp aria-hidden="true" />}
                 tooltipSide="right"
                 onClick={() => setHelpOpen(true)}
@@ -226,7 +210,15 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
           </DrawerBody>
         </Drawer>
       )}
-      <HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
+      <ShortcutHelp open={helpOpen} onOpenChange={setHelpOpen} />
+      {!restricted && (
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          onShowHelp={() => setHelpOpen(true)}
+          onSignOut={() => void signOut()}
+        />
+      )}
     </ShellContext.Provider>
   );
 }
@@ -269,13 +261,25 @@ function NavigationProgress() {
   );
 }
 
+/** "/": the page's own search or filter box (marked data-page-search), else the top bar's. */
+function focusPageSearch() {
+  const target =
+    document.querySelector<HTMLInputElement>('#main [data-page-search]') ??
+    document.querySelector<HTMLInputElement>('aside [data-page-search]') ??
+    document.getElementById('global-search');
+  target?.focus();
+  (target as HTMLInputElement | null)?.select?.();
+}
+
 function TopBar({
   restricted,
   onOpenMenu,
+  onOpenPalette,
   panelToggle,
 }: {
   restricted: boolean;
   onOpenMenu: () => void;
+  onOpenPalette: () => void;
   panelToggle: ReactNode;
 }) {
   const { t } = useTranslation();
@@ -308,249 +312,22 @@ function TopBar({
       </Link>
       <div className="flex min-w-0 flex-1 justify-center">{!restricted && <GlobalSearch />}</div>
       <div className="flex shrink-0 items-center gap-0.5">
+        {!restricted && (
+          <IconButton
+            label={t('palette.open')}
+            // A keyboard tool: on phones the search box has the room.
+            className="hidden sm:inline-flex"
+            shortcut={`${modKey} K`}
+            icon={<Command aria-hidden="true" />}
+            onClick={onOpenPalette}
+            aria-keyshortcuts="Meta+K Control+K"
+            tooltipSide="bottom"
+          />
+        )}
         <ThemeMenu />
         <LanguageMenu />
         <UserMenu restricted={restricted} />
       </div>
     </header>
-  );
-}
-
-/** Filters the catalog (M10 turns it into the command palette). "/" or ⌘K focuses it. */
-function GlobalSearch() {
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const [params, setParams] = useSearchParams();
-  const onCatalog = location.pathname === '/';
-  // On the catalog the URL (?q=) is the value; elsewhere it's local until Enter.
-  const [draft, setDraft] = useState('');
-  const value = onCatalog ? (params.get('q') ?? '') : draft;
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      const typing = target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
-      if ((event.key === 'k' && (event.metaKey || event.ctrlKey)) || (event.key === '/' && !typing)) {
-        event.preventDefault();
-        inputRef.current?.focus();
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  function update(next: string) {
-    setDraft(next);
-    if (onCatalog) {
-      const nextParams = new URLSearchParams(params);
-      if (next) nextParams.set('q', next);
-      else nextParams.delete('q');
-      // The first keystroke is a history entry (Back clears the search); the rest
-      // replace it, so Back doesn't step through every letter.
-      setParams(nextParams, { replace: params.has('q') });
-    }
-  }
-
-  return (
-    <form
-      role="search"
-      aria-label={t('shell.searchLabel')}
-      className="relative w-full max-w-md"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!onCatalog) {
-          navigate(value ? `/?q=${encodeURIComponent(value)}` : '/');
-          setDraft('');
-        }
-      }}
-    >
-      <label htmlFor="global-search" className="sr-only">
-        {t('shell.searchLabel')}
-      </label>
-      <Search
-        className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-        strokeWidth={1.75}
-        aria-hidden="true"
-      />
-      <input
-        ref={inputRef}
-        id="global-search"
-        type="search"
-        value={value}
-        onChange={(event) => update(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            update('');
-            inputRef.current?.blur();
-          }
-        }}
-        placeholder={t('shell.searchPlaceholder')}
-        className="h-9 w-full rounded-md border border-input bg-background pr-12 pl-8 text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring/40"
-      />
-      <Kbd className="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 md:inline-flex">/</Kbd>
-    </form>
-  );
-}
-
-function ThemeMenu() {
-  const { t } = useTranslation();
-  const { preference, resolved, setPreference } = useTheme();
-  const Icon = preference === 'system' ? MonitorSmartphone : resolved === 'dark' ? Moon : Sun;
-  return (
-    <DropdownMenu>
-      <Tooltip content={t('shell.theme')} side="bottom">
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label={t('shell.themeCurrent', { theme: t(`theme.${preference}`) })}>
-            <Icon aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
-      </Tooltip>
-      <DropdownMenuContent>
-        <DropdownMenuLabel>{t('shell.theme')}</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={preference} onValueChange={(v) => setPreference(v as ThemePreference)}>
-          <DropdownMenuRadioItem value="light">{t('theme.light')}</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="dark">{t('theme.dark')}</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="system">{t('theme.system')}</DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function LanguageMenu() {
-  const { t, i18n } = useTranslation();
-  return (
-    <DropdownMenu>
-      <Tooltip content={t('shell.language')} side="bottom">
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t('shell.languageCurrent', { language: t(`language.${i18n.language}`) })}
-          >
-            <Languages aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
-      </Tooltip>
-      <DropdownMenuContent>
-        <DropdownMenuLabel>{t('shell.language')}</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={i18n.language} onValueChange={(v) => setLocale(v as Locale)}>
-          <DropdownMenuRadioItem value="en">English</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="tr">Türkçe</DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function UserMenu({ restricted }: { restricted: boolean }) {
-  const { t } = useTranslation();
-  const me = useMe();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const user = me.data?.user;
-  if (!user) return null;
-  const isLocal = user.authSource === 'local';
-
-  async function signOut() {
-    try {
-      await api.logout();
-    } catch {
-      // The session may already be gone; the local state is cleared either way.
-    }
-    markSessionEstablished(false);
-    queryClient.clear();
-    navigate('/login', { replace: true });
-  }
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={t('shell.userMenu', { user: user.username })} className="ml-1">
-          <span className="flex size-7 items-center justify-center rounded-full bg-muted text-xs font-semibold text-foreground">
-            {(user.displayName || user.username).charAt(0).toUpperCase()}
-          </span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-60">
-        <div className="px-2 py-1.5">
-          <p className="truncate text-sm font-medium">{user.displayName || user.username}</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {user.username} · {t(`authSource.${user.authSource}`, { defaultValue: user.authSource })}
-          </p>
-        </div>
-        <DropdownMenuSeparator />
-        {!restricted && (
-          <>
-            <DropdownMenuItem asChild>
-              <Link to="/account">
-                <UserRound aria-hidden="true" />
-                {t('shell.account')}
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link to="/account#sessions">
-                <MonitorSmartphone aria-hidden="true" />
-                {t('shell.mySessions')}
-              </Link>
-            </DropdownMenuItem>
-            {isLocal && (
-              <DropdownMenuItem asChild>
-                <Link to="/account#password">
-                  <ShieldCheck aria-hidden="true" />
-                  {t('shell.changePassword')}
-                </Link>
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
-          </>
-        )}
-        <DropdownMenuItem onSelect={() => void signOut()}>
-          <LogOut aria-hidden="true" />
-          {t('shell.signOut')}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const { t } = useTranslation();
-  const rows: [string, ReactNode][] = [
-    [
-      t('help.focusSearch'),
-      <>
-        <Kbd>/</Kbd> {t('help.or')} <Kbd>⌘</Kbd>
-        <Kbd>K</Kbd>
-      </>,
-    ],
-    [
-      t('help.skipToContent'),
-      <>
-        <Kbd>Tab</Kbd> {t('help.onPageLoad')}
-      </>,
-    ],
-    [t('help.closeOverlay'), <Kbd>Esc</Kbd>],
-    [
-      t('help.moveInLists'),
-      <>
-        <Kbd>↑</Kbd>
-        <Kbd>↓</Kbd> <Kbd>Enter</Kbd>
-      </>,
-    ],
-  ];
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange} title={t('help.title')} description={t('help.description')}>
-      <dl className="divide-y divide-border text-sm">
-        {rows.map(([label, keys]) => (
-          <div key={label} className="flex items-center justify-between gap-4 py-2">
-            <dt>{label}</dt>
-            <dd className="flex shrink-0 items-center gap-1 text-muted-foreground">{keys}</dd>
-          </div>
-        ))}
-      </dl>
-    </Dialog>
   );
 }

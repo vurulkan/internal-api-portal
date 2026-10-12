@@ -10,8 +10,10 @@ The browser never talks directly to internal service DNS names or upstream OpenA
 | API reference and try-it | ![API reference, light theme](docs/screenshots/api-reference-light.png) | ![Try-it console, dark theme](docs/screenshots/api-try-it-dark.png) |
 | Admin overview | ![Admin overview, light theme](docs/screenshots/admin-overview-light.png) | ![Admin overview, dark theme](docs/screenshots/admin-overview-dark.png) |
 | Users, API wizard | ![Users, light theme](docs/screenshots/admin-users-light.png) | ![New API wizard with a spec preview](docs/screenshots/admin-api-wizard-light.png) |
+| Command palette (⌘K) | ![Command palette, light theme](docs/screenshots/palette-light.png) | ![Command palette, dark theme](docs/screenshots/palette-dark.png) |
+| Phone (375 px) | ![Catalog on a phone, light theme](docs/screenshots/catalog-phone-light.png) | ![An operation on a phone, dark theme](docs/screenshots/api-reference-phone-dark.png) |
 
-The interface is in English and Turkish, follows the system light / dark setting (or a chosen one), and works from 375 px phones to wide screens.
+The interface is in English and Turkish, follows the system light / dark setting (or a chosen one), works from 375 px phones to wide screens, and can be used entirely from the keyboard (see Keyboard). CI checks WCAG 2.2 AA in a real browser on every route.
 
 ## What This Product Is
 
@@ -315,7 +317,22 @@ npm run format:check
 npm test                # Vitest + Testing Library + axe (both themes), i18n parity
 npm run build
 npm run budget          # first page view ≤ 300 KB of JavaScript (gzip)
+
+# Browser tests: the built frontend served by the real backend, in Chromium
+npx playwright install chromium
+npm run e2e:portal      # builds the Go binary into backend/.e2e/
+npm run e2e
 ```
+
+`npm run e2e` (`frontend/e2e/`, Playwright) starts a test upstream and the portal on a new database, seeds it, and checks:
+
+- **Accessibility:** axe with WCAG 2.2 A / AA rules, colour contrast and target size included, on every route and the main dialogs and drawers. Both themes, at 375 and 1440 px. It also checks that pages don't scroll sideways, the console has no errors, and an injected header value never appears in the page.
+- **Keyboard only:** sign in, find an operation with the palette, call it with ⌘↵, add a user to a group.
+- **Performance:**
+  - The largest contentful paint stays under 2 s, also on a 1500-operation spec.
+  - No interaction takes over 200 ms.
+  - The backend budget test (`TestAuditListIsFastWith10kEntries`) keeps audit queries and the overview under 100 ms with 10,000 entries.
+- **Screenshots:** 6 widths × 2 themes, written to `e2e/.screens/`. CI uploads them as an artifact.
 
 `internal/api/authz_test.go` holds the authorization table: one row per route with who may call it. A route added without a row fails the build, and every row is checked for anonymous (401), unauthorized (403) and authorized access.
 
@@ -339,7 +356,7 @@ Published to GHCR by CI for every release tag, for `linux/amd64` and `linux/arm6
 
 | Tag | Points to |
 |---|---|
-| `X.Y.Z` (e.g. `2.0.0`) | that release |
+| `X.Y.Z` (e.g. `2.1.0`) | that release |
 | `latest` | the newest release |
 
 Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requests are built, not published. CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access*).
@@ -347,7 +364,7 @@ Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requ
 Each image carries an SBOM and SLSA provenance (inside the image index) and is signed with cosign (keyless, GitHub OIDC); the signature sits next to the image as a `sha256-<digest>.sig` tag. Verify before deploying:
 
 ```bash
-cosign verify ghcr.io/vurulkan/internal-api-portal:2.0.0 \
+cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.0 \
   --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -424,6 +441,11 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
 
+### Upgrading to 2.1.0
+
+- ⌘K / Ctrl K opens the command palette; it used to focus the top bar's search, which `/` still does when the page has no search of its own.
+- Nothing else changes for operators: no migration, no new settings.
+
 ### Upgrading to 2.0.0
 
 2.0.0 is the redesign (M6–M9): a new interface in two themes and two languages, catalog search, the API workspace and the admin console. The API, sessions and permissions stay compatible. Back up first (`server backup`, see Backups): migrations 9–11 run at the first start. 1.x still starts on the migrated database but doesn't keep the new tables (operation index, spec history) up to date, so go back by restoring the backup.
@@ -495,7 +517,7 @@ A try-it call produces two lines with the same `http.request.id`:
 
 ```json
 {"@timestamp":"2026-10-12T06:58:25.354331203Z","log":{"level":"info"},"message":"root api.invoke success api Payments API",
- "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.0.0","environment":"prod","type":"api-portal"},
+ "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.0","environment":"prod","type":"api-portal"},
  "event":{"dataset":"portal.audit","kind":"event","category":["web"],"type":["access"],"action":"api.invoke","outcome":"success","duration":150000000},
  "user":{"name":"root","domain":"local"},"source":{"ip":"10.244.3.17"},"user_agent":{"original":"Mozilla/5.0 …"},
  "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"response":{"status_code":201}},"url":{"path":"/v1/charges"},
@@ -659,7 +681,7 @@ A failed refresh shows the API as *Spec error* in the catalog. The error text ca
 
 ## Catalog
 
-- **Search** (top bar, `/` or ⌘K) finds APIs by name, slug, description, owner and tags, and **operations** by method, path, operationId, summary and tags (SQLite FTS5, every word as a prefix: `ref char` finds `POST /v1/refunds — Refund a charge`). Results are filtered by the user's permissions on the server: an operation of an API the user can't see never appears. An operation result opens that operation on the API's page. `GET /api/search?q=` returns `{apis, operations}` (the 20 best APIs and 50 best operations).
+- **Search** (top bar, `/`; or the command palette, ⌘K) finds APIs by name, slug, description, owner and tags, and **operations** by method, path, operationId, summary and tags (SQLite FTS5, every word as a prefix: `ref char` finds `POST /v1/refunds — Refund a charge`). Results are filtered by the user's permissions on the server: an operation of an API the user can't see never appears. An operation result opens that operation on the API's page. `GET /api/search?q=` returns `{apis, operations}` (the 20 best APIs and 50 best operations).
 - **Filters** in the side panel: tags, owner team, *my favorites*, *I can try*, *I manage*, *spec problem*, *spec older than 7 days*, *inactive*; sorting by name, recently viewed or recently refreshed; cards or table. Everything is in the URL (`/?tag=billing&status=favorites&view=list`), so a filtered view can be shared and Back undoes a filter change.
 - **Favorites** (star on a card or the API page) and **recently viewed** APIs (the last 10) are stored per user in the database, so they follow the user across devices. `PUT` / `DELETE /api/me/favorites/{id}`; both are audited (`api.favorite_add`, `api.favorite_remove`).
 
@@ -721,6 +743,26 @@ All requests go through `/api/apis/:id/invoke`; the browser never calls the upst
   - `GET /api/apis/{id}/activity` returns the history; the last 50 entries per API are kept.
 
 The page also has *Add to favorites*, a *Spec* menu (download JSON / YAML, Classic view, refresh for managers) and *Edit definition* for managers, which opens Admin → API definitions.
+
+## Keyboard
+
+`?` lists every shortcut. Single-key shortcuts are off while typing in a field and while a dialog is open; ⌘ / Ctrl combinations work everywhere.
+
+| Keys | Action |
+|---|---|
+| ⌘K / Ctrl K | **Command palette:** APIs, operations (from the search index), admin sections the user may open, and actions (theme, language, back to the last API, shortcuts, sign out). Recently used items come first. |
+| `/` | Focus the page's search or filter box (the top bar's search if the page has none) |
+| `?` | Keyboard shortcuts |
+| `g` `c` · `g` `a` | Go to the catalog · the admin console |
+| `[` · `]` | Previous / next tab, on the page or in the open drawer |
+| `j` · `k` · Enter | Move through table rows, catalog cards or the operation tree; open |
+| `n` · `p` | Next / previous page of a table |
+| `d` | Delete the focused row of an admin table (with the usual confirmation and rules) |
+| `f` | Add the open API to favorites, or remove it |
+| ⌘↵ / Ctrl↵ | Try it: send |
+| ⌘⇧C / Ctrl⇧C | Try it: copy the request as cURL (secrets as placeholders) |
+
+Keys match by the character typed or by their place on a US keyboard, so `[`, `]` and `/` also work on Turkish and other layouts (AltGr / Shift combinations included). Tooltips show the shortcut of a button.
 
 ## Admin Console
 

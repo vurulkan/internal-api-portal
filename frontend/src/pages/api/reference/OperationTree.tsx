@@ -44,6 +44,7 @@ export function OperationTree({ spec, base, selected }: { spec: NormalizedSpec; 
         <Input
           id="operation-filter"
           type="search"
+          data-page-search
           className="h-8"
           placeholder={t('api.filterOperations')}
           value={filter}
@@ -58,7 +59,7 @@ export function OperationTree({ spec, base, selected }: { spec: NormalizedSpec; 
       ) : rows.length > VIRTUALIZE_AFTER ? (
         <VirtualRows rows={rows} base={base} selected={selected} />
       ) : (
-        <ul aria-label={t('api.operations')}>
+        <ul aria-label={t('api.operations')} data-shortcut-list>
           {rows.map((row, i) => (
             <li key={i}>
               <RowView row={row} base={base} selected={selected} />
@@ -85,6 +86,7 @@ function RowView({ row, base, selected }: { row: Row; base: string; selected?: s
   return (
     <Link
       to={operationPath(base, op.key)}
+      data-shortcut-item
       aria-current={active ? 'page' : undefined}
       title={op.summary || undefined}
       className={cn(
@@ -123,6 +125,7 @@ function VirtualRows({ rows, base, selected }: { rows: Row[]; base: string; sele
     <ul
       ref={listRef}
       aria-label={t('api.operations')}
+      data-shortcut-list
       className="relative"
       style={{ height: virtualizer.getTotalSize() }}
     >

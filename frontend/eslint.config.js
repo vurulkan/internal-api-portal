@@ -5,11 +5,11 @@ import jsxA11y from 'eslint-plugin-jsx-a11y';
 import globals from 'globals';
 
 export default tseslint.config(
-  { ignores: ['dist', 'node_modules'] },
+  { ignores: ['dist', 'node_modules', 'e2e/.results', 'e2e/.report'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   jsxA11y.flatConfigs.recommended,
-  { files: ['scripts/**/*.mjs', '*.config.{js,ts}'], languageOptions: { globals: globals.node } },
+  { files: ['scripts/**/*.mjs', '*.config.{js,ts}', 'e2e/**/*.{ts,mjs}'], languageOptions: { globals: globals.node } },
   {
     files: ['src/**/*.{ts,tsx}'],
     languageOptions: { globals: globals.browser },

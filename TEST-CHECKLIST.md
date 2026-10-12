@@ -63,12 +63,20 @@ Tick every line, or write down why it doesn't apply.
   - [ ] Every change made above appears exactly once, with its outcome.
 - [ ] Settings → System shows the version being released and *From DATA_ENCRYPTION_KEY*.
 
+## Keyboard
+
+- [ ] `?` lists the shortcuts; ⌘K / Ctrl K opens the palette from any page, Esc returns focus where it was.
+- [ ] On a **Turkish keyboard**: `[` `]` switch tabs, `/` focuses the search, `?` opens the help.
+- [ ] Without a mouse: sign in → palette → operation → ⌘↵ → response read out → `g a` → Users → `j` / Enter → `]` → add a group → Save.
+- [ ] VoiceOver (macOS) or NVDA: the palette announces the result count and the active option; try-it announces the response.
+
 ## Quality
 
 - [ ] Chrome and Firefox, light and dark theme, English and Turkish: no untranslated strings, no layout breaks.
 - [ ] 375 px (phone), 768, 1024 and 1440 px: no horizontal scrolling; drawers and dialogs fit.
 - [ ] Keyboard only: every page usable, focus visible, Escape closes drawers and dialogs, focus returns to where it was.
-- [ ] axe DevTools (or Lighthouse accessibility) on catalog, API page, try-it, every admin section and the drawers: no violations, colour contrast included.
+- [ ] CI's `e2e` job is green (axe on every route, both themes, 375 and 1440 px; keyboard flow; performance budgets). Look through its screenshot artifact.
+- [ ] Windows high contrast (forced colours): the current page, selected tab / option and switch states are still visible.
 - [ ] Browser console: no errors, no CSP violations.
 
 ## Deployment

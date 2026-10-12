@@ -186,7 +186,7 @@ export default function CatalogPage() {
             ) : filters.view === 'list' ? (
               <ApiTable apis={visible} query={filters.q} />
             ) : (
-              <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-shortcut-list>
                 {visible.map((api) => (
                   <li key={api.id} className="min-w-0">
                     <ApiCard api={api} query={filters.q} />
@@ -449,7 +449,10 @@ function OperationResults({ query, state }: { query: string; state: ReturnType<t
         </p>
       ) : (
         <>
-          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+          <ul
+            className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card"
+            data-shortcut-list
+          >
             {shown.map((op) => (
               <li key={`${op.apiId} ${op.method} ${op.path}`}>
                 <OperationRow op={op} query={query} />
@@ -474,7 +477,11 @@ function OperationRow({ op, query }: { op: OperationHit; query: string }) {
   const { t } = useTranslation();
   const target = `/apis/${encodeURIComponent(op.apiSlug || String(op.apiId))}?${new URLSearchParams({ op: `${op.method} ${op.path}` })}`;
   return (
-    <Link to={target} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 hover:bg-muted/60">
+    <Link
+      to={target}
+      data-shortcut-item
+      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 hover:bg-muted/60"
+    >
       {/* Spaces between the parts keep the link's accessible name readable. */}
       <MethodBadge method={op.method} />{' '}
       <span className={cn('min-w-0 font-mono text-[13px] break-token', op.deprecated && 'line-through')}>
@@ -556,6 +563,7 @@ function ApiCard({ api, query }: { api: ApiSummary; query: string }) {
           {/* The whole card opens the API; the star and "Try it" sit above the link layer. */}
           <Link
             to={`/apis/${encodeURIComponent(api.slug)}`}
+            data-shortcut-item
             className="after:absolute after:inset-0 after:rounded-lg focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-ring"
           >
             <Highlight text={api.name} query={query} />
@@ -623,7 +631,7 @@ function ApiTable({ apis, query }: { apis: ApiSummary[]; query: string }) {
       sortValue: (a) => a.name,
       cell: (a) => (
         <span className="block min-w-0">
-          <Link to={`/apis/${encodeURIComponent(a.slug)}`} className="font-medium hover:underline">
+          <Link to={`/apis/${encodeURIComponent(a.slug)}`} data-shortcut-item className="font-medium hover:underline">
             <Highlight text={a.name} query={query} />
           </Link>
           <span className="block font-mono text-xs text-muted-foreground">{a.slug}</span>

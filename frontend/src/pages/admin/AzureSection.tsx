@@ -111,21 +111,25 @@ function AzureForm({ initial }: { initial: AzureADConfig }) {
               onChange={(e) => set('clientSecret', e.target.value)}
             />
           </Field>
-          <Field
-            label={t('admin.azure.redirectUrl')}
-            id="azure-redirect"
-            helper={t('admin.azure.redirectUrlHelper', { url: callback })}
-          >
-            <div className="flex items-center gap-2">
+          <div className="flex items-start gap-2">
+            <Field
+              label={t('admin.azure.redirectUrl')}
+              id="azure-redirect"
+              className="min-w-0 flex-1"
+              helper={t('admin.azure.redirectUrlHelper', { url: callback })}
+            >
               <Input
                 type="url"
                 className="font-mono text-[13px]"
                 value={form.redirectUrl}
                 onChange={(e) => set('redirectUrl', e.target.value)}
               />
+            </Field>
+            {/* Beside the field, not inside it: the Field labels its single child. */}
+            <div className="pt-[26px]">
               <CopyButton value={form.redirectUrl || callback} label={t('admin.azure.copyRedirect')} />
             </div>
-          </Field>
+          </div>
           <Field
             label={t('admin.azure.allowedGroups')}
             id="azure-groups"

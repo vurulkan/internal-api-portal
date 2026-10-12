@@ -5,7 +5,7 @@ import { Plus, ShieldCheck } from 'lucide-react';
 import { api, type Role } from '@/lib/api';
 import { queryKeys } from '@/lib/query';
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, type Column } from '@/components/ui';
-import { matches, SearchInput, SectionToolbar, TableSkeleton } from './common';
+import { matches, SearchInput, SectionToolbar, TableSkeleton, useAdminMutation } from './common';
 import { RoleDrawer } from './roles/RoleDrawer';
 
 export default function RolesSection() {
@@ -15,6 +15,11 @@ export default function RolesSection() {
   const groups = useQuery({ queryKey: queryKeys.admin.groups, queryFn: async () => (await api.groups()) ?? [] });
   const groupNames = useMemo(() => new Map((groups.data ?? []).map((g) => [g.id, g.name])), [groups.data]);
   const [editing, setEditing] = useState<Role | 'new' | null>(null);
+  const remove = useAdminMutation({
+    mutationFn: (id: number) => api.deleteRole(id),
+    success: t('admin.roles.deleted'),
+    invalidate: [queryKeys.admin.roles, queryKeys.admin.groups],
+  });
   const rows = useMemo(
     () => (roles.data ?? []).filter((r) => matches(search, r.name, r.description)),
     [roles.data, search],
@@ -75,6 +80,18 @@ export default function RolesSection() {
         caption={t('admin.sections.roles')}
         rows={rows}
         columns={columns}
+        rowDelete={{
+          title: (r) => t('admin.roles.deleteTitle', { name: r.name }),
+          description: (r) => {
+            const used = (r.groupIds ?? []).map((id) => groupNames.get(id) ?? `#${id}`);
+            return used.length
+              ? t('admin.roles.deleteUsed', { count: used.length, groups: used.join(', ') })
+              : t('admin.roles.deleteBody');
+          },
+          confirmText: (r) => r.name,
+          confirmLabel: t('common.delete'),
+          run: (r) => remove.mutateAsync(r.id),
+        }}
         rowKey={(r) => String(r.id)}
         onRowClick={(r) => setEditing(r)}
         activeRowKey={editing && editing !== 'new' ? String(editing.id) : undefined}
