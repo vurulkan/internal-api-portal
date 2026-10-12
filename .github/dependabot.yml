@@ -1,13 +1,17 @@
 version: 2
+# Updates wait 14 days after a release (cooldown): a compromised or broken release is
+# usually caught by then. The same rule applies to versions picked by hand.
 updates:
   - package-ecosystem: gomod
     directory: /backend
     schedule: { interval: weekly }
+    cooldown: { default-days: 14 }
     groups:
       go-deps: { patterns: ["*"] }
   - package-ecosystem: npm
     directory: /frontend
     schedule: { interval: weekly }
+    cooldown: { default-days: 14 }
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
@@ -36,6 +40,9 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: eslint
         update-types: ["version-update:semver-major"]
+      # Types follow the Node line the image builds with (node:24-alpine).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "@eslint/js"
         update-types: ["version-update:semver-major"]
   # Base image digests in the Dockerfile. Node majors are moved by hand from one
@@ -43,6 +50,7 @@ updates:
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 14 }
     ignore:
       - dependency-name: node
         update-types: ["version-update:semver-major"]
@@ -51,3 +59,4 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 14 }
