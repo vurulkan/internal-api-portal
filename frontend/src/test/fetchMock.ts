@@ -35,8 +35,10 @@ export function mockFetch(routes: Record<string, Reply>) {
       );
     });
     if (!match) return apiError(404, `unmocked ${method} ${url}`);
-    const reply =
-      typeof match[1] === 'function' ? (match[1] as (u: string, i?: RequestInit) => unknown)(url, init) : match[1];
+    // A handler may return a promise (slow or cancellable replies).
+    const reply = await (typeof match[1] === 'function'
+      ? (match[1] as (u: string, i?: RequestInit) => unknown)(url, init)
+      : match[1]);
     return reply instanceof Response ? reply : json(reply);
   });
   vi.stubGlobal('fetch', fn);

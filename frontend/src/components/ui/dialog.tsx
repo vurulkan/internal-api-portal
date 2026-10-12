@@ -138,8 +138,18 @@ export function Drawer({
 }
 
 /** Scrolling part of a drawer (when the drawer's content is a form with its own footer). */
-export function DrawerBody({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('min-h-0 flex-1 overflow-y-auto', className)}>{children}</div>;
+export function DrawerBody({
+  children,
+  className,
+  ...rest
+}: { children: ReactNode; className?: string } & React.HTMLAttributes<HTMLDivElement> & {
+    'data-panel-scroll'?: boolean;
+  }) {
+  return (
+    <div className={cn('min-h-0 flex-1 overflow-y-auto', className)} {...rest}>
+      {children}
+    </div>
+  );
 }
 
 export function DrawerFooter({ children }: { children: ReactNode }) {

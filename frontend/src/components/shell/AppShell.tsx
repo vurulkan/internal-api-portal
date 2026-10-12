@@ -39,6 +39,7 @@ import {
   Button,
   Dialog,
   Drawer,
+  DrawerBody,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -159,6 +160,7 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
         {showDesktopPanel && (
           <aside
             aria-label={panel.title}
+            data-panel-scroll
             className="sticky top-14 h-[calc(100dvh-3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-border bg-card"
           >
             <p className="px-4 pt-4 pb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
@@ -180,45 +182,48 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
       </div>
       {!isDesktop && (
         <Drawer open={mobileOpen} onOpenChange={setMobileOpen} side="left" title={t('shell.menu')}>
-          {!restricted && (
-            <nav aria-label={t('shell.mainNavigation')} className="space-y-0.5 border-b border-border p-2">
-              {nav.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex h-11 items-center gap-3 rounded-md px-3 text-sm font-medium hover:bg-muted',
-                      isActive && 'bg-muted text-foreground',
-                    )
-                  }
+          {/* The drawer's content scrolls (long filter lists, operation trees). */}
+          <DrawerBody data-panel-scroll>
+            {!restricted && (
+              <nav aria-label={t('shell.mainNavigation')} className="space-y-0.5 border-b border-border p-2">
+                {nav.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) =>
+                      cn(
+                        'flex h-11 items-center gap-3 rounded-md px-3 text-sm font-medium hover:bg-muted',
+                        isActive && 'bg-muted text-foreground',
+                      )
+                    }
+                  >
+                    <item.icon className="size-5" strokeWidth={1.75} aria-hidden="true" />
+                    {item.label}
+                  </NavLink>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    setHelpOpen(true);
+                  }}
+                  className="flex h-11 w-full cursor-pointer items-center gap-3 rounded-md px-3 text-sm font-medium hover:bg-muted"
                 >
-                  <item.icon className="size-5" strokeWidth={1.75} aria-hidden="true" />
-                  {item.label}
-                </NavLink>
-              ))}
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileOpen(false);
-                  setHelpOpen(true);
-                }}
-                className="flex h-11 w-full cursor-pointer items-center gap-3 rounded-md px-3 text-sm font-medium hover:bg-muted"
-              >
-                <CircleHelp className="size-5" strokeWidth={1.75} aria-hidden="true" />
-                {t('shell.help')}
-              </button>
-            </nav>
-          )}
-          {panel && (
-            <section aria-label={panel.title}>
-              <p className="px-4 pt-4 pb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                {panel.title}
-              </p>
-              <div ref={setPanelTarget} className="px-2 pb-4" />
-            </section>
-          )}
+                  <CircleHelp className="size-5" strokeWidth={1.75} aria-hidden="true" />
+                  {t('shell.help')}
+                </button>
+              </nav>
+            )}
+            {panel && (
+              <section aria-label={panel.title}>
+                <p className="px-4 pt-4 pb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                  {panel.title}
+                </p>
+                <div ref={setPanelTarget} className="px-2 pb-4" />
+              </section>
+            )}
+          </DrawerBody>
         </Drawer>
       )}
       <HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />

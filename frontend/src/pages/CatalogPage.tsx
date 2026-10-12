@@ -399,7 +399,7 @@ function ShortcutList({
         {apis.map((api) => (
           <li key={api.id} className="min-w-0">
             <Link
-              to={`/apis/${api.id}`}
+              to={`/apis/${encodeURIComponent(api.slug)}`}
               className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[13px] hover:bg-muted"
               title={recent && api.lastViewedAt ? formatDateTime(api.lastViewedAt) : undefined}
             >
@@ -472,7 +472,7 @@ function OperationResults({ query, state }: { query: string; state: ReturnType<t
 
 function OperationRow({ op, query }: { op: OperationHit; query: string }) {
   const { t } = useTranslation();
-  const target = `/apis/${op.apiId}?${new URLSearchParams({ op: `${op.method} ${op.path}`, tab: 'try' })}`;
+  const target = `/apis/${encodeURIComponent(op.apiSlug || String(op.apiId))}?${new URLSearchParams({ op: `${op.method} ${op.path}` })}`;
   return (
     <Link to={target} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 hover:bg-muted/60">
       {/* Spaces between the parts keep the link's accessible name readable. */}
@@ -555,7 +555,7 @@ function ApiCard({ api, query }: { api: ApiSummary; query: string }) {
         <h3 className="min-w-0 text-base font-semibold break-token">
           {/* The whole card opens the API; the star and "Try it" sit above the link layer. */}
           <Link
-            to={`/apis/${api.id}`}
+            to={`/apis/${encodeURIComponent(api.slug)}`}
             className="after:absolute after:inset-0 after:rounded-lg focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-ring"
           >
             <Highlight text={api.name} query={query} />
@@ -600,7 +600,10 @@ function ApiCard({ api, query }: { api: ApiSummary; query: string }) {
         {!api.isActive && <Badge variant="destructive">{t('catalog.inactive')}</Badge>}
         {canTry && (
           <Button asChild size="sm" variant="ghost" className="relative z-10 ml-auto">
-            <Link to={`/apis/${api.id}?tab=try`} aria-label={t('catalog.tryApi', { name: api.name })}>
+            <Link
+              to={`/apis/${encodeURIComponent(api.slug)}/reference`}
+              aria-label={t('catalog.tryApi', { name: api.name })}
+            >
               <Play aria-hidden="true" />
               {t('api.tryIt')}
             </Link>
@@ -620,7 +623,7 @@ function ApiTable({ apis, query }: { apis: ApiSummary[]; query: string }) {
       sortValue: (a) => a.name,
       cell: (a) => (
         <span className="block min-w-0">
-          <Link to={`/apis/${a.id}`} className="font-medium hover:underline">
+          <Link to={`/apis/${encodeURIComponent(a.slug)}`} className="font-medium hover:underline">
             <Highlight text={a.name} query={query} />
           </Link>
           <span className="block font-mono text-xs text-muted-foreground">{a.slug}</span>

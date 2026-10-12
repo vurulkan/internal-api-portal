@@ -23,11 +23,20 @@ if (
   Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true, writable: true });
 }
 
-// jsdom lacks these; Radix and the theme code use them.
+// jsdom lacks these; Radix and the theme code use them. Media queries answer as for
+// a 1440px-wide light-mode screen (override window.innerWidth to test others).
 if (!window.matchMedia) {
+  const evaluate = (query: string) => {
+    const width = window.innerWidth >= 1440 ? window.innerWidth : 1440;
+    const min = /min-width:\s*(\d+)px/.exec(query);
+    const max = /max-width:\s*(\d+)px/.exec(query);
+    if (min) return width >= Number(min[1]);
+    if (max) return width <= Number(max[1]);
+    return false;
+  };
   window.matchMedia = (query: string) =>
     ({
-      matches: query.includes('min-width: 1024px'),
+      matches: evaluate(query),
       media: query,
       onchange: null,
       addEventListener: () => undefined,

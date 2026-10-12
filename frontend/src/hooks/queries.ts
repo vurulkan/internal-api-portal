@@ -114,6 +114,10 @@ function useDebounced<T>(value: T, ms: number) {
   return debounced;
 }
 
+function isApiDefinition(value: unknown): value is ApiDefinition {
+  return !!value && typeof value === 'object' && 'id' in value && 'slug' in value && 'permissions' in value;
+}
+
 /** Star / unstar an API; the catalog updates at once and rolls back on failure. */
 export function useToggleFavorite() {
   const queryClient = useQueryClient();
@@ -126,8 +130,9 @@ export function useToggleFavorite() {
       queryClient.setQueryData<ApiSummary[]>(queryKeys.catalog, (list) =>
         list?.map((item) => (item.id === id ? { ...item, favorite } : item)),
       );
-      queryClient.setQueryData<ApiDefinition>(queryKeys.api(String(id)), (item) =>
-        item ? { ...item, favorite } : item,
+      // The API page is cached under its slug or id; match by the API's id.
+      queryClient.setQueriesData<unknown>({ queryKey: ['api'] }, (item: unknown) =>
+        isApiDefinition(item) && item.id === id ? { ...item, favorite } : item,
       );
       return { previous };
     },
@@ -137,7 +142,10 @@ export function useToggleFavorite() {
     },
     onSettled: (_r, _e, { id }) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.catalog });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.api(String(id)) });
+      void queryClient.invalidateQueries({
+        predicate: (q) =>
+          q.queryKey[0] === 'api' && q.queryKey.length === 2 && isApiDefinition(q.state.data) && q.state.data.id === id,
+      });
     },
   });
 }
