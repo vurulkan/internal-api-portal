@@ -18,6 +18,8 @@ type User struct {
 	ExternalID         string    `json:"-"`
 	CreatedAt          time.Time `json:"createdAt"`
 	UpdatedAt          time.Time `json:"updatedAt"`
+	// LastLoginAt: the last successful sign-in (nil: never, or before 2.0.0).
+	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
 }
 
 type Group struct {

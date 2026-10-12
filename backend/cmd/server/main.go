@@ -81,6 +81,7 @@ func main() {
 		slog.Info("db.backups_scheduled", "dir", cfg.BackupDirFor(), "interval", cfg.BackupInterval.String(), "keep", cfg.BackupKeep)
 	}
 
+	cfg.Version = version
 	server := api.NewServer(dataStore, auditLogger, cfg)
 	server.IndexMissingSpecs(context.Background())
 	server.StartSpecRefresh(context.Background())

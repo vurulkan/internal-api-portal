@@ -246,6 +246,9 @@ var migrations = []migration{
 	}},
 	{9, "operation index, favorites, recently viewed (2.0.0)", false, catalogIndex},
 	{10, "spec history and operation fingerprints (2.0.0)", false, specHistory},
+	{11, "users.last_login_at (2.0.0)", false, func(ctx context.Context, tx *sql.Tx) error {
+		return addColumn(ctx, tx, `ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP`)
+	}},
 }
 
 // specHistory: every spec change (operations added / removed / changed, by a

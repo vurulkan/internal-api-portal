@@ -79,6 +79,9 @@ type Config struct {
 
 	// AuditExportMaxRows caps one CSV export (newest rows first).
 	AuditExportMaxRows int
+
+	// Version is the build's version, set by main (not read from the environment).
+	Version string
 }
 
 type Features struct {

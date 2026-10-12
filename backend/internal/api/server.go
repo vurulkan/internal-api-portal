@@ -41,6 +41,7 @@ type Server struct {
 	limitersMu sync.Mutex
 	metrics    *metrics.Portal
 	logins     *loginGate
+	started    time.Time
 	// dummyHash is checked when the user doesn't exist, so a failed login takes the
 	// same time either way and doesn't reveal which usernames exist.
 	dummyHash string
@@ -73,6 +74,7 @@ func NewServer(store *store.Store, auditLogger *audit.Logger, cfg config.Config)
 		metrics:   metrics.NewPortal(),
 		logins:    newLoginGate(),
 		dummyHash: dummyHash,
+		started:   time.Now().UTC(),
 	}
 }
 
@@ -109,6 +111,7 @@ func (s *Server) Router() http.Handler {
 		r.With(a("session.revoke")).Delete("/api/auth/sessions/{id}", s.handleRevokeMySession)
 		r.With(a("session.revoke_others")).Post("/api/auth/sessions/revoke-others", s.handleRevokeMyOtherSessions)
 		r.Get("/api/permissions/catalog", s.handlePermissionCatalog)
+		r.With(s.requireAnyAdminSection).Get("/api/admin/overview", s.handleAdminOverview)
 
 		r.Get("/api/catalog", s.handleCatalog)
 		r.Get("/api/search", s.handleSearch)
@@ -120,10 +123,12 @@ func (s *Server) Router() http.Handler {
 		r.With(a("api.invoke"), s.requireFeature("tryIt")).Post("/api/apis/{id}/invoke", s.handleInvoke)
 
 		r.With(perm("user.view")).Get("/api/admin/users", s.handleListUsers)
+		r.With(a("user.bulk_status"), perm("user.manage")).Post("/api/admin/users/bulk-status", s.handleBulkUserStatus)
 		r.With(a("user.create"), perm("user.manage")).Post("/api/admin/users", s.handleCreateUser)
 		r.With(a("user.update"), perm("user.manage")).Put("/api/admin/users/{id}", s.handleUpdateUser)
 		r.With(a("user.delete"), perm("user.manage")).Delete("/api/admin/users/{id}", s.handleDeleteUser)
 		r.With(perm("user.view")).Get("/api/admin/users/{id}/groups", s.handleGetUserGroups)
+		r.With(perm("user.view")).Get("/api/admin/users/{id}/permissions", s.handleUserPermissions)
 		r.With(a("user.groups_set"), perm("user.manage")).Put("/api/admin/users/{id}/groups", s.handleSetUserGroups)
 		r.With(a("user.password_reset"), perm("user.manage")).Post("/api/admin/users/{id}/reset-password", s.handleResetPassword)
 		r.With(a("user.sessions_revoke"), perm("user.manage")).Post("/api/admin/users/{id}/revoke-sessions", s.handleRevokeUserSessions)
@@ -139,6 +144,9 @@ func (s *Server) Router() http.Handler {
 		r.With(a("group.delete"), perm("group.manage")).Delete("/api/admin/groups/{id}", s.handleDeleteGroup)
 		r.With(perm("group.manage")).Get("/api/admin/groups/{id}/roles", s.handleGetGroupRoles)
 		r.With(a("group.roles_set"), perm("group.manage")).Put("/api/admin/groups/{id}/roles", s.handleSetGroupRoles)
+		// Membership is the user side of a group: it needs user.manage, like a user's groups.
+		r.With(a("group.members_add"), perm("user.manage")).Post("/api/admin/groups/{id}/members", s.handleAddGroupMembers)
+		r.With(a("group.member_remove"), perm("user.manage")).Delete("/api/admin/groups/{id}/members/{userId}", s.handleRemoveGroupMember)
 
 		r.With(s.requireAnyAdminSection).Get("/api/admin/roles", s.handleListRoles)
 		r.With(a("role.create"), perm("role.manage")).Post("/api/admin/roles", s.handleCreateRole)
@@ -166,9 +174,11 @@ func (s *Server) Router() http.Handler {
 		// (api:<id>:manage, api:<id>:delete). Per-API checks are in the handlers.
 		r.With(s.requireAPIManagement).Get("/api/admin/apis", s.handleAdminAPIs)
 		r.With(a("api.create"), perm("api.create")).Post("/api/admin/apis", s.handleCreateAPI)
+		r.With(a("api.spec_preview"), s.requireAPIManagement).Post("/api/admin/apis/spec-preview", s.handleSpecPreview)
 		r.With(a("api.update"), s.requireAPIManagement).Put("/api/admin/apis/{id}", s.handleUpdateAPI)
 		r.With(a("api.delete"), s.requireAPIManagement).Delete("/api/admin/apis/{id}", s.handleDeleteAPI)
 		r.With(a("api.spec_refresh"), s.requireAPIManagement).Post("/api/admin/apis/{id}/refresh", s.handleRefreshAPISpec)
+		r.With(s.requireAPIManagement).Get("/api/admin/apis/{id}/impact", s.handleAPIImpact)
 		r.With(s.requireAPIManagement).Get("/api/admin/apis/{id}/access", s.handleGetAPIAccess)
 		r.With(a("api.access_set"), s.requireAPIManagement).Put("/api/admin/apis/{id}/access", s.handleSetAPIAccess)
 
@@ -178,6 +188,7 @@ func (s *Server) Router() http.Handler {
 		r.With(perm("settings.manage")).Get("/api/admin/session", s.handleGetSession)
 		r.With(a("settings.session_update"), perm("settings.manage")).Put("/api/admin/session", s.handleUpdateSession)
 		r.With(perm("settings.manage")).Get("/api/admin/system", s.handleGetSystem)
+		r.With(perm("settings.manage")).Get("/api/admin/system/info", s.handleSystemInfo)
 		r.With(a("settings.system_update"), perm("settings.manage")).Put("/api/admin/system", s.handleUpdateSystem)
 		r.With(a("settings.logo_update"), perm("settings.manage")).Post("/api/admin/system/logo", s.handleUploadSystemLogo)
 		r.With(a("settings.logo_delete"), perm("settings.manage")).Delete("/api/admin/system/logo", s.handleDeleteSystemLogo)
