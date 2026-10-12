@@ -420,6 +420,8 @@ export const adminTr: Dictionary['admin'] = {
     deleteBody: 'Yetkileri ve erişim kayıtları da kaldırılır. Denetim kayıtları kalır.',
   },
   ldap: {
+    alreadyImported: 'Zaten içe aktarılmış',
+    otherAccount: '{{source}} hesabı var: atlanır',
     connection: 'Bağlantı',
     connectionBody: 'Portalın kullanıcıları doğruladığı dizin.',
     enabled: 'LDAP ile giriş',
@@ -472,6 +474,7 @@ export const adminTr: Dictionary['admin'] = {
     importedSkipped_other: '{{count}} kullanıcı aktarıldı. Atlananlar (zaten yerel veya Azure AD hesabı): {{skipped}}.',
   },
   azure: {
+    copyRedirect: 'Yönlendirme adresini kopyala',
     title: 'Microsoft Entra ID (Azure AD)',
     body: 'Kullanıcılar Microsoft hesaplarıyla giriş yapar; neler yapabileceklerine yine portal grupları ve rolleri karar verir.',
     enabled: 'Microsoft ile giriş',

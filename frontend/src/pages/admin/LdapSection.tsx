@@ -4,8 +4,10 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { CircleCheck, CircleX, PlugZap, Search, UserPlus } from 'lucide-react';
 import { api, type LdapConfig, type LdapLoginStep, type LdapUser } from '@/lib/api';
 import { queryKeys } from '@/lib/query';
+import { useAdminSections } from '@/hooks/queries';
 import {
   Alert,
+  Badge,
   Button,
   Card,
   CardContent,
@@ -300,6 +302,14 @@ function UserImport() {
     },
     onError: (error) => notifyError(error, t('admin.ldap.searchFailed')),
   });
+  // Accounts already in the portal are marked (an LDAP one is refreshed, others are skipped).
+  const canSeeUsers = useAdminSections().includes('users');
+  const portalUsers = useQuery({
+    queryKey: queryKeys.admin.users,
+    queryFn: async () => (await api.users()) ?? [],
+    enabled: canSeeUsers && results !== null,
+  });
+  const existing = new Map((portalUsers.data ?? []).map((u) => [u.username, u.authSource]));
   const importUsers = useAdminMutation({
     mutationFn: (users: LdapUser[]) => api.importLdap(users),
     success: (r) =>
@@ -315,7 +325,20 @@ function UserImport() {
       id: 'username',
       header: t('admin.users.username'),
       sortValue: (u) => u.username,
-      cell: (u) => <span className="font-medium">{u.username}</span>,
+      cell: (u) => (
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="font-medium">{u.username}</span>
+          {existing.has(u.username) && (
+            <Badge variant={existing.get(u.username) === 'ldap' ? 'outline' : 'warning'}>
+              {existing.get(u.username) === 'ldap'
+                ? t('admin.ldap.alreadyImported')
+                : t('admin.ldap.otherAccount', {
+                    source: t(`authSource.${existing.get(u.username)}`, { defaultValue: existing.get(u.username) }),
+                  })}
+            </Badge>
+          )}
+        </span>
+      ),
     },
     {
       id: 'name',

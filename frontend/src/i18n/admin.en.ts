@@ -418,6 +418,8 @@ export const adminEn = {
     deleteBody: 'Its permissions and access grants are removed too. Audit entries stay.',
   },
   ldap: {
+    alreadyImported: 'Already imported',
+    otherAccount: 'Exists as {{source}}: skipped',
     connection: 'Connection',
     connectionBody: 'The directory the portal signs users in against.',
     enabled: 'LDAP sign-in',
@@ -470,6 +472,7 @@ export const adminEn = {
     importedSkipped_other: '{{count}} users imported. Skipped (already a local or Azure AD account): {{skipped}}.',
   },
   azure: {
+    copyRedirect: 'Copy the redirect URL',
     title: 'Microsoft Entra ID (Azure AD)',
     body: 'Users sign in with their Microsoft account; portal groups and roles still decide what they may do.',
     enabled: 'Microsoft sign-in',

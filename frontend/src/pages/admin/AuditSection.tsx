@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Download, RotateCw, ScrollText } from 'lucide-react';
 import { api, auditQuery, type AuditFilter, type AuditLog } from '@/lib/api';
-import { formatDateTime, formatNumber } from '@/lib/format';
+import { formatDateTime, formatNumber, formatRelative } from '@/lib/format';
 import { queryKeys } from '@/lib/query';
 import { useMe } from '@/hooks/queries';
 import {
@@ -141,7 +141,11 @@ export default function AuditSection() {
     {
       id: 'time',
       header: t('admin.audit.time'),
-      cell: (e) => formatDateTime(e.timestamp),
+      cell: (e) => (
+        <time dateTime={e.timestamp} title={formatDateTime(e.timestamp)}>
+          {formatRelative(e.timestamp)}
+        </time>
+      ),
       className: 'whitespace-nowrap text-[13px] tabular-nums',
     },
     { id: 'user', header: t('admin.audit.user'), cell: (e) => <span className="font-medium">{e.user || '–'}</span> },
