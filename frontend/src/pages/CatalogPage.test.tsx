@@ -84,6 +84,8 @@ describe('catalog page', () => {
     expect(router.state.location.search).toBe('?tag=core&view=list');
     await router.navigate(-1);
     await waitFor(() => expect(router.state.location.search).toBe('?tag=core'));
+    // Wait for the page too, not only the router, before typing.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cards' })).toHaveAttribute('aria-pressed', 'true'));
     expect(screen.getByRole('checkbox', { name: 'core' })).toBeChecked();
     await user.type(screen.getByRole('searchbox', { name: 'Search APIs and operations' }), 'pay');
     expect(router.state.location.search).toBe('?tag=core&q=pay');
