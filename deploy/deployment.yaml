@@ -35,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: portal
-          image: ghcr.io/vurulkan/internal-api-portal:1.5.0
+          image: ghcr.io/vurulkan/internal-api-portal:1.6.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -68,8 +68,11 @@ spec:
               value: "30"
             - name: SESSION_MINUTES
               value: "60"
+            # ECS JSON lines on stdout; deploy/logging/ ships them to Elasticsearch.
             - name: LOG_FORMAT
               value: json
+            - name: SERVICE_ENVIRONMENT
+              value: prod
             # ── Network ───────────────────────────────────────────────────────
             # The ingress controller's pod CIDR, so audit IPs and the login lockout
             # see the real client address, e.g. "10.244.0.0/16".

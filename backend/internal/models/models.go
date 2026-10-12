@@ -197,6 +197,10 @@ type AuditLog struct {
 	Outcome         string    `json:"outcome"`
 	ActorSource     string    `json:"actorSource"`
 	Changes         string    `json:"changes"`
+	UserAgent       string    `json:"userAgent"`
+	// PortalStatusCode is the status the portal answered with when StatusCode holds
+	// another one (the upstream's, for try-it). Logged, not stored.
+	PortalStatusCode int `json:"-"`
 }
 
 // AuditFilter selects audit entries; zero values don't filter.

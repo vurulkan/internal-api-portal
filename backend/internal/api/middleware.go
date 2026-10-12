@@ -105,21 +105,35 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 		case isProbe(r.URL.Path):
 			level = slog.LevelDebug
 		}
+		outcome := "success"
+		if rec.status >= 400 {
+			outcome = "failure"
+		}
 		user := ""
 		if info, ok := r.Context().Value(requestInfoKey{}).(*requestInfo); ok {
 			user = info.user
 		}
-		slog.Log(r.Context(), level, "http.request",
-			"method", r.Method,
-			"route", route,
-			"path", r.URL.Path,
-			"status", rec.status,
-			"duration_ms", elapsed.Milliseconds(),
-			"bytes", rec.bytes,
-			"ip", s.clientIP(r),
-			"user", user,
-			"request_id", logging.RequestID(r.Context()),
-		)
+		attrs := []slog.Attr{
+			slog.String("event.dataset", logging.DatasetHTTP),
+			slog.String("event.kind", "event"),
+			slog.Any("event.category", []string{"web"}),
+			slog.Any("event.type", []string{"access"}),
+			slog.String("event.outcome", outcome),
+			slog.Duration("event.duration", elapsed),
+			slog.String("http.request.method", r.Method),
+			slog.String("url.path", r.URL.Path),
+			slog.String("http.route", route),
+			slog.Int("http.response.status_code", rec.status),
+			slog.Int64("http.response.body.bytes", rec.bytes),
+			slog.String("source.ip", s.clientIP(r)),
+		}
+		if user != "" {
+			attrs = append(attrs, slog.String("user.name", user))
+		}
+		if ua := r.UserAgent(); ua != "" {
+			attrs = append(attrs, slog.String("user_agent.original", truncate(ua, 512)))
+		}
+		slog.LogAttrs(r.Context(), level, fmt.Sprintf("%s %s %d", r.Method, route, rec.status), attrs...)
 	})
 }
 
@@ -148,8 +162,7 @@ func recoverMiddleware(next http.Handler) http.Handler {
 				}
 				slog.ErrorContext(r.Context(), "http.panic",
 					"error", fmt.Sprint(v),
-					"path", r.URL.Path,
-					"request_id", logging.RequestID(r.Context()),
+					"url.path", r.URL.Path,
 					"stack", string(debug.Stack()),
 				)
 				writeError(w, r, http.StatusInternalServerError, "internal server error")

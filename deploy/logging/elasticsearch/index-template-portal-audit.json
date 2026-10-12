@@ -1,0 +1,11 @@
+{
+  "index_patterns": ["logs-portal.audit-*"],
+  "data_stream": {},
+  "priority": 200,
+  "composed_of": ["logs@mappings", "logs@settings", "ecs@mappings", "portal@mappings"],
+  "ignore_missing_component_templates": ["ecs@mappings"],
+  "template": {
+    "settings": {"index.lifecycle.name": "portal-audit"}
+  },
+  "_meta": {"description": "internal-api-portal portal.audit data stream"}
+}

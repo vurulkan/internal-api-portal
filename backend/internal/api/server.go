@@ -285,6 +285,9 @@ func (s *Server) recordAudit(r *http.Request, entry models.AuditLog) {
 		entry.SourceIP = s.clientIP(r)
 	}
 	entry.RequestID = logging.RequestID(r.Context())
+	if entry.UserAgent == "" {
+		entry.UserAgent = truncate(r.UserAgent(), 512)
+	}
 	s.audit.Record(r.Context(), entry)
 }
 

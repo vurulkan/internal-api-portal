@@ -343,3 +343,17 @@ func TestMappingAPrivilegedGroupIsAGrant(t *testing.T) {
 	e.expect(http.MethodPut, fmt.Sprintf("/api/admin/groups/%d", powerGroup), token, map[string]string{"name": "power-group", "azureGroupId": "my-own-group"}, http.StatusForbidden)
 	e.expect(http.MethodPut, fmt.Sprintf("/api/admin/groups/%d", powerGroup), token, map[string]string{"name": "renamed"}, http.StatusOK)
 }
+
+func TestUnchangedEmptyFieldsAreNotReportedAsChanged(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.user("root", true)
+	token := e.login("root")
+	id, _ := e.store.CreateAPIDefinition(ctx, models.APIDefinition{Name: "A", Slug: "a", InternalOpenAPIURL: "http://a/spec", InternalBaseURL: "http://a", IsActive: true})
+	// tags / allowedMethods left out: empty before, absent now — not a change.
+	e.expect(http.MethodPut, fmt.Sprintf("/api/admin/apis/%d", id), token, map[string]any{"name": "B", "slug": "a", "internalOpenapiUrl": "http://a/spec", "internalBaseUrl": "http://a", "isActive": true}, http.StatusOK)
+	logs, _, _ := e.store.ListAuditLogs(ctx, models.AuditFilter{ActionPrefix: "api.update"}, 5, 0)
+	if len(logs) != 1 || logs[0].Changes != "name" {
+		t.Fatalf("changes = %q, want only name", logs[0].Changes)
+	}
+}

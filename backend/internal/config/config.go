@@ -34,8 +34,16 @@ type Config struct {
 	// ProxyAllowLoopback lets upstreams on 127.0.0.0/8 and ::1 through (local development).
 	ProxyAllowLoopback bool
 
-	LogFormat string // json (default) or text
+	LogFormat string // json (default, ECS) or text
 	LogLevel  string // debug, info (default), warn, error
+	LogOutput string // stdout (default) or stderr
+	// LogAddSource adds log.origin.* (file, line, function) to every line.
+	LogAddSource bool
+	// LogIncludeAudit mirrors every audit entry to the log (event.dataset
+	// portal.audit). Off: audit entries go to the database only.
+	LogIncludeAudit bool
+	// ServiceEnvironment is written as service.environment (dev, test, prod, …).
+	ServiceEnvironment string
 	// MetricsEnabled serves Prometheus metrics. With MetricsAddr set they are served on
 	// that separate listener instead of the main port.
 	MetricsEnabled bool
@@ -96,6 +104,10 @@ func Load() Config {
 		BackupDir:          os.Getenv("BACKUP_DIR"),
 		LogFormat:          env("LOG_FORMAT", "json"),
 		LogLevel:           env("LOG_LEVEL", "info"),
+		LogOutput:          env("LOG_OUTPUT", "stdout"),
+		LogAddSource:       envBool("LOG_ADD_SOURCE", false),
+		LogIncludeAudit:    envBool("LOG_INCLUDE_AUDIT", true),
+		ServiceEnvironment: os.Getenv("SERVICE_ENVIRONMENT"),
 		MetricsEnabled:     envBool("METRICS_ENABLED", true),
 		MetricsAddr:        env("METRICS_ADDR", ""),
 		HSTSEnabled:        envBool("HSTS_ENABLED", false),
