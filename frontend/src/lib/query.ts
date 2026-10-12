@@ -67,5 +67,11 @@ export const queryKeys = {
     sessions: ['admin', 'sessions'] as const,
     audit: (query: string) => ['admin', 'audit', query] as const,
     system: ['admin', 'system'] as const,
+    overview: ['admin', 'overview'] as const,
+    systemInfo: ['admin', 'system-info'] as const,
+    apiImpact: (id: number) => ['admin', 'apis', id, 'impact'] as const,
+    userPermissions: (id: number, groupIds?: number[]) =>
+      ['admin', 'users', id, 'permissions', groupIds?.join(',') ?? 'current'] as const,
+    userSessions: (id: number) => ['admin', 'sessions', 'user', id] as const,
   },
 };

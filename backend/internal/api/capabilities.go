@@ -17,6 +17,8 @@ type capabilities struct {
 	ManagedAPIs    []int `json:"managedApis"`
 	CanCreateAPI   bool  `json:"canCreateApi"`
 	CanExportAudit bool  `json:"canExportAudit"`
+	// CanManageUsers: user.manage (create, edit, deactivate users, change members).
+	CanManageUsers bool `json:"canManageUsers"`
 }
 
 func (s *Server) capabilitiesFor(engine *rbac.Engine) capabilities {
@@ -25,6 +27,7 @@ func (s *Server) capabilitiesFor(engine *rbac.Engine) capabilities {
 		ManagedAPIs:    engine.ManagedAPIs(),
 		CanCreateAPI:   engine.Has("api.create"),
 		CanExportAudit: engine.Has("audit.export") && s.config.Features.AuditExport,
+		CanManageUsers: engine.Has("user.manage"),
 	}
 	if c.ManagedAPIs == nil {
 		c.ManagedAPIs = []int{}

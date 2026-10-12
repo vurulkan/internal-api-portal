@@ -9,9 +9,20 @@ export type User = {
   isAdmin: boolean;
   createdAt: string;
   updatedAt: string;
+  // Admin list only: the last sign-in and the user's groups.
+  lastLoginAt?: string;
+  groupIds?: number[];
 };
 
-export type Role = { id: number; name: string; description: string; createdAt: string };
+export type Role = {
+  id: number;
+  name: string;
+  description: string;
+  createdAt: string;
+  // Admin list only: how many scopes, and the groups that have the role.
+  permissionCount?: number;
+  groupIds?: number[];
+};
 export type Group = {
   id: number;
   name: string;
@@ -19,6 +30,9 @@ export type Group = {
   createdAt: string;
   azureGroupId?: string;
   ldapGroupDn?: string;
+  // Admin list only.
+  memberIds?: number[];
+  roleIds?: number[];
 };
 export type ScopeDef = {
   scope: string;
@@ -36,6 +50,7 @@ export type Capabilities = {
   managedApis: number[];
   canCreateApi: boolean;
   canExportAudit: boolean;
+  canManageUsers?: boolean;
 };
 export type AuditFilter = {
   from?: string;
@@ -340,7 +355,7 @@ async function send(path: string, init: RequestInit): Promise<Response> {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers ?? {});
   headers.set('Content-Type', 'application/json');
   headers.set(CSRF_HEADER, '1');

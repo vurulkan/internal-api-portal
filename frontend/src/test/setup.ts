@@ -1,6 +1,9 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach, vi } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
+
+// Lazy routes, axe runs and parallel files make 1 s (the default) too tight for findBy*.
+configure({ asyncUtilTimeout: 4000 });
 
 // Node >= 25 defines its own global localStorage, which shadows jsdom's without
 // --localstorage-file. Install an in-memory Storage so app code behaves as in a browser.

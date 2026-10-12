@@ -7,8 +7,7 @@ import { formatDateTime, formatRelative } from '@/lib/format';
 import { queryKeys } from '@/lib/query';
 import { AlertDialog, Badge, Button, Card, DataTable, EmptyState, ErrorState, type Column } from '@/components/ui';
 import { deviceLabel } from '../AccountPage';
-import { matches, SectionToolbar, useAdminMutation } from './common';
-import { SearchInput, TableSkeleton } from './UsersSection';
+import { matches, SearchInput, SectionToolbar, TableSkeleton, useAdminMutation } from './common';
 
 export default function SessionsSection() {
   const { t } = useTranslation();

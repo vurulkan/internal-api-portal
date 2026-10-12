@@ -260,3 +260,20 @@ func TestSessionsFilterByUser(t *testing.T) {
 		t.Fatalf("all sessions: %s", body)
 	}
 }
+
+func TestCanManageUsersCapability(t *testing.T) {
+	e := newEnv(t)
+	viewer := e.user("viewer", false)
+	e.grant(viewer.ID, "user.view")
+	manager := e.user("manager", false)
+	e.grant(manager.ID, "user.view", "user.manage")
+	type me struct {
+		Capabilities capabilities `json:"capabilities"`
+	}
+	if got := decode[me](t, e.expect(http.MethodGet, "/api/auth/me", e.login("viewer"), nil, http.StatusOK)); got.Capabilities.CanManageUsers {
+		t.Error("user.view alone reports canManageUsers")
+	}
+	if got := decode[me](t, e.expect(http.MethodGet, "/api/auth/me", e.login("manager"), nil, http.StatusOK)); !got.Capabilities.CanManageUsers {
+		t.Error("user.manage does not report canManageUsers")
+	}
+}
