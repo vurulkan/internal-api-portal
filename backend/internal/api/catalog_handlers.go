@@ -21,31 +21,168 @@ import (
 	"api-portal/backend/internal/rbac"
 )
 
+// specState is what viewers learn about an API's spec: ok, error or missing.
+// The error text itself (it can name internal hosts) goes only to managers.
+func specState(api models.APIDefinition) (state, detail string) {
+	switch {
+	case strings.HasPrefix(api.LastSpecStatus, "error"):
+		return "error", strings.TrimSpace(strings.TrimPrefix(api.LastSpecStatus, "error:"))
+	case api.LastSpecRefreshAt == nil:
+		return "missing", ""
+	}
+	return "ok", ""
+}
+
+func summarize(api models.APIDefinition, engine *rbac.Engine) models.APISummary {
+	state, detail := specState(api)
+	summary := models.APISummary{
+		ID: api.ID, Name: api.Name, Slug: api.Slug, Description: api.Description, IsActive: api.IsActive, TryItEnabled: api.TryItEnabled,
+		OwnerTeam: api.OwnerTeam, Tags: api.Tags, LastSpecRefreshAt: api.LastSpecRefreshAt, SpecState: state,
+		SpecVersion: api.SpecVersion, OperationCount: api.OperationCount,
+		CanView:   engine.CanViewAPI(api.ID),
+		CanInvoke: engine.CanInvokeAPI(api.ID),
+		CanManage: engine.CanManageAPI(api.ID),
+	}
+	if summary.CanManage {
+		summary.SpecError = detail
+	}
+	return summary
+}
+
+// visibleAPIs are the APIs the user may see (view or manage), as summaries.
+func (s *Server) visibleAPIs(r *http.Request, identity *models.Identity) ([]models.APISummary, error) {
+	engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
+	apis, err := s.store.ListAPIDefinitions(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	out := []models.APISummary{}
+	for _, api := range apis {
+		summary := summarize(api, engine)
+		if summary.CanView || summary.CanManage {
+			out = append(out, summary)
+		}
+	}
+	return out, nil
+}
+
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	identity, ok := s.identityForRequest(r)
 	if !ok {
 		writeError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
-	apis, err := s.store.ListAPIDefinitions(r.Context())
+	out, err := s.visibleAPIs(r, identity)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "failed to load apis")
 		return
 	}
-	var out []models.APISummary
-	for _, api := range apis {
-		summary := models.APISummary{
-			ID: api.ID, Name: api.Name, Slug: api.Slug, Description: api.Description, IsActive: api.IsActive, TryItEnabled: api.TryItEnabled, OwnerTeam: api.OwnerTeam, Tags: api.Tags, LastSpecRefreshAt: api.LastSpecRefreshAt, LastSpecStatus: api.LastSpecStatus,
-			CanView:   engine.CanViewAPI(api.ID),
-			CanInvoke: engine.CanInvokeAPI(api.ID),
-			CanManage: engine.CanManageAPI(api.ID),
-		}
-		if summary.CanView || summary.CanManage {
-			out = append(out, summary)
+	favorites, _ := s.store.Favorites(r.Context(), identity.User.ID)
+	recent, _ := s.store.RecentAPIViews(r.Context(), identity.User.ID)
+	for i := range out {
+		out[i].Favorite = favorites[out[i].ID]
+		if at, ok := recent[out[i].ID]; ok {
+			out[i].LastViewedAt = &at
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// searchResult is an operation hit with the API it belongs to.
+type searchResult struct {
+	models.APIOperation
+	APIName string `json:"apiName"`
+	APISlug string `json:"apiSlug"`
+}
+
+// handleSearch finds APIs and operations the user may see. The permission filter
+// runs here (only visible API ids reach the query), never in the browser.
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	identity, ok := s.identityForRequest(r)
+	if !ok {
+		writeError(w, r, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if runes := []rune(query); len(runes) > 100 {
+		query = string(runes[:100])
+	}
+	result := map[string]any{"query": query, "apis": []models.APISummary{}, "operations": []searchResult{}}
+	if len([]rune(query)) < 2 {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	visible, err := s.visibleAPIs(r, identity)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "search failed")
+		return
+	}
+	lower := strings.ToLower(query)
+	byID := map[int]models.APISummary{}
+	ids := make([]int, 0, len(visible))
+	var nameHits, otherHits []models.APISummary
+	for _, api := range visible {
+		byID[api.ID] = api
+		ids = append(ids, api.ID)
+		switch {
+		case strings.Contains(strings.ToLower(api.Name), lower) || strings.Contains(strings.ToLower(api.Slug), lower):
+			nameHits = append(nameHits, api)
+		case strings.Contains(strings.ToLower(api.Description), lower) || strings.Contains(strings.ToLower(api.OwnerTeam), lower) || containsFold(api.Tags, lower):
+			otherHits = append(otherHits, api)
+		}
+	}
+	apis := append(nameHits, otherHits...)
+	if len(apis) > 20 {
+		apis = apis[:20]
+	}
+	ops, err := s.store.SearchOperations(r.Context(), query, ids, 50)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "search failed")
+		return
+	}
+	hits := make([]searchResult, 0, len(ops))
+	for _, op := range ops {
+		api := byID[op.APIID]
+		hits = append(hits, searchResult{APIOperation: op, APIName: api.Name, APISlug: api.Slug})
+	}
+	if apis == nil {
+		apis = []models.APISummary{}
+	}
+	result["apis"] = apis
+	result["operations"] = hits
+	writeJSON(w, http.StatusOK, result)
+}
+
+func containsFold(values []string, lower string) bool {
+	for _, v := range values {
+		if strings.Contains(strings.ToLower(v), lower) {
+			return true
+		}
+	}
+	return false
+}
+
+// handleSetFavorite stars (PUT) or unstars (DELETE) an API for the signed-in user.
+func (s *Server) handleSetFavorite(w http.ResponseWriter, r *http.Request) {
+	identity, _ := s.identityForRequest(r)
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	auditTarget(r, "api", strconv.Itoa(id), "")
+	engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
+	if !engine.CanViewAPI(id) && !engine.CanManageAPI(id) {
+		writeError(w, r, http.StatusForbidden, "forbidden")
+		return
+	}
+	apiDef, err := s.store.GetAPIDefinition(r.Context(), id)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "api not found")
+		return
+	}
+	auditTarget(r, "api", strconv.Itoa(id), apiDef.Name)
+	if err := s.store.SetFavorite(r.Context(), identity.User.ID, id, r.Method == http.MethodPut); err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not save the favorite")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"favorite": r.Method == http.MethodPut})
 }
 
 func (s *Server) handleAPIDetails(w http.ResponseWriter, r *http.Request) {
@@ -66,8 +203,15 @@ func (s *Server) handleAPIDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "api.view", ResourceType: "api", ResourceID: strconv.Itoa(apiDef.ID), ResourceName: apiDef.Name, StatusCode: http.StatusOK})
+	if err := s.store.RecordAPIView(r.Context(), identity.User.ID, apiDef.ID); err != nil {
+		slog.WarnContext(r.Context(), "recent.record_failed", "error", err.Error())
+	}
+	favorites, _ := s.store.Favorites(r.Context(), identity.User.ID)
+	summary := summarize(*apiDef, engine)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id": apiDef.ID, "name": apiDef.Name, "slug": apiDef.Slug, "description": apiDef.Description, "isActive": apiDef.IsActive, "tryItEnabled": apiDef.TryItEnabled, "allowedMethods": apiDef.AllowedMethods, "allowedPathPrefixes": apiDef.AllowedPathPrefixes, "ownerTeam": apiDef.OwnerTeam, "tags": apiDef.Tags, "createdAt": apiDef.CreatedAt, "updatedAt": apiDef.UpdatedAt, "lastSpecRefreshAt": apiDef.LastSpecRefreshAt, "lastSpecStatus": apiDef.LastSpecStatus,
+		"id": apiDef.ID, "name": apiDef.Name, "slug": apiDef.Slug, "description": apiDef.Description, "isActive": apiDef.IsActive, "tryItEnabled": apiDef.TryItEnabled, "allowedMethods": apiDef.AllowedMethods, "allowedPathPrefixes": apiDef.AllowedPathPrefixes, "ownerTeam": apiDef.OwnerTeam, "tags": apiDef.Tags, "createdAt": apiDef.CreatedAt, "updatedAt": apiDef.UpdatedAt, "lastSpecRefreshAt": apiDef.LastSpecRefreshAt,
+		"specState": summary.SpecState, "specError": summary.SpecError, "specVersion": apiDef.SpecVersion, "operationCount": apiDef.OperationCount,
+		"rateLimitPerMinute": apiDef.RateLimitPerMinute, "favorite": favorites[apiDef.ID],
 		"permissions": map[string]bool{"view": engine.CanViewAPI(apiDef.ID), "invoke": engine.CanInvokeAPI(apiDef.ID), "manage": engine.CanManageAPI(apiDef.ID)},
 	})
 }

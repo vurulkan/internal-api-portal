@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { LayoutList, Plus, RotateCw, Trash2 } from 'lucide-react';
@@ -86,7 +87,17 @@ export default function ApisSection() {
   const canCreate = !!caps?.canCreateApi || !!me.data?.user.isAdmin;
   const apis = useQuery({ queryKey: queryKeys.admin.apis, queryFn: async () => (await api.adminApis()) ?? [] });
   const [search, setSearch] = useState('');
-  const [editing, setEditing] = useState<ApiDefinition | 'new' | null>(null);
+  // /admin/apis?new=1 (the catalog's "New API") opens the create drawer.
+  const [params, setParams] = useSearchParams();
+  const [editing, setEditing] = useState<ApiDefinition | 'new' | null>(() =>
+    params.get('new') && canCreate ? 'new' : null,
+  );
+  useEffect(() => {
+    if (!params.has('new')) return;
+    const rest = new URLSearchParams(params);
+    rest.delete('new');
+    setParams(rest, { replace: true });
+  }, [params, setParams]);
   const rows = useMemo(
     () => (apis.data ?? []).filter((a) => matches(search, a.name, a.slug, a.ownerTeam, ...(a.tags ?? []))),
     [apis.data, search],

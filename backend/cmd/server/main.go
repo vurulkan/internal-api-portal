@@ -82,6 +82,8 @@ func main() {
 	}
 
 	server := api.NewServer(dataStore, auditLogger, cfg)
+	server.IndexMissingSpecs(context.Background())
+	server.StartSpecRefresh(context.Background())
 	server.StartSessionPurge(context.Background())
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.Port,

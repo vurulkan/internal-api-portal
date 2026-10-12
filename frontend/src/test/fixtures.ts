@@ -56,6 +56,11 @@ export const catalog: ApiSummary[] = [
     canView: true,
     canInvoke: true,
     canManage: true,
+    specState: 'ok',
+    specVersion: '2.3.1',
+    operationCount: 42,
+    lastSpecRefreshAt: new Date(Date.now() - 3_600_000).toISOString(),
+    favorite: false,
   },
   {
     id: 2,
@@ -69,6 +74,10 @@ export const catalog: ApiSummary[] = [
     canView: true,
     canInvoke: false,
     canManage: false,
+    specState: 'error',
+    lastSpecRefreshAt: new Date(Date.now() - 10 * 86_400_000).toISOString(),
+    favorite: true,
+    lastViewedAt: new Date(Date.now() - 600_000).toISOString(),
   },
 ];
 

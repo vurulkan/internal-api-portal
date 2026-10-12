@@ -27,6 +27,8 @@ import (
 )
 
 type Server struct {
+	// background tracks spec fetches started after a save (tests wait on it).
+	background sync.WaitGroup
 	store      *store.Store
 	audit      *audit.Logger
 	openapi    *openapi.Service
@@ -42,6 +44,12 @@ type Server struct {
 	// dummyHash is checked when the user doesn't exist, so a failed login takes the
 	// same time either way and doesn't reveal which usernames exist.
 	dummyHash string
+}
+
+// IndexMissingSpecs builds the operation search index for specs cached before it
+// existed (2.0.0); later refreshes keep it current.
+func (s *Server) IndexMissingSpecs(ctx context.Context) {
+	s.openapi.IndexMissing(ctx)
 }
 
 func NewServer(store *store.Store, auditLogger *audit.Logger, cfg config.Config) *Server {
@@ -103,6 +111,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/permissions/catalog", s.handlePermissionCatalog)
 
 		r.Get("/api/catalog", s.handleCatalog)
+		r.Get("/api/search", s.handleSearch)
+		r.With(a("api.favorite_add")).Put("/api/me/favorites/{id}", s.handleSetFavorite)
+		r.With(a("api.favorite_remove")).Delete("/api/me/favorites/{id}", s.handleSetFavorite)
 		r.Get("/api/apis/{id}", s.handleAPIDetails)
 		r.Get("/api/apis/{id}/spec", s.handleAPISpec)
 		r.With(a("api.invoke"), s.requireFeature("tryIt")).Post("/api/apis/{id}/invoke", s.handleInvoke)

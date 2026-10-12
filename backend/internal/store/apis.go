@@ -12,7 +12,7 @@ import (
 	"api-portal/backend/internal/models"
 )
 
-const apiColumns = `id, name, slug, description, internal_openapi_url, internal_base_url, is_active, try_it_enabled, allowed_methods, allowed_path_prefixes, owner_team, tags, created_at, updated_at, last_spec_refresh_at, last_spec_status, owner_group_id, allowed_request_headers, forward_all_x_headers, inject_headers_enc, rate_limit_per_minute, timeout_seconds`
+const apiColumns = `id, name, slug, description, internal_openapi_url, internal_base_url, is_active, try_it_enabled, allowed_methods, allowed_path_prefixes, owner_team, tags, created_at, updated_at, last_spec_refresh_at, last_spec_status, owner_group_id, allowed_request_headers, forward_all_x_headers, inject_headers_enc, rate_limit_per_minute, timeout_seconds, spec_version, operation_count`
 
 func (s *Store) ListAPIDefinitions(ctx context.Context) ([]models.APIDefinition, error) {
 	rows, err := s.conn.QueryContext(ctx, `SELECT `+apiColumns+` FROM api_definitions ORDER BY name`)
@@ -154,8 +154,13 @@ func jsonList(values []string) string {
 // permissions (api:<id>:view|invoke|manage) that pointed at it.
 func (s *Store) DeleteAPIDefinition(ctx context.Context, id int) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM api_spec_cache WHERE api_id = ?`, id); err != nil {
-			return err
+		for _, stmt := range []string{
+			`DELETE FROM api_spec_cache WHERE api_id = ?`,
+			`DELETE FROM api_operations WHERE api_id = ?`,
+		} {
+			if _, err := tx.ExecContext(ctx, stmt, id); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM permissions WHERE scope LIKE ?`, fmt.Sprintf("api:%d:%%", id)); err != nil {
 			return err
@@ -208,9 +213,9 @@ func scanAPI(scanner interface{ Scan(...any) error }) (*models.APIDefinition, er
 	var isActive, tryIt, forwardAll int
 	var methods, prefixes, tags, allowedHeaders, injectEnc string
 	var lastRefresh sql.NullTime
-	var ownerGroup sql.NullInt64
+	var ownerGroup, operationCount sql.NullInt64
 	if err := scanner.Scan(&api.ID, &api.Name, &api.Slug, &api.Description, &api.InternalOpenAPIURL, &api.InternalBaseURL, &isActive, &tryIt, &methods, &prefixes, &api.OwnerTeam, &tags, &api.CreatedAt, &api.UpdatedAt, &lastRefresh, &api.LastSpecStatus,
-		&ownerGroup, &allowedHeaders, &forwardAll, &injectEnc, &api.RateLimitPerMinute, &api.TimeoutSeconds); err != nil {
+		&ownerGroup, &allowedHeaders, &forwardAll, &injectEnc, &api.RateLimitPerMinute, &api.TimeoutSeconds, &api.SpecVersion, &operationCount); err != nil {
 		return nil, err
 	}
 	api.IsActive = isActive == 1
@@ -226,6 +231,10 @@ func scanAPI(scanner interface{ Scan(...any) error }) (*models.APIDefinition, er
 	if ownerGroup.Valid {
 		id := int(ownerGroup.Int64)
 		api.OwnerGroupID = &id
+	}
+	if operationCount.Valid {
+		n := int(operationCount.Int64)
+		api.OperationCount = &n
 	}
 	api.InjectHeaderNames = []string{}
 	return &api, nil

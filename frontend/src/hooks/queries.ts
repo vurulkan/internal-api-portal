@@ -1,5 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, type ApiDefinition, type ApiSummary } from '@/lib/api';
+import { notifyError } from '@/components/ui/toaster';
 import { markSessionEstablished, queryKeys } from '@/lib/query';
 
 const DEFAULT_BRANDING = { brandTitle: 'Internal API Portal', logoDataUrl: '' };
@@ -89,3 +92,52 @@ export const ALL_ADMIN_SECTIONS = [
   'audit',
   'system',
 ];
+
+/** Operation + API search, 200 ms after the last keystroke, cancelled when superseded. */
+export function useSearch(query: string) {
+  const q = useDebounced(query.trim(), 200);
+  return useQuery({
+    queryKey: queryKeys.search(q),
+    queryFn: ({ signal }) => api.search(q, signal),
+    enabled: q.length >= 2,
+    staleTime: 30_000,
+    placeholderData: (previous) => previous,
+  });
+}
+
+function useDebounced<T>(value: T, ms: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, ms]);
+  return debounced;
+}
+
+/** Star / unstar an API; the catalog updates at once and rolls back on failure. */
+export function useToggleFavorite() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  return useMutation({
+    mutationFn: ({ id, favorite }: { id: number; favorite: boolean }) => api.setFavorite(id, favorite),
+    onMutate: async ({ id, favorite }) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.catalog });
+      const previous = queryClient.getQueryData<ApiSummary[]>(queryKeys.catalog);
+      queryClient.setQueryData<ApiSummary[]>(queryKeys.catalog, (list) =>
+        list?.map((item) => (item.id === id ? { ...item, favorite } : item)),
+      );
+      queryClient.setQueryData<ApiDefinition>(queryKeys.api(String(id)), (item) =>
+        item ? { ...item, favorite } : item,
+      );
+      return { previous };
+    },
+    onError: (error, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(queryKeys.catalog, context.previous);
+      notifyError(error, t('catalog.favoriteFailed'));
+    },
+    onSettled: (_r, _e, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.catalog });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.api(String(id)) });
+    },
+  });
+}

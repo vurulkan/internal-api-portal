@@ -118,6 +118,8 @@ func (s *Server) handleCreateAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditTarget(r, "api", strconv.Itoa(id), payload.Name)
+	payload.ID = id
+	s.refreshInBackground(payload)
 	writeJSON(w, http.StatusCreated, map[string]int{"id": id})
 }
 
@@ -158,7 +160,10 @@ func (s *Server) handleUpdateAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "failed to update api")
 		return
 	}
-	auditChanges(r, before, payload, "id", "createdAt", "updatedAt", "lastSpecRefreshAt", "lastSpecStatus", "injectHeaders", "injectHeaderNames")
+	auditChanges(r, before, payload, "id", "createdAt", "updatedAt", "lastSpecRefreshAt", "lastSpecStatus", "specVersion", "operationCount", "injectHeaders", "injectHeaderNames")
+	if before.InternalOpenAPIURL != payload.InternalOpenAPIURL {
+		s.refreshInBackground(payload)
+	}
 	for _, h := range payload.InjectHeaders {
 		if h.Value != "" {
 			auditChanged(r, "injectHeaders")

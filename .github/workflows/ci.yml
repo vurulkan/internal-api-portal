@@ -44,6 +44,10 @@ jobs:
           "$RUNNER_TEMP/staticcheck" ./...
       - name: go test -race
         run: go test -race -count=1 ./...
+      # Timing budgets (catalog search < 100 ms on 3000 operations) need a build
+      # without the race detector.
+      - name: performance budgets
+        run: go test -count=1 -run 'TestSearchIsFilteredByPermissionAndFast' ./internal/api/
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - name: log shipping examples
