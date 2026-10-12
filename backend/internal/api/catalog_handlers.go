@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"sigs.k8s.io/yaml"
 
 	"api-portal/backend/internal/models"
 	"api-portal/backend/internal/netguard"
@@ -185,14 +186,23 @@ func (s *Server) handleSetFavorite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"favorite": r.Method == http.MethodPut})
 }
 
+// resolveAPI finds the API of a {id} route parameter: a numeric id or the slug
+// (the portal's own URLs use slugs: /apis/payments/operations/createCharge).
+func (s *Server) resolveAPI(r *http.Request) (*models.APIDefinition, error) {
+	ref := chi.URLParam(r, "id")
+	if id, err := strconv.Atoi(ref); err == nil {
+		return s.store.GetAPIDefinition(r.Context(), id)
+	}
+	return s.store.GetAPIDefinitionBySlug(r.Context(), ref)
+}
+
 func (s *Server) handleAPIDetails(w http.ResponseWriter, r *http.Request) {
 	identity, ok := s.identityForRequest(r)
 	if !ok {
 		writeError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
-	apiDef, err := s.store.GetAPIDefinition(r.Context(), id)
+	apiDef, err := s.resolveAPI(r)
 	if err != nil {
 		writeError(w, r, http.StatusNotFound, "api not found")
 		return
@@ -208,12 +218,54 @@ func (s *Server) handleAPIDetails(w http.ResponseWriter, r *http.Request) {
 	}
 	favorites, _ := s.store.Favorites(r.Context(), identity.User.ID)
 	summary := summarize(*apiDef, engine)
-	writeJSON(w, http.StatusOK, map[string]any{
+	// Header names only: the try-it console shows which headers the portal adds,
+	// never their values.
+	injected, _ := s.store.GetAPIInjectHeaders(r.Context(), apiDef.ID)
+	injectNames := make([]string, 0, len(injected))
+	for name := range injected {
+		injectNames = append(injectNames, name)
+	}
+	sort.Strings(injectNames)
+	body := map[string]any{
 		"id": apiDef.ID, "name": apiDef.Name, "slug": apiDef.Slug, "description": apiDef.Description, "isActive": apiDef.IsActive, "tryItEnabled": apiDef.TryItEnabled, "allowedMethods": apiDef.AllowedMethods, "allowedPathPrefixes": apiDef.AllowedPathPrefixes, "ownerTeam": apiDef.OwnerTeam, "tags": apiDef.Tags, "createdAt": apiDef.CreatedAt, "updatedAt": apiDef.UpdatedAt, "lastSpecRefreshAt": apiDef.LastSpecRefreshAt,
 		"specState": summary.SpecState, "specError": summary.SpecError, "specVersion": apiDef.SpecVersion, "operationCount": apiDef.OperationCount,
-		"rateLimitPerMinute": apiDef.RateLimitPerMinute, "favorite": favorites[apiDef.ID],
+		"rateLimitPerMinute": apiDef.RateLimitPerMinute, "timeoutSeconds": apiDef.TimeoutSeconds, "favorite": favorites[apiDef.ID],
+		"allowedRequestHeaders": nonNilStrings(apiDef.AllowedRequestHeaders), "forwardAllXHeaders": apiDef.ForwardAllXHeaders, "injectHeaderNames": injectNames,
 		"permissions": map[string]bool{"view": engine.CanViewAPI(apiDef.ID), "invoke": engine.CanInvokeAPI(apiDef.ID), "manage": engine.CanManageAPI(apiDef.ID)},
-	})
+	}
+	// Internal URLs stay server-side for everyone but the API's managers.
+	if summary.CanManage {
+		body["internalBaseUrl"] = apiDef.InternalBaseURL
+		body["internalOpenapiUrl"] = apiDef.InternalOpenAPIURL
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+// handleAPIActivity: the spec history (changes, failures) for the API's managers.
+func (s *Server) handleAPIActivity(w http.ResponseWriter, r *http.Request) {
+	identity, _ := s.identityForRequest(r)
+	apiDef, err := s.resolveAPI(r)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "api not found")
+		return
+	}
+	if !rbac.New(identity.User.IsAdmin, identity.Permissions).CanManageAPI(apiDef.ID) {
+		writeError(w, r, http.StatusForbidden, "you don't manage this API")
+		return
+	}
+	history, err := s.store.SpecHistory(r.Context(), apiDef.ID)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "failed to load the history")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": history})
 }
 
 func (s *Server) handleAPISpec(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +274,12 @@ func (s *Server) handleAPISpec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	resolved, err := s.resolveAPI(r)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "api not found")
+		return
+	}
+	id := resolved.ID
 	engine := rbac.New(identity.User.IsAdmin, identity.Permissions)
 	if !engine.CanViewAPI(id) && !engine.CanManageAPI(id) {
 		writeError(w, r, http.StatusForbidden, "forbidden")
@@ -243,9 +300,22 @@ func (s *Server) handleAPISpec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadGateway, "the API's specification is currently unavailable")
 		return
 	}
-	s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "api.spec.view", ResourceType: "api", ResourceID: strconv.Itoa(id), StatusCode: http.StatusOK})
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(cache.SpecJSON)
+	s.recordAudit(r, models.AuditLog{User: identity.User.Username, Action: "api.spec.view", ResourceType: "api", ResourceID: strconv.Itoa(id), ResourceName: resolved.Name, StatusCode: http.StatusOK})
+	// ?format=yaml converts; ?download=1 makes it a file ("payments.yaml").
+	body, contentType, ext := []byte(cache.SpecJSON), "application/json", "json"
+	if r.URL.Query().Get("format") == "yaml" {
+		converted, err := yaml.JSONToYAML(cache.SpecJSON)
+		if err != nil {
+			writeError(w, r, http.StatusInternalServerError, "could not convert the specification")
+			return
+		}
+		body, contentType, ext = converted, "application/yaml", "yaml"
+	}
+	if r.URL.Query().Get("download") == "1" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.%s"`, resolved.Slug, ext))
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Write(body)
 }
 
 func (s *Server) handleInvoke(w http.ResponseWriter, r *http.Request) {

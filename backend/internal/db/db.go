@@ -245,6 +245,41 @@ var migrations = []migration{
 		return addColumn(ctx, tx, `ALTER TABLE audit_logs ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''`)
 	}},
 	{9, "operation index, favorites, recently viewed (2.0.0)", false, catalogIndex},
+	{10, "spec history and operation fingerprints (2.0.0)", false, specHistory},
+}
+
+// specHistory: every spec change (operations added / removed / changed, by a
+// fingerprint of each operation's definition) and refresh failures, per API.
+func specHistory(ctx context.Context, tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`ALTER TABLE api_operations ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE api_definitions ADD COLUMN spec_hash TEXT NOT NULL DEFAULT ''`,
+	} {
+		if err := addColumn(ctx, tx, stmt); err != nil {
+			return err
+		}
+	}
+	return execAll(ctx, tx,
+		`CREATE TABLE IF NOT EXISTS api_spec_history (
+			id INTEGER PRIMARY KEY,
+			api_id INTEGER NOT NULL REFERENCES api_definitions(id) ON DELETE CASCADE,
+			at DATETIME NOT NULL,
+			kind TEXT NOT NULL CHECK (kind IN ('initial', 'changed', 'failed')),
+			spec_hash TEXT NOT NULL DEFAULT '',
+			version TEXT NOT NULL DEFAULT '',
+			operation_count INTEGER NOT NULL DEFAULT 0,
+			added_count INTEGER NOT NULL DEFAULT 0,
+			removed_count INTEGER NOT NULL DEFAULT 0,
+			changed_count INTEGER NOT NULL DEFAULT 0,
+			added TEXT NOT NULL DEFAULT '[]',
+			removed TEXT NOT NULL DEFAULT '[]',
+			changed TEXT NOT NULL DEFAULT '[]',
+			error TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_spec_history_api ON api_spec_history(api_id, at)`,
+		// Fingerprints are unknown for operations indexed before: re-index on the next refresh.
+		`UPDATE api_definitions SET spec_hash = ''`,
+	)
 }
 
 // catalogIndex: the operations of every cached spec, searchable with FTS5 (kept in

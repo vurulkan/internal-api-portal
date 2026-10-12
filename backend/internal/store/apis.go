@@ -204,8 +204,15 @@ func (s *Store) MarkSpecRefreshFailure(ctx context.Context, apiID int, message s
 	}
 	// Only annotate an existing cache row. Inserting one here used to leave an empty
 	// spec_json behind that was then served (200, empty body) and never re-fetched.
-	_, err = s.conn.ExecContext(ctx, `UPDATE api_spec_cache SET last_error = ? WHERE api_id = ?`, message, apiID)
-	return err
+	if _, err = s.conn.ExecContext(ctx, `UPDATE api_spec_cache SET last_error = ? WHERE api_id = ?`, message, apiID); err != nil {
+		return err
+	}
+	return s.withTx(ctx, func(tx *sql.Tx) error { return recordSpecFailure(ctx, tx, apiID, message) })
+}
+
+// GetAPIDefinitionBySlug finds an API by its slug (the portal's URLs use it).
+func (s *Store) GetAPIDefinitionBySlug(ctx context.Context, slug string) (*models.APIDefinition, error) {
+	return scanAPI(s.conn.QueryRowContext(ctx, `SELECT `+apiColumns+` FROM api_definitions WHERE slug = ?`, slug))
 }
 
 func scanAPI(scanner interface{ Scan(...any) error }) (*models.APIDefinition, error) {
