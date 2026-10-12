@@ -27,6 +27,8 @@ import (
 )
 
 type Server struct {
+	// background tracks spec fetches started after a save (tests wait on it).
+	background sync.WaitGroup
 	store      *store.Store
 	audit      *audit.Logger
 	openapi    *openapi.Service

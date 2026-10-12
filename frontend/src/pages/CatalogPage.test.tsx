@@ -75,6 +75,22 @@ describe('catalog page', () => {
     );
   });
 
+  it('Back undoes a filter change and a search', async () => {
+    mockFetch(routes());
+    const user = userEvent.setup();
+    const { router } = renderApp('/');
+    await user.click(await screen.findByRole('checkbox', { name: 'core' }));
+    await user.click(screen.getByRole('button', { name: 'Table' }));
+    expect(router.state.location.search).toBe('?tag=core&view=list');
+    await router.navigate(-1);
+    await waitFor(() => expect(router.state.location.search).toBe('?tag=core'));
+    expect(screen.getByRole('checkbox', { name: 'core' })).toBeChecked();
+    await user.type(screen.getByRole('searchbox', { name: 'Search APIs and operations' }), 'pay');
+    expect(router.state.location.search).toBe('?tag=core&q=pay');
+    await router.navigate(-1);
+    await waitFor(() => expect(router.state.location.search).toBe('?tag=core'));
+  });
+
   it('stars an API at once and rolls back when saving fails', async () => {
     let fail = false;
     const calls = mockFetch(

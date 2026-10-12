@@ -342,7 +342,9 @@ function GlobalSearch() {
       const nextParams = new URLSearchParams(params);
       if (next) nextParams.set('q', next);
       else nextParams.delete('q');
-      setParams(nextParams, { replace: true });
+      // The first keystroke is a history entry (Back clears the search); the rest
+      // replace it, so Back doesn't step through every letter.
+      setParams(nextParams, { replace: params.has('q') });
     }
   }
 

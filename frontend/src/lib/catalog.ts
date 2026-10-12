@@ -107,7 +107,9 @@ export function filterApis(apis: ApiSummary[], f: CatalogFilters, now = Date.now
 }
 
 export function sortApis(apis: ApiSummary[], sort: Sort) {
-  const byName = (a: ApiSummary, b: ApiSummary) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  // Natural order: "Service 5" before "Service 15".
+  const byName = (a: ApiSummary, b: ApiSummary) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
   const time = (iso?: string) => (iso ? new Date(iso).getTime() : 0);
   return [...apis].sort((a, b) => {
     if (sort === 'viewed') return time(b.lastViewedAt) - time(a.lastViewedAt) || byName(a, b);

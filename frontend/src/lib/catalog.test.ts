@@ -31,6 +31,11 @@ describe('catalog filters', () => {
     expect(filterApis(catalog, { ...base, q: 'REFUND' }).map((a) => a.name)).toEqual(['Payments API']);
   });
 
+  it('sort names naturally', () => {
+    const named = ['Service 15', 'Service 5', 'service 100', 'Service 25'].map((name, id) => ({ ...catalog[0], id, name }));
+    expect(sortApis(named, 'name').map((a) => a.name)).toEqual(['Service 5', 'Service 15', 'Service 25', 'service 100']);
+  });
+
   it('sort by recently viewed, then name', () => {
     expect(sortApis(catalog, 'viewed').map((a) => a.name)).toEqual(['Identity API', 'Payments API']);
     expect(sortApis(catalog, 'name').map((a) => a.name)).toEqual(['Identity API', 'Payments API']);

@@ -254,3 +254,33 @@ func TestIndexMissingSpecsBackfills(t *testing.T) {
 		t.Fatalf("still missing: %v", ids)
 	}
 }
+
+// A saved API's spec is fetched right away (no one has to open it first), and the
+// scheduled refresh covers every active API.
+func TestSpecsAreFetchedWithoutAnyoneOpeningThem(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(paymentsSpec))
+	}))
+	defer upstream.Close()
+	e := newEnv(t)
+	e.srv.config.SpecRefreshInterval = time.Hour
+	e.user("root", true)
+	root := e.login("root")
+	body := map[string]any{"name": "Payments", "slug": "payments", "internalOpenapiUrl": upstream.URL + "/spec", "internalBaseUrl": upstream.URL, "isActive": true}
+	var created struct{ ID int }
+	_ = json.Unmarshal([]byte(e.expect(http.MethodPost, "/api/admin/apis", root, body, http.StatusCreated)), &created)
+	e.srv.background.Wait()
+	if item := e.catalog(root)[created.ID]; item.OperationCount == nil || *item.OperationCount != 5 {
+		t.Fatalf("not fetched after create: %+v", item)
+	}
+
+	ctx := context.Background()
+	inactive, _ := e.store.CreateAPIDefinition(ctx, models.APIDefinition{Name: "Old", Slug: "old", InternalOpenAPIURL: upstream.URL + "/spec", InternalBaseURL: upstream.URL, IsActive: false})
+	active, _ := e.store.CreateAPIDefinition(ctx, models.APIDefinition{Name: "New", Slug: "new", InternalOpenAPIURL: upstream.URL + "/spec", InternalBaseURL: upstream.URL, IsActive: true})
+	e.srv.refreshAllSpecs(ctx)
+	c := e.catalog(root)
+	if c[active].OperationCount == nil || c[inactive].OperationCount != nil {
+		t.Fatalf("scheduled refresh: active %+v, inactive %+v", c[active], c[inactive])
+	}
+}

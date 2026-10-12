@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Boxes, Clock, LayoutGrid, List, Play, Plus, RotateCw, SearchX, Star, TriangleAlert, X } from 'lucide-react';
@@ -54,8 +54,10 @@ export default function CatalogPage() {
   const canCreate = !!me.data?.capabilities?.canCreateApi || !!me.data?.user.isAdmin;
   const specProblems = apis.filter((a) => ['error', 'missing'].includes(specHealth(a))).length;
 
+  // Each filter change is a history entry, so Back undoes it (typing in the search
+  // box replaces its entry instead, see GlobalSearch).
   function update(patch: Partial<CatalogFilters>) {
-    setParams(filtersToParams({ ...filters, ...patch }), { replace: true });
+    setParams(filtersToParams({ ...filters, ...patch }));
   }
   function toggle<K extends 'tags' | 'owners' | 'status'>(key: K, value: CatalogFilters[K][number], on: boolean) {
     const current = filters[key] as string[];
@@ -401,7 +403,7 @@ function ShortcutList({
               className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[13px] hover:bg-muted"
               title={recent && api.lastViewedAt ? formatDateTime(api.lastViewedAt) : undefined}
             >
-              <span className="truncate">{api.name}</span>
+              <span className="truncate">{api.name}</span>{' '}
               {recent && api.lastViewedAt && (
                 <span className="shrink-0 text-xs text-muted-foreground">{formatRelative(api.lastViewedAt)}</span>
               )}
@@ -413,13 +415,24 @@ function ShortcutList({
   );
 }
 
+// The server returns the 50 best matches.
+const SEARCH_LIMIT = 50;
+const SHOWN_FIRST = 10;
+
 function OperationResults({ query, state }: { query: string; state: ReturnType<typeof useSearch> }) {
   const { t } = useTranslation();
+  const [expandedFor, setExpandedFor] = useState('');
   const ops = state.data?.operations ?? [];
+  const expanded = expandedFor === query;
+  const shown = expanded ? ops : ops.slice(0, SHOWN_FIRST);
   return (
     <section aria-labelledby="catalog-operations" aria-busy={state.isFetching}>
       <h2 id="catalog-operations" className="mb-3 text-sm font-semibold">
-        {state.isPending ? t('catalog.operations') : t('catalog.operationsFound', { count: ops.length })}
+        {state.isPending
+          ? t('catalog.operations')
+          : ops.length >= SEARCH_LIMIT
+            ? t('catalog.operationsMany', { count: SEARCH_LIMIT })
+            : t('catalog.operationsFound', { count: ops.length })}
       </h2>
       {state.isPending ? (
         <LoadingRegion className="space-y-1.5">
@@ -435,13 +448,23 @@ function OperationResults({ query, state }: { query: string; state: ReturnType<t
           {t('catalog.noOperations')}
         </p>
       ) : (
-        <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
-          {ops.slice(0, 20).map((op) => (
-            <li key={`${op.apiId} ${op.method} ${op.path}`}>
-              <OperationRow op={op} query={query} />
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+            {shown.map((op) => (
+              <li key={`${op.apiId} ${op.method} ${op.path}`}>
+                <OperationRow op={op} query={query} />
+              </li>
+            ))}
+          </ul>
+          {ops.length > SHOWN_FIRST && !expanded && (
+            <Button variant="link" size="sm" className="mt-2" onClick={() => setExpandedFor(query)}>
+              {t('catalog.showAllOperations', { count: ops.length })}
+            </Button>
+          )}
+          {ops.length >= SEARCH_LIMIT && expanded && (
+            <p className="mt-2 text-[13px] text-muted-foreground">{t('catalog.refineSearch')}</p>
+          )}
+        </>
       )}
     </section>
   );

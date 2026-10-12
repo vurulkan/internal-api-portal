@@ -18,9 +18,12 @@ type Config struct {
 	LogRetentionDays   int
 	SessionMinutes     int
 	AuditPurgeInterval time.Duration
-	ProxyTimeout       time.Duration
-	MaxRequestBytes    int64
-	MaxResponseBytes   int64
+	// SpecRefreshInterval: how often every active API's spec is re-fetched (and
+	// whether a saved API's spec is fetched right away). 0 turns it off.
+	SpecRefreshInterval time.Duration
+	ProxyTimeout        time.Duration
+	MaxRequestBytes     int64
+	MaxResponseBytes    int64
 
 	// TrustedProxies lists the networks whose X-Forwarded-For / X-Forwarded-Proto
 	// headers are believed. Empty means the headers are ignored and RemoteAddr is used,
@@ -87,32 +90,33 @@ type Features struct {
 
 func Load() Config {
 	return Config{
-		Port:               env("PORT", "8080"),
-		DataPath:           env("DATA_PATH", "/data/app.db"),
-		StaticDir:          env("STATIC_DIR", "/app/public"),
-		TimeZone:           env("TIMEZONE", "UTC"),
-		LogRetentionDays:   envInt("LOG_RETENTION_DAYS", 30),
-		SessionMinutes:     envInt("SESSION_MINUTES", 60),
-		AuditPurgeInterval: envDuration("AUDIT_PURGE_INTERVAL", time.Hour),
-		ProxyTimeout:       time.Duration(envInt("PROXY_TIMEOUT_SECONDS", 30)) * time.Second,
-		MaxRequestBytes:    int64(envInt("MAX_REQUEST_BYTES", 1024*1024)),
-		MaxResponseBytes:   int64(envInt("MAX_RESPONSE_BYTES", 5*1024*1024)),
-		TrustedProxies:     envCIDRs("TRUSTED_PROXIES"),
-		CookieSecure:       strings.ToLower(env("COOKIE_SECURE", "auto")),
-		ProxyDenyCIDRs:     envCIDRs("PROXY_DENY_CIDRS"),
-		ProxyAllowLoopback: envBool("PROXY_ALLOW_LOOPBACK", false),
-		BackupDir:          os.Getenv("BACKUP_DIR"),
-		LogFormat:          env("LOG_FORMAT", "json"),
-		LogLevel:           env("LOG_LEVEL", "info"),
-		LogOutput:          env("LOG_OUTPUT", "stdout"),
-		LogAddSource:       envBool("LOG_ADD_SOURCE", false),
-		LogIncludeAudit:    envBool("LOG_INCLUDE_AUDIT", true),
-		ServiceEnvironment: os.Getenv("SERVICE_ENVIRONMENT"),
-		MetricsEnabled:     envBool("METRICS_ENABLED", true),
-		MetricsAddr:        env("METRICS_ADDR", ""),
-		HSTSEnabled:        envBool("HSTS_ENABLED", false),
-		BackupInterval:     envDurationOrOff("BACKUP_INTERVAL"),
-		BackupKeep:         envInt("BACKUP_KEEP", 7),
+		Port:                env("PORT", "8080"),
+		DataPath:            env("DATA_PATH", "/data/app.db"),
+		StaticDir:           env("STATIC_DIR", "/app/public"),
+		TimeZone:            env("TIMEZONE", "UTC"),
+		LogRetentionDays:    envInt("LOG_RETENTION_DAYS", 30),
+		SessionMinutes:      envInt("SESSION_MINUTES", 60),
+		AuditPurgeInterval:  envDuration("AUDIT_PURGE_INTERVAL", time.Hour),
+		SpecRefreshInterval: specRefreshInterval(),
+		ProxyTimeout:        time.Duration(envInt("PROXY_TIMEOUT_SECONDS", 30)) * time.Second,
+		MaxRequestBytes:     int64(envInt("MAX_REQUEST_BYTES", 1024*1024)),
+		MaxResponseBytes:    int64(envInt("MAX_RESPONSE_BYTES", 5*1024*1024)),
+		TrustedProxies:      envCIDRs("TRUSTED_PROXIES"),
+		CookieSecure:        strings.ToLower(env("COOKIE_SECURE", "auto")),
+		ProxyDenyCIDRs:      envCIDRs("PROXY_DENY_CIDRS"),
+		ProxyAllowLoopback:  envBool("PROXY_ALLOW_LOOPBACK", false),
+		BackupDir:           os.Getenv("BACKUP_DIR"),
+		LogFormat:           env("LOG_FORMAT", "json"),
+		LogLevel:            env("LOG_LEVEL", "info"),
+		LogOutput:           env("LOG_OUTPUT", "stdout"),
+		LogAddSource:        envBool("LOG_ADD_SOURCE", false),
+		LogIncludeAudit:     envBool("LOG_INCLUDE_AUDIT", true),
+		ServiceEnvironment:  os.Getenv("SERVICE_ENVIRONMENT"),
+		MetricsEnabled:      envBool("METRICS_ENABLED", true),
+		MetricsAddr:         env("METRICS_ADDR", ""),
+		HSTSEnabled:         envBool("HSTS_ENABLED", false),
+		BackupInterval:      envDurationOrOff("BACKUP_INTERVAL"),
+		BackupKeep:          envInt("BACKUP_KEEP", 7),
 
 		DataEncryptionKey:      envSecret("DATA_ENCRYPTION_KEY"),
 		DataEncryptionKeyPrev:  envSecret("DATA_ENCRYPTION_KEY_PREVIOUS"),
@@ -159,6 +163,13 @@ func (c Config) BackupDirFor() string {
 }
 
 // envDurationOrOff reads a duration where empty or "0" means disabled.
+func specRefreshInterval() time.Duration {
+	if os.Getenv("SPEC_REFRESH_INTERVAL") == "0" {
+		return 0
+	}
+	return envDuration("SPEC_REFRESH_INTERVAL", 6*time.Hour)
+}
+
 func envDurationOrOff(key string) time.Duration {
 	raw := os.Getenv(key)
 	if raw == "" || raw == "0" {
