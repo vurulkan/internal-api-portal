@@ -1,0 +1,41 @@
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "@timestamp": {"type": "date_nanos"},
+        "message": {"type": "match_only_text"},
+        "event": {"properties": {
+          "dataset": {"type": "keyword"}, "action": {"type": "keyword"}, "outcome": {"type": "keyword"},
+          "category": {"type": "keyword"}, "type": {"type": "keyword"}, "kind": {"type": "keyword"},
+          "reason": {"type": "keyword", "fields": {"text": {"type": "match_only_text"}}},
+          "duration": {"type": "long"}
+        }},
+        "user": {"properties": {"name": {"type": "keyword"}, "domain": {"type": "keyword"}}},
+        "source": {"properties": {"ip": {"type": "ip"}}},
+        "user_agent": {"properties": {"original": {"type": "keyword", "ignore_above": 1024}}},
+        "http": {"properties": {
+          "request": {"properties": {"id": {"type": "keyword"}, "method": {"type": "keyword"}}},
+          "response": {"properties": {"status_code": {"type": "long"}, "body": {"properties": {"bytes": {"type": "long"}}}}},
+          "route": {"type": "keyword"}
+        }},
+        "url": {"properties": {"path": {"type": "wildcard"}}},
+        "error": {"properties": {"message": {"type": "match_only_text"}, "stack_trace": {"type": "wildcard"}}},
+        "portal": {"properties": {
+          "audit": {"properties": {"action": {"type": "keyword"}, "outcome": {"type": "keyword"}, "blocked": {"type": "boolean"}}},
+          "target": {"properties": {"type": {"type": "keyword"}, "id": {"type": "keyword"}, "name": {"type": "keyword"}}},
+          "changes": {"type": "keyword"},
+          "details": {"type": "flattened"},
+          "http": {"properties": {"status_code": {"type": "long"}}},
+          "invoke": {"properties": {
+            "request_bytes": {"type": "long"}, "response_bytes": {"type": "long"},
+            "headers": {"type": "keyword"}, "query_params": {"type": "keyword"}
+          }}
+        }}
+      },
+      "dynamic_templates": [
+        {"portal_strings_as_keywords": {"path_match": "portal.*", "match_mapping_type": "string", "mapping": {"type": "keyword", "ignore_above": 1024}}}
+      ]
+    }
+  },
+  "_meta": {"description": "internal-api-portal: portal.* fields and the ECS fields the portal writes"}
+}

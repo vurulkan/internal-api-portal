@@ -36,7 +36,7 @@ func main() {
 	//   server version
 	if len(os.Args) > 1 {
 		// Logs go to stderr so stdout carries only the command's result.
-		logging.SetupWriter(os.Stderr, cfg.LogFormat, cfg.LogLevel, "internal-api-portal", version)
+		logging.SetupWriter(os.Stderr, logOptions(cfg))
 		switch os.Args[1] {
 		case "healthcheck":
 			os.Exit(healthcheck(cfg.Port))
@@ -50,7 +50,7 @@ func main() {
 			os.Exit(2)
 		}
 	}
-	logging.Setup(cfg.LogFormat, cfg.LogLevel, "internal-api-portal", version)
+	logging.Setup(logOptions(cfg))
 
 	database, err := db.Open(cfg.DataPath)
 	if err != nil {
@@ -74,7 +74,7 @@ func main() {
 		slog.Warn("branding.svg_logo_removed", "reason", "SVG logos are no longer accepted (they can carry script); upload a PNG, JPEG or WEBP")
 	}
 
-	auditLogger := audit.New(dataStore)
+	auditLogger := audit.New(dataStore, cfg.LogIncludeAudit)
 	auditLogger.StartRetention(context.Background(), cfg.LogRetentionDays, cfg.AuditPurgeInterval)
 	db.StartBackups(context.Background(), database.Conn, cfg.BackupDirFor(), cfg.BackupInterval, cfg.BackupKeep)
 	if cfg.BackupInterval > 0 {
@@ -230,9 +230,22 @@ func bootstrapAdmin(cfg config.Config, dataStore *store.Store) {
 		return
 	}
 	if generated {
-		slog.Warn("bootstrap.admin_created", "username", cfg.BootstrapAdminUsername, "password", pw,
+		// Deliberately logged once (the key is not one the log redaction masks).
+		slog.Warn("bootstrap.admin_created", "username", cfg.BootstrapAdminUsername, "generated_initial_password", pw,
 			"note", "generated because BOOTSTRAP_ADMIN_PASSWORD is not set; shown only now, must be changed at first sign-in")
 	} else {
 		slog.Info("bootstrap.admin_created", "username", cfg.BootstrapAdminUsername, "password_source", "BOOTSTRAP_ADMIN_PASSWORD", "note", "must be changed at first sign-in")
+	}
+}
+
+func logOptions(cfg config.Config) logging.Options {
+	return logging.Options{
+		Format:      cfg.LogFormat,
+		Level:       cfg.LogLevel,
+		Output:      cfg.LogOutput,
+		AddSource:   cfg.LogAddSource,
+		Service:     "internal-api-portal",
+		Version:     version,
+		Environment: cfg.ServiceEnvironment,
 	}
 }

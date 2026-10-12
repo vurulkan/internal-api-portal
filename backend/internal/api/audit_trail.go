@@ -81,6 +81,8 @@ func (s *Server) audited(action string) func(http.Handler) http.Handler {
 				Blocked:      outcome == "denied" || info.blocked,
 				User:         info.actor,
 				ActorSource:  info.actorSource,
+				// The portal's own answer; fill may replace StatusCode with the upstream's.
+				PortalStatusCode: status,
 			}
 			if len(info.changes) > 0 {
 				sort.Strings(info.changes)
@@ -172,12 +174,12 @@ func auditChanges(r *http.Request, before, after any, ignore ...string) {
 		if skip[key] {
 			continue
 		}
-		if !reflect.DeepEqual(a[key], value) {
+		if !sameValue(a[key], value) {
 			changed = append(changed, key)
 		}
 	}
-	for key := range a {
-		if _, ok := b[key]; !ok && !skip[key] {
+	for key, value := range a {
+		if _, ok := b[key]; !ok && !skip[key] && !isEmpty(value) {
 			changed = append(changed, key)
 		}
 	}
@@ -207,4 +209,27 @@ func jsonFields(v any) map[string]any {
 	}
 	_ = json.Unmarshal(raw, &out)
 	return out
+}
+
+// sameValue compares JSON values, treating null, "", [] and {} as equal: a client
+// that leaves a list out hasn't changed an empty one.
+func sameValue(a, b any) bool {
+	if isEmpty(a) && isEmpty(b) {
+		return true
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+func isEmpty(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return x == ""
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0
+	}
+	return false
 }

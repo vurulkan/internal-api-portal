@@ -66,7 +66,7 @@ backend/
   internal/audit      audit log writer and retention
   internal/config     environment variables
   internal/db         SQLite connection, versioned migrations, backups
-  internal/logging    slog setup, request ids
+  internal/logging    slog setup, ECS JSON handler, redaction, request ids
   internal/metrics    Prometheus text-format metrics
   internal/models
   internal/netguard   dial-time guard for upstream connections
@@ -81,6 +81,7 @@ frontend/
   src/services
 
 deploy/               kustomize manifests (+ optional ingress / network policy examples)
+deploy/logging/       Elasticsearch templates, ILM, Fluent Bit / Filebeat examples
 .github/              CI and Dependabot
 ```
 
@@ -232,7 +233,7 @@ The LDAP bind password and the Azure AD client secret are stored encrypted (AES-
 | `DATA_PATH` | `/data/app.db` | SQLite database file path |
 | `STATIC_DIR` | `/app/public` | Frontend build directory served by backend |
 | `TIMEZONE` | `UTC` | Time zone for audit formatting and time display |
-| `LOG_RETENTION_DAYS` | `30` | Audit retention window |
+| `LOG_RETENTION_DAYS` | `30` | Days audit entries are kept in the database (the log stream is the long-term record, see Logs) |
 | `SESSION_MINUTES` | `60` | Idle timeout seeded on the first start; afterwards Admin → Session Settings is used (with the maximum session age, default 12 hours) |
 | `DATA_ENCRYPTION_KEY` / `_FILE` | _(empty)_ | Key for secrets at rest (see Encryption at Rest) |
 | `DATA_ENCRYPTION_KEY_PREVIOUS` / `_FILE` | _(empty)_ | Previous key, during a rotation |
@@ -248,8 +249,12 @@ The LDAP bind password and the Azure AD client secret are stored encrypted (AES-
 | `COOKIE_SECURE` | `auto` | Secure flag (and `__Host-` name) of the session and Azure AD cookies: `auto` (TLS, or `https` from a trusted proxy), `true`, `false`. Behind a TLS-terminating ingress set `TRUSTED_PROXIES` or `COOKIE_SECURE=true`. |
 | `PROXY_DENY_CIDRS` | _(empty)_ | Extra networks the try-it proxy and spec fetcher may never connect to |
 | `PROXY_ALLOW_LOOPBACK` | `false` | Allow upstreams on `127.0.0.0/8` / `::1` (local development only) |
-| `LOG_FORMAT` | `json` | `json` or `text` |
+| `LOG_FORMAT` | `json` | `json` (ECS, for log shippers) or `text` (for people) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` (probe and `/metrics` requests log at `debug`) |
+| `LOG_OUTPUT` | `stdout` | `stdout` or `stderr` |
+| `LOG_ADD_SOURCE` | `false` | Add `log.origin.*` (file, line, function) to every line |
+| `LOG_INCLUDE_AUDIT` | `true` | Write every audit entry to the log too (`false`: database only) |
+| `SERVICE_ENVIRONMENT` | _(empty)_ | Written as `service.environment` (`prod`, `test`, …) |
 | `METRICS_ENABLED` | `true` | Serve Prometheus metrics |
 | `METRICS_ADDR` | _(empty)_ | Serve metrics on a separate listener (e.g. `:9090`) instead of `/metrics` on the main port |
 | `HSTS_ENABLED` | `false` | Send `Strict-Transport-Security`; enable only when the portal is reached exclusively over HTTPS |
@@ -311,7 +316,7 @@ Published to GHCR by CI for every release tag, for `linux/amd64` and `linux/arm6
 
 | Tag | Points to |
 |---|---|
-| `X.Y.Z` (e.g. `1.5.0`) | that release |
+| `X.Y.Z` (e.g. `1.6.0`) | that release |
 | `latest` | the newest release |
 
 Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requests are built, not published. CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access*).
@@ -319,7 +324,7 @@ Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requ
 Each image carries an SBOM and SLSA provenance (inside the image index) and is signed with cosign (keyless, GitHub OIDC); the signature sits next to the image as a `sha256-<digest>.sig` tag. Verify before deploying:
 
 ```bash
-cosign verify ghcr.io/vurulkan/internal-api-portal:1.5.0 \
+cosign verify ghcr.io/vurulkan/internal-api-portal:1.6.0 \
   --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -396,6 +401,13 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
 
+### Upgrading to 1.6.0
+
+- `LOG_FORMAT=json` is now ECS: the field names change (`time` → `@timestamp` in UTC, `level` → `log.level`, `msg` → `message`, `user` → `user.name`, `ip` → `source.ip`, `request_id` → `http.request.id`, `status` → `http.response.status_code`, `action` → `portal.audit.action`, …; other keys move under `portal.*`). Update log alerts or parsers that read the old names. `LOG_FORMAT=text` is unchanged apart from the key names.
+- The audit line carries the whole entry now (target name, method and path, upstream status, sizes, changed fields, reason, identity source, user agent); the request line has `event.dataset: portal.http` instead of `msg: http.request`.
+- Migration 8 adds the user agent to audit entries (shown in the CSV export); older entries have none.
+- Optional: ship the logs with [`deploy/logging/`](deploy/logging) (see Logs).
+
 ### Upgrading to 1.5.0
 
 - Scopes: `ldap.manage` becomes `idp.manage`; roles with `audit.view` also get `audit.export`. Session / branding settings need `settings.manage` and other people's sessions `session.manage` (administrators have both); Azure AD settings need `idp.manage` (before: administrators only).
@@ -426,11 +438,74 @@ If you changed the old manifest to run as another user, make `/data` writable by
 
 Metrics: `portal_http_requests_total{route,method,code}`, `portal_http_request_duration_seconds{route,method}`, `portal_invoke_total{api,outcome}`, `portal_invoke_upstream_duration_seconds{api}`, `portal_spec_refresh_total{outcome}`, `portal_login_total{source,outcome}`. The `route` label is the route pattern (`/api/apis/{id}`), never the raw path.
 
-Logs are JSON lines on stdout (`LOG_FORMAT=text` for development):
+### Logs
 
-- one `http.request` line per request: method, route, path, status, duration, bytes, client IP, user, `request_id`
-- one `audit` line per audit entry, with the same `request_id`
-- `db.migration.applied`, `login.azure.failed`, `http.panic`, startup / shutdown events
+The pod log (stdout) is a complete record of who did what: every audit entry and every request is a JSON line in the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html) (ECS 8.11), so Filebeat or Fluent Bit can ship it to Elasticsearch without parsing rules and Kibana's ECS views work as they are. `LOG_FORMAT=text` prints the same records for people (local development).
+
+Every line has `@timestamp` (UTC, nanoseconds), `log.level`, `message`, `ecs.version`, `service.name` / `.version` / `.environment` and `event.dataset`, which is one of:
+
+| `event.dataset` | One line per | Suggested retention |
+|---|---|---|
+| `portal.audit` | audit entry: the full database record | 400 days |
+| `portal.http` | HTTP request: method, route, path, status, duration, bytes, client IP, user, user agent | 30 days |
+| `portal.app` | anything else: startup, migrations, backups, sign-in errors, panics (`event.action` is the event name, e.g. `db.migration.applied`) | 14 days |
+
+A try-it call produces two lines with the same `http.request.id`:
+
+```json
+{"@timestamp":"2026-10-12T06:58:25.354331203Z","log":{"level":"info"},"message":"root api.invoke success api Payments API",
+ "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"1.6.0","environment":"prod","type":"api-portal"},
+ "event":{"dataset":"portal.audit","kind":"event","category":["web"],"type":["access"],"action":"api.invoke","outcome":"success","duration":150000000},
+ "user":{"name":"root","domain":"local"},"source":{"ip":"10.244.3.17"},"user_agent":{"original":"Mozilla/5.0 …"},
+ "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"response":{"status_code":201}},"url":{"path":"/v1/charges"},
+ "portal":{"audit":{"action":"api.invoke.success","outcome":"success","blocked":false},"http":{"status_code":200},
+   "target":{"type":"api","id":"1","name":"Payments API"},
+   "invoke":{"query_params":["apikey","limit"],"headers":["Content-Type","X-Forwarded-By","X-Service-Key","X-Tenant-Id"],"request_bytes":13,"response_bytes":13},
+   "details":{"method":"POST","path":"/v1/charges","queryParams":["apikey","limit"]}}}
+{"@timestamp":"2026-10-12T06:58:25.360145325Z","log":{"level":"info"},"message":"POST /api/apis/{id}/invoke 200",
+ "event":{"dataset":"portal.http","kind":"event","category":["web"],"type":["access"],"outcome":"success","duration":183423854},
+ "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"route":"/api/apis/{id}/invoke","response":{"status_code":200,"body":{"bytes":333}}},
+ "url":{"path":"/api/apis/1/invoke"},"user":{"name":"root"},"source":{"ip":"10.244.3.17"}, …}
+```
+
+Audit lines:
+
+- `event.action` is `<domain>.<verb>` and `event.outcome` the ECS outcome (`success` / `failure`); the portal's own name and outcome (`api.invoke.denied`, `denied`) are in `portal.audit.action` / `.outcome`. The reason for a denial or failure is `event.reason`.
+- `http.response.status_code` is the status that matters for the action: for a try-it call the **upstream's** answer; the portal's own response code is `portal.http.status_code`.
+- `user.domain` is the identity source (`local`, `ldap`, `azuread`), `portal.target.*` what was acted on, `portal.changes` the names of the changed fields, `portal.details` the rest of the entry.
+- Values that are never logged: passwords, tokens, session cookies, header values (except `Content-Type`, `Accept`, `Accept-Language`, `User-Agent`), query values, injected header values, request and response bodies. A field with a secret's name (`password`, `bindPassword`, `clientSecret`, `token`, `authorization`, `cookie`, `apiKey`, …, in any case or with `-` / `_`) is written as `[REDACTED]`, in `text` format too. A test fails if a secret used during the test run shows up in the log.
+
+Fields the portal adds beyond ECS live under `portal.*`, so they never collide with other services' logs in a shared index.
+
+#### Shipping to Elasticsearch
+
+[`deploy/logging/`](deploy/logging) has everything for Elasticsearch 8.13 or newer:
+
+| File | |
+|---|---|
+| `elasticsearch/setup.sh` | Installs the ILM policies, the `portal@mappings` component template, the index templates and the `portal-route` ingest pipeline (idempotent; `ES_URL`, `ES_AUTH` or `ES_API_KEY`) |
+| `fluent-bit.example.yaml` | Fluent Bit DaemonSet that reads only the portal's container logs, adds Kubernetes metadata and keeps the portal's `@timestamp` |
+| `filebeat.example.yaml` | The same with Filebeat (use one of the two) |
+
+The shipper writes every line to `logs-portal-default`; the `portal-route` pipeline moves it to `logs-portal.audit-default`, `logs-portal.http-default` or `logs-portal.app-default` by `event.dataset`, so each dataset gets its own retention (ILM `portal-audit` 400 days, `portal-http` 30 days, `portal-app` 14 days; change them in `elasticsearch/ilm-*.json`) and its own access rights: grant auditors `read` on `logs-portal.audit-*` only. The shipper's role needs `create_doc` and `auto_configure` on `logs-portal*-*`. `portal.details` is mapped as `flattened`, so arbitrary detail keys never grow the mapping.
+
+Example queries (Kibana KQL on the `logs-portal.audit-*` data view):
+
+| Question | KQL |
+|---|---|
+| Which APIs did olivia call in the last 7 days, and what did they answer? | `user.name : "olivia" and event.action : "api.invoke"` (columns `portal.target.name`, `http.request.method`, `url.path`, `http.response.status_code`) |
+| Denied and failed actions, with the reason | `portal.audit.outcome : ("denied" or "failed")` (column `event.reason`) |
+| Who changed what on the Payments API? | `portal.target.type : "api" and portal.target.name : "Payments API" and portal.changes : *` |
+| Every sign-in failure from one address | `event.action : "auth.login" and event.outcome : "failure" and source.ip : "10.244.3.17"` |
+| Upstream errors behind successful try-it calls | `event.action : "api.invoke" and http.response.status_code >= 500` |
+
+ES|QL, e.g. the slowest routes:
+
+```
+FROM logs-portal.http-* | STATS requests = COUNT(*), p95_ms = PERCENTILE(event.duration, 95) / 1000000 BY http.route | SORT p95_ms DESC
+```
+
+The database keeps audit entries for `LOG_RETENTION_DAYS` (default 30) as an operational copy behind Admin → Audit Logs and the CSV export; the log stream in Elasticsearch is the long-term audit record. With `LOG_INCLUDE_AUDIT=false` audit entries are written to the database only.
 
 Every response carries an `X-Request-Id` header. An incoming `X-Request-Id` (letters, digits, `._:-`, up to 64 characters) is kept, so ids from an ingress carry through. The id is stored with each audit entry and returned in error bodies.
 

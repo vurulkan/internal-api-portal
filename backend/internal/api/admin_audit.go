@@ -100,7 +100,7 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Audit-Export-Truncated", "true")
 	}
 	writer := csv.NewWriter(w)
-	_ = writer.Write([]string{"timestamp", "user", "actorSource", "action", "outcome", "targetType", "targetId", "targetName", "changes", "statusCode", "durationMs", "blocked", "sourceIp", "requestId", "errorMessage", "details"})
+	_ = writer.Write([]string{"timestamp", "user", "actorSource", "action", "outcome", "targetType", "targetId", "targetName", "changes", "statusCode", "durationMs", "blocked", "sourceIp", "userAgent", "requestId", "errorMessage", "details"})
 	n := 0
 	_, err = s.store.EachAuditLog(r.Context(), filter, max, func(e models.AuditLog) error {
 		n++
@@ -108,7 +108,7 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 			e.Timestamp.In(s.timezone).Format(time.RFC3339), csvCell(e.User), csvCell(e.ActorSource), csvCell(e.Action), e.Outcome,
 			csvCell(e.ResourceType), csvCell(e.ResourceID), csvCell(e.ResourceName), csvCell(e.Changes),
 			strconv.Itoa(e.StatusCode), strconv.FormatInt(e.DurationMs, 10), strconv.FormatBool(e.Blocked),
-			csvCell(e.SourceIP), csvCell(e.RequestID), csvCell(e.ErrorMessage), csvCell(e.DetailsJSON),
+			csvCell(e.SourceIP), csvCell(e.UserAgent), csvCell(e.RequestID), csvCell(e.ErrorMessage), csvCell(e.DetailsJSON),
 		}); err != nil {
 			return err
 		}

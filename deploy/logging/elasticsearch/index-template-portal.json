@@ -1,0 +1,11 @@
+{
+  "index_patterns": ["logs-portal-*"],
+  "data_stream": {},
+  "priority": 200,
+  "composed_of": ["logs@mappings", "logs@settings", "ecs@mappings", "portal@mappings"],
+  "ignore_missing_component_templates": ["ecs@mappings"],
+  "template": {
+    "settings": {"index.default_pipeline": "portal-route", "index.lifecycle.name": "portal-app"}
+  },
+  "_meta": {"description": "internal-api-portal intake: shippers write here, portal-route moves each line to its dataset's data stream"}
+}

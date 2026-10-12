@@ -78,7 +78,7 @@ func StartBackups(ctx context.Context, conn *sql.DB, dir string, interval time.D
 				if path, err := Backup(ctx, conn, dir, keep); err != nil {
 					slog.Error("db.backup_failed", "error", err.Error())
 				} else {
-					slog.Info("db.backup", "path", path, "keep", keep)
+					slog.Info("db.backup", "file.path", path, "keep", keep)
 				}
 			}
 		}

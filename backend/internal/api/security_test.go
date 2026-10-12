@@ -57,7 +57,7 @@ func newEnv(t *testing.T) *testEnv {
 		PasswordMinLength:  12,
 		Features:           config.Features{TryIt: true, LDAP: true, AzureAD: true, AuditExport: true},
 	}
-	srv := NewServer(st, audit.New(st), cfg)
+	srv := NewServer(st, audit.New(st, true), cfg)
 	return &testEnv{t: t, srv: srv, handler: srv.Router(), store: st, dbConn: database.Conn}
 }
 

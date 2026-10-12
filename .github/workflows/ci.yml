@@ -46,6 +46,11 @@ jobs:
         run: go test -race -count=1 ./...
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - name: log shipping examples
+        working-directory: deploy/logging
+        run: |
+          for f in elasticsearch/*.json; do jq empty "$f" || exit 1; done
+          sh -n elasticsearch/setup.sh
 
   frontend:
     runs-on: ubuntu-latest

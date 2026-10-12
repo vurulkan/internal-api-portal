@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	"api-portal/backend/internal/auth"
-	"api-portal/backend/internal/logging"
 	"api-portal/backend/internal/models"
 	"api-portal/backend/internal/rbac"
 	"api-portal/backend/internal/store"
@@ -238,7 +236,7 @@ func (s *Server) azureFail(w http.ResponseWriter, r *http.Request, code, step st
 	if err != nil {
 		detail = step + ": " + err.Error()
 	}
-	slog.WarnContext(r.Context(), "login.azure.failed", "code", code, "detail", detail, "request_id", logging.RequestID(r.Context()))
+	slog.WarnContext(r.Context(), "login.azure.failed", "code", code, "event.reason", detail)
 	s.metrics.Logins.Inc("azuread", "failed")
 	outcome := "failed"
 	if code == "azure_groups" || code == "azure_denied" {
@@ -273,7 +271,8 @@ func (s *Server) userForAzureLogin(ctx context.Context, azureUser *auth.AzureADU
 	}
 	if azureUser.Email != "" {
 		if existing, err := s.store.GetUserByEmail(ctx, azureUser.Email); err == nil && existing.AuthSource != "azuread" {
-			log.Printf("azure.link.skipped: azure identity %s shares e-mail with %s account %q; creating a separate azuread account", azureUser.ExternalID, existing.AuthSource, existing.Username)
+			slog.WarnContext(ctx, "azure.link.skipped", "reason", "azure identity shares its e-mail with a "+existing.AuthSource+" account; a separate azuread account is created",
+				"azure_identity", azureUser.ExternalID, "existing_user", existing.Username)
 		}
 	}
 	baseUsername := sanitizeUsername(azureUser.Username)

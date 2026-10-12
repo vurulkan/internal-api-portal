@@ -7,12 +7,12 @@ import (
 	"api-portal/backend/internal/models"
 )
 
-const auditColumns = `id, timestamp, user, action, resource_type, resource_id, resource_name, source_ip, status_code, duration_ms, request_bytes, response_bytes, blocked, error_message, sanitized_headers, details_json, request_id, outcome, actor_source, changes`
+const auditColumns = `id, timestamp, user, action, resource_type, resource_id, resource_name, source_ip, status_code, duration_ms, request_bytes, response_bytes, blocked, error_message, sanitized_headers, details_json, request_id, outcome, actor_source, changes, user_agent`
 
 func (s *Store) AddAuditLog(ctx context.Context, entry models.AuditLog) error {
-	_, err := s.conn.ExecContext(ctx, `INSERT INTO audit_logs (timestamp, user, action, resource_type, resource_id, resource_name, source_ip, status_code, duration_ms, request_bytes, response_bytes, blocked, error_message, sanitized_headers, details_json, request_id, outcome, actor_source, changes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		entry.Timestamp, entry.User, entry.Action, entry.ResourceType, entry.ResourceID, entry.ResourceName, entry.SourceIP, entry.StatusCode, entry.DurationMs, entry.RequestBytes, entry.ResponseBytes, boolInt(entry.Blocked), entry.ErrorMessage, entry.SanitizedHeader, entry.DetailsJSON, entry.RequestID, entry.Outcome, entry.ActorSource, entry.Changes)
+	_, err := s.conn.ExecContext(ctx, `INSERT INTO audit_logs (timestamp, user, action, resource_type, resource_id, resource_name, source_ip, status_code, duration_ms, request_bytes, response_bytes, blocked, error_message, sanitized_headers, details_json, request_id, outcome, actor_source, changes, user_agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		entry.Timestamp, entry.User, entry.Action, entry.ResourceType, entry.ResourceID, entry.ResourceName, entry.SourceIP, entry.StatusCode, entry.DurationMs, entry.RequestBytes, entry.ResponseBytes, boolInt(entry.Blocked), entry.ErrorMessage, entry.SanitizedHeader, entry.DetailsJSON, entry.RequestID, entry.Outcome, entry.ActorSource, entry.Changes, entry.UserAgent)
 	return err
 }
 
@@ -118,7 +118,7 @@ func (s *Store) EachAuditLog(ctx context.Context, filter models.AuditFilter, max
 func scanAudit(scanner interface{ Scan(...any) error }) (*models.AuditLog, error) {
 	var entry models.AuditLog
 	var blocked int
-	err := scanner.Scan(&entry.ID, &entry.Timestamp, &entry.User, &entry.Action, &entry.ResourceType, &entry.ResourceID, &entry.ResourceName, &entry.SourceIP, &entry.StatusCode, &entry.DurationMs, &entry.RequestBytes, &entry.ResponseBytes, &blocked, &entry.ErrorMessage, &entry.SanitizedHeader, &entry.DetailsJSON, &entry.RequestID, &entry.Outcome, &entry.ActorSource, &entry.Changes)
+	err := scanner.Scan(&entry.ID, &entry.Timestamp, &entry.User, &entry.Action, &entry.ResourceType, &entry.ResourceID, &entry.ResourceName, &entry.SourceIP, &entry.StatusCode, &entry.DurationMs, &entry.RequestBytes, &entry.ResponseBytes, &blocked, &entry.ErrorMessage, &entry.SanitizedHeader, &entry.DetailsJSON, &entry.RequestID, &entry.Outcome, &entry.ActorSource, &entry.Changes, &entry.UserAgent)
 	entry.Blocked = blocked == 1
 	return &entry, err
 }

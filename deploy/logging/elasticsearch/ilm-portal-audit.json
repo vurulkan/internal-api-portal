@@ -1,0 +1,9 @@
+{
+  "policy": {
+    "_meta": {"description": "internal-api-portal portal.audit logs: delete after 400d"},
+    "phases": {
+      "hot": {"actions": {"rollover": {"max_primary_shard_size": "50gb", "max_age": "30d"}}},
+      "delete": {"min_age": "400d", "actions": {"delete": {}}}
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "description": "internal-api-portal: route each line to logs-<event.dataset>-<namespace> (portal.audit / portal.http / portal.app)",
+  "processors": [
+    {"set": {"if": "ctx.event?.dataset == null", "field": "event.dataset", "value": "portal.app"}},
+    {"reroute": {"dataset": "{{event.dataset}}", "namespace": "{{data_stream.namespace}}"}}
+  ],
+  "on_failure": [
+    {"set": {"field": "error.message", "value": "portal-route: {{ _ingest.on_failure_message }}"}}
+  ]
+}

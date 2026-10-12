@@ -1,0 +1,186 @@
+# Ships the internal-api-portal pod logs (ECS JSON lines on stdout) to Elasticsearch.
+#
+# A minimal, standalone Fluent Bit DaemonSet. If you already run Fluent Bit (e.g. the
+# official Helm chart), copy the "portal" input / filters / output from the ConfigMap
+# into your configuration instead.
+#
+#   1. elasticsearch/setup.sh                         (templates, ILM, routing pipeline)
+#   2. kubectl create namespace logging
+#      kubectl -n logging create secret generic portal-log-shipper \
+#        --from-literal=ES_HOST=es.example.internal --from-literal=ES_PORT=9200 \
+#        --from-literal=ES_USER=portal-shipper --from-literal=ES_PASSWORD='…'
+#   3. kubectl apply -f fluent-bit.example.yaml
+#
+# Every line goes to the data stream logs-portal-default; the portal-route ingest
+# pipeline moves it to logs-portal.audit-default, logs-portal.http-default or
+# logs-portal.app-default by event.dataset. The shipper's Elasticsearch role needs
+# "create_doc" and "auto_configure" on logs-portal*-*.
+#
+# No parsing rules are needed beyond JSON: the portal writes ECS field names itself.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: portal-log-shipper
+  namespace: logging
+---
+# The kubernetes filter reads pod metadata (namespace, labels, node).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: portal-log-shipper
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: portal-log-shipper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: portal-log-shipper
+subjects:
+  - kind: ServiceAccount
+    name: portal-log-shipper
+    namespace: logging
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: portal-log-shipper
+  namespace: logging
+data:
+  fluent-bit.yaml: |
+    service:
+      flush: 1
+      log_level: info
+      parsers_file: /fluent-bit/etc/portal/parsers.yaml
+      http_server: on
+      http_port: 2020
+      health_check: on
+    pipeline:
+      inputs:
+        # Only the portal's containers: <pod>_<namespace>_<container>-<id>.log
+        - name: tail
+          tag: portal.*
+          path: /var/log/containers/internal-api-portal-*_internal-api-portal_portal-*.log
+          multiline.parser: cri, docker
+          db: /var/fluent-bit/state/portal.db
+          # Files found at the first start are read from the beginning (startup and
+          # migration lines included); afterwards the db holds each file's position.
+          read_from_head: on
+          mem_buf_limit: 32MB
+          skip_long_lines: on
+          refresh_interval: 5
+      filters:
+        # The line's own @timestamp becomes the record time (and @timestamp in
+        # Elasticsearch, with nanoseconds); every other field is kept as written.
+        - name: parser
+          match: portal.*
+          key_name: log
+          parser: portal-ecs
+          reserve_data: on
+        - name: kubernetes
+          match: portal.*
+          kube_tag_prefix: portal.var.log.containers.
+          merge_log: off
+          labels: on
+          annotations: off
+        # Container runtime fields that duplicate @timestamp / say nothing.
+        - name: modify
+          match: portal.*
+          remove: time
+          remove: _p
+      outputs:
+        - name: es
+          match: portal.*
+          host: ${ES_HOST}
+          port: ${ES_PORT}
+          http_user: ${ES_USER}
+          http_passwd: ${ES_PASSWORD}
+          tls: ${ES_TLS}
+          tls.verify: on
+          index: logs-portal-default
+          suppress_type_name: on
+          write_operation: create
+          time_key_nanos: on
+          # Kubernetes label keys contain dots (app.kubernetes.io/name); the portal's
+          # own fields are nested objects and never do.
+          replace_dots: on
+          trace_error: on
+          retry_limit: false
+  parsers.yaml: |
+    parsers:
+      - name: portal-ecs
+        format: json
+        time_key: "@timestamp"
+        time_format: "%Y-%m-%dT%H:%M:%S.%LZ"
+        time_keep: off
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: portal-log-shipper
+  namespace: logging
+  labels:
+    app: portal-log-shipper
+spec:
+  selector:
+    matchLabels:
+      app: portal-log-shipper
+  template:
+    metadata:
+      labels:
+        app: portal-log-shipper
+    spec:
+      serviceAccountName: portal-log-shipper
+      containers:
+        - name: fluent-bit
+          image: cr.fluentbit.io/fluent/fluent-bit:3.2.10
+          args: ["--config=/fluent-bit/etc/portal/fluent-bit.yaml"]
+          envFrom:
+            - secretRef:
+                name: portal-log-shipper
+          env:
+            - name: ES_TLS
+              value: "on"
+          ports:
+            - name: http
+              containerPort: 2020
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc/portal
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: state
+              mountPath: /var/fluent-bit/state
+      volumes:
+        - name: config
+          configMap:
+            name: portal-log-shipper
+        - name: varlog
+          hostPath:
+            path: /var/log
+        # Read positions survive restarts, so nothing is shipped twice or skipped.
+        - name: state
+          hostPath:
+            path: /var/lib/portal-log-shipper
+            type: DirectoryOrCreate

@@ -241,6 +241,9 @@ var migrations = []migration{
 		return addColumn(ctx, tx, `ALTER TABLE azure_ad_config ADD COLUMN allowed_groups TEXT NOT NULL DEFAULT '[]'`)
 	}},
 	{7, "authorization v2, per-API settings, group mapping, audit outcome (1.5.0)", false, authzV2},
+	{8, "audit_logs.user_agent (1.6.0)", false, func(ctx context.Context, tx *sql.Tx) error {
+		return addColumn(ctx, tx, `ALTER TABLE audit_logs ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''`)
+	}},
 }
 
 func authzV2(ctx context.Context, tx *sql.Tx) error {

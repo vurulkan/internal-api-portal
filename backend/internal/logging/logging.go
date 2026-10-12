@@ -12,25 +12,91 @@ import (
 	"strings"
 )
 
-// Setup installs a JSON (default) or text logger as slog's default and routes the
-// standard library log package through it. Static attributes are added to every line.
-func Setup(format, level, service, version string) *slog.Logger {
-	return SetupWriter(os.Stdout, format, level, service, version)
+// Options configures the process logger (LOG_* environment variables).
+type Options struct {
+	Format      string // json (ECS, default) or text (human, development)
+	Level       string // debug, info (default), warn, error
+	Output      string // stdout (default) or stderr
+	AddSource   bool   // log.origin.* (file, line, function)
+	Service     string // service.name
+	Version     string // service.version
+	Environment string // service.environment (dev / test / prod …), optional
 }
 
-func SetupWriter(w io.Writer, format, level, service, version string) *slog.Logger {
-	opts := &slog.HandlerOptions{Level: parseLevel(level)}
-	var handler slog.Handler
-	if strings.EqualFold(format, "text") {
-		handler = slog.NewTextHandler(w, opts)
-	} else {
-		handler = slog.NewJSONHandler(w, opts)
+// Setup installs the logger as slog's default and routes the standard library log
+// package through it.
+func Setup(opts Options) *slog.Logger {
+	w := io.Writer(os.Stdout)
+	if strings.EqualFold(opts.Output, "stderr") {
+		w = os.Stderr
 	}
-	logger := slog.New(handler).With("service", service, "version", version)
+	return SetupWriter(w, opts)
+}
+
+func SetupWriter(w io.Writer, opts Options) *slog.Logger {
+	level := parseLevel(opts.Level)
+	var handler slog.Handler
+	if strings.EqualFold(opts.Format, "text") {
+		handler = slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, AddSource: opts.AddSource, ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if IsSensitiveKey(a.Key[strings.LastIndex(a.Key, ".")+1:]) {
+				return slog.String(a.Key, "[REDACTED]")
+			}
+			return a
+		}})
+		attrs := []slog.Attr{slog.String("service", opts.Service), slog.String("version", opts.Version)}
+		if opts.Environment != "" {
+			attrs = append(attrs, slog.String("env", opts.Environment))
+		}
+		handler = handler.WithAttrs(attrs)
+	} else {
+		static := map[string]any{"service.name": opts.Service, "service.version": opts.Version, "service.type": "api-portal"}
+		if opts.Environment != "" {
+			static["service.environment"] = opts.Environment
+		}
+		handler = NewECSHandler(w, level, opts.AddSource, static)
+	}
+	logger := slog.New(handler)
 	slog.SetDefault(logger)
 	log.SetFlags(0)
 	log.SetOutput(slogWriter{logger})
 	return logger
+}
+
+// sensitiveKeys are never logged with their value (compared case-insensitively,
+// ignoring "-" and "_").
+var sensitiveKeys = map[string]bool{
+	"password": true, "newpassword": true, "currentpassword": true, "temporarypassword": true,
+	"bindpassword": true, "clientsecret": true, "secret": true, "token": true, "accesstoken": true,
+	"idtoken": true, "authorization": true, "cookie": true, "setcookie": true, "apikey": true,
+	"xapikey": true, "session": true, "sessiontoken": true, "privatekey": true, "dataencryptionkey": true,
+}
+
+// IsSensitiveKey reports whether a field of this name must not be logged verbatim.
+func IsSensitiveKey(key string) bool {
+	normalized := strings.NewReplacer("-", "", "_", "", ".", "").Replace(strings.ToLower(key))
+	return sensitiveKeys[normalized]
+}
+
+// Redact returns a copy of m with the values of sensitive keys replaced, recursing
+// into nested maps. Call it on any free-form map before logging it.
+func Redact(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for key, value := range m {
+		switch {
+		case IsSensitiveKey(key):
+			out[key] = "[REDACTED]"
+		default:
+			if nested, ok := value.(map[string]any); ok {
+				out[key] = Redact(nested)
+			} else {
+				out[key] = value
+			}
+		}
+	}
+	return out
 }
 
 func parseLevel(raw string) slog.Level {

@@ -1,0 +1,161 @@
+# Alternative to fluent-bit.example.yaml: ships the internal-api-portal pod logs to
+# Elasticsearch with Filebeat 8.x. Use one of the two, not both.
+#
+#   1. elasticsearch/setup.sh                         (templates, ILM, routing pipeline)
+#   2. kubectl create namespace logging
+#      kubectl -n logging create secret generic portal-log-shipper \
+#        --from-literal=ES_HOSTS=https://es.example.internal:9200 \
+#        --from-literal=ES_USER=portal-shipper --from-literal=ES_PASSWORD='…'
+#   3. kubectl apply -f filebeat.example.yaml
+#
+# Lines go to logs-portal-default and are routed by event.dataset like with Fluent
+# Bit. Differences to Fluent Bit: @timestamp is kept to the millisecond (Fluent Bit:
+# nanosecond), and the Kubernetes metadata uses Filebeat's names (kubernetes.pod.name
+# instead of kubernetes.pod_name).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: portal-log-shipper-filebeat
+  namespace: logging
+---
+# add_kubernetes_metadata reads pods, their namespace, node and owner.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: portal-log-shipper-filebeat
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: portal-log-shipper-filebeat
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: portal-log-shipper-filebeat
+subjects:
+  - kind: ServiceAccount
+    name: portal-log-shipper-filebeat
+    namespace: logging
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: portal-log-shipper-filebeat
+  namespace: logging
+data:
+  filebeat.yml: |
+    filebeat.inputs:
+      # Only the portal's containers: <pod>_<namespace>_<container>-<id>.log
+      - type: filestream
+        id: internal-api-portal
+        paths:
+          - /var/log/containers/internal-api-portal-*_internal-api-portal_portal-*.log
+        prospector.scanner.symlinks: true
+        parsers:
+          - container: ~
+          # The line is ECS already: take every field (and @timestamp) as written.
+          - ndjson:
+              target: ""
+              overwrite_keys: true
+              add_error_key: true
+    processors:
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchers:
+            - logs_path:
+                logs_path: /var/log/containers/
+      - drop_fields:
+          fields: ["agent.ephemeral_id", "agent.id", "log.offset", "input.type"]
+          ignore_missing: true
+    output.elasticsearch:
+      hosts: ["${ES_HOSTS}"]
+      username: "${ES_USER}"
+      password: "${ES_PASSWORD}"
+      index: logs-portal-default
+    # The index templates come from elasticsearch/setup.sh, not from Filebeat.
+    setup.template.enabled: false
+    setup.ilm.enabled: false
+    http.enabled: true
+    http.host: 0.0.0.0
+    http.port: 5066
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: portal-log-shipper-filebeat
+  namespace: logging
+  labels:
+    app: portal-log-shipper-filebeat
+spec:
+  selector:
+    matchLabels:
+      app: portal-log-shipper-filebeat
+  template:
+    metadata:
+      labels:
+        app: portal-log-shipper-filebeat
+    spec:
+      serviceAccountName: portal-log-shipper-filebeat
+      containers:
+        - name: filebeat
+          image: docker.elastic.co/beats/filebeat:8.15.3
+          args: ["-c", "/etc/filebeat/filebeat.yml", "-e"]
+          envFrom:
+            - secretRef:
+                name: portal-log-shipper
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: 5066
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            # The container log files are readable by root only.
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/filebeat
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            # Registry (read positions) survives restarts.
+            - name: data
+              mountPath: /usr/share/filebeat/data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: portal-log-shipper-filebeat
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: data
+          hostPath:
+            path: /var/lib/portal-log-shipper-filebeat
+            type: DirectoryOrCreate
+        - name: tmp
+          emptyDir: {}
