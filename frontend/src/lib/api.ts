@@ -69,6 +69,7 @@ export type AuditLog = {
   changes?: string;
   userAgent?: string;
 };
+export type SpecState = 'ok' | 'error' | 'missing';
 export type ApiSummary = {
   id: number;
   name: string;
@@ -79,11 +80,30 @@ export type ApiSummary = {
   ownerTeam: string;
   tags: string[];
   lastSpecRefreshAt?: string;
-  lastSpecStatus?: string;
+  /** ok, error (last refresh failed), missing (never fetched). */
+  specState: SpecState;
+  /** The refresh error; only for the API's managers. */
+  specError?: string;
+  specVersion?: string;
+  operationCount?: number;
   canView: boolean;
   canInvoke: boolean;
   canManage: boolean;
+  favorite: boolean;
+  lastViewedAt?: string;
 };
+export type OperationHit = {
+  apiId: number;
+  apiName: string;
+  apiSlug: string;
+  method: string;
+  path: string;
+  operationId?: string;
+  summary?: string;
+  tags?: string[];
+  deprecated?: boolean;
+};
+export type SearchResponse = { query: string; apis: ApiSummary[]; operations: OperationHit[] };
 export type ApiDefinition = {
   id: number;
   name: string;
@@ -101,6 +121,11 @@ export type ApiDefinition = {
   updatedAt: string;
   lastSpecRefreshAt?: string;
   lastSpecStatus?: string;
+  specState?: SpecState;
+  specError?: string;
+  specVersion?: string;
+  operationCount?: number;
+  favorite?: boolean;
   permissions?: { view: boolean; invoke: boolean; manage: boolean };
   ownerGroupId?: number | null;
   allowedRequestHeaders?: string[];
@@ -363,6 +388,10 @@ export const api = {
     window.location.assign('/api/auth/azure/start');
   },
   catalog: () => request<ApiSummary[]>('/api/catalog'),
+  search: (q: string, signal?: AbortSignal) =>
+    request<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}`, { signal }),
+  setFavorite: (id: number, favorite: boolean) =>
+    request<{ favorite: boolean }>(`/api/me/favorites/${id}`, { method: favorite ? 'PUT' : 'DELETE' }),
   apiDetails: (id: string) => request<ApiDefinition>(`/api/apis/${id}`),
   apiSpec: (id: string) => request<Record<string, unknown>>(`/api/apis/${id}/spec`),
   invoke: (id: string, payload: Record<string, unknown>) =>

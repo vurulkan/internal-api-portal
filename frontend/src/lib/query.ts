@@ -46,6 +46,7 @@ export const queryKeys = {
   authProviders: ['auth-providers'] as const,
   features: ['features'] as const,
   catalog: ['catalog'] as const,
+  search: (q: string) => ['search', q] as const,
   api: (id: string) => ['api', id] as const,
   spec: (id: string) => ['api', id, 'spec'] as const,
   mySessions: ['my-sessions'] as const,

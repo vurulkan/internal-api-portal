@@ -7,7 +7,7 @@ import { apiError, json, mockFetch } from '@/test/fetchMock';
 import { renderApp } from '@/test/render';
 import { expectNoA11yViolations } from '@/test/a11y';
 
-const unauthorized = () => apiError(401, 'authentication required', 'unauthorized');
+export const unauthorized = () => apiError(401, 'authentication required', 'unauthorized');
 
 describe('sign-in', () => {
   it('sends a signed-out user to /login with the page to return to, and back after signing in', async () => {
@@ -141,49 +141,6 @@ describe('forced password change', () => {
     await user.type(screen.getByLabelText(/^Confirm new password/), 'correct-horse-battery');
     await user.click(screen.getByRole('button', { name: 'Update password' }));
     await waitFor(() => expect(screen.getByLabelText(/^Current password/)).toHaveAccessibleDescription(/not correct/));
-  });
-});
-
-describe('catalog', () => {
-  it('filters by search and tag, explains an empty result and clears it', async () => {
-    mockFetch({ ...publicRoutes, 'GET /api/auth/me': meResponse(), 'GET /api/catalog': catalog });
-    const user = userEvent.setup();
-    const { router } = renderApp('/');
-    await screen.findByRole('link', { name: 'Payments API' });
-    expect(screen.getByText('2 APIs')).toBeInTheDocument();
-    await expectNoA11yViolations();
-
-    await user.click(screen.getByRole('checkbox', { name: 'payments' }));
-    expect(router.state.location.search).toBe('?tag=payments');
-    expect(screen.queryByRole('link', { name: 'Identity API' })).not.toBeInTheDocument();
-
-    await user.type(screen.getByRole('searchbox', { name: 'Search APIs' }), 'zzz');
-    expect(await screen.findByText('No APIs match')).toBeInTheDocument();
-    await user.click(screen.getAllByRole('button', { name: 'Clear filters' })[0]);
-    expect(await screen.findByText('2 APIs')).toBeInTheDocument();
-  });
-
-  it('says why it is empty when the user has no APIs', async () => {
-    mockFetch({ ...publicRoutes, 'GET /api/auth/me': meResponse(), 'GET /api/catalog': [] });
-    renderApp('/');
-    expect(await screen.findByText('No APIs available to you yet')).toBeInTheDocument();
-  });
-
-  it('shows a retryable error with the request id', async () => {
-    let fail = true;
-    mockFetch({
-      ...publicRoutes,
-      'GET /api/auth/me': meResponse(),
-      'GET /api/catalog': () => (fail ? apiError(500, 'database is locked', 'internal_error') : catalog),
-    });
-    const user = userEvent.setup();
-    renderApp('/');
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('database is locked');
-    expect(alert).toHaveTextContent('req-test');
-    fail = false;
-    await user.click(within(alert).getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByRole('link', { name: 'Payments API' })).toBeInTheDocument();
   });
 });
 

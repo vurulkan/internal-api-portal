@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo, useState, type FormEvent } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { FileWarning, Send } from 'lucide-react';
+import { FileWarning, Send, Star } from 'lucide-react';
 import { api, isApiError, type ApiDefinition, type InvokeResponse } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatDateTime, formatNumber, formatRelative } from '@/lib/format';
@@ -18,7 +18,8 @@ import {
   type OperationParameter,
   type SpecObject,
 } from '@/lib/openapi';
-import { useApiDetails, useApiSpec, useFeatures } from '@/hooks/queries';
+import { specHealth } from '@/lib/catalog';
+import { useApiDetails, useApiSpec, useFeatures, useToggleFavorite } from '@/hooks/queries';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { SectionPanel } from '@/components/shell/shell-context';
 import {
@@ -115,12 +116,18 @@ export default function ApiDetailsPage() {
         breadcrumbs={[{ label: t('catalog.title'), to: '/' }, { label: apiDef.name }]}
         title={apiDef.name}
         description={apiDef.description}
+        actions={<FavoriteToggle api={apiDef} />}
         meta={
           <>
             <Badge variant={canInvoke ? 'success' : 'info'}>
               {canInvoke ? t('catalog.accessLevel.invoke') : t('catalog.accessLevel.view')}
             </Badge>
             {apiDef.ownerTeam && <Badge variant="outline">{apiDef.ownerTeam}</Badge>}
+            {apiDef.specVersion && (
+              <Badge variant="outline" className="font-mono">
+                v{apiDef.specVersion}
+              </Badge>
+            )}
             <SpecFreshness api={apiDef} />
           </>
         }
@@ -186,6 +193,12 @@ export default function ApiDetailsPage() {
                       : t('api.defaultLimit'),
                   },
                   {
+                    label: t('catalog.version'),
+                    value: apiDef.specVersion ? `v${apiDef.specVersion}` : '–',
+                    mono: !!apiDef.specVersion,
+                  },
+                  { label: t('catalog.operationsShort'), value: apiDef.operationCount ?? '–' },
+                  {
                     label: t('api.lastRefresh'),
                     value: apiDef.lastSpecRefreshAt
                       ? formatDateTime(apiDef.lastSpecRefreshAt)
@@ -201,14 +214,35 @@ export default function ApiDetailsPage() {
   );
 }
 
+function FavoriteToggle({ api: apiDef }: { api: ApiDefinition }) {
+  const { t } = useTranslation();
+  const toggle = useToggleFavorite();
+  const on = !!apiDef.favorite;
+  return (
+    <Button aria-pressed={on} onClick={() => toggle.mutate({ id: apiDef.id, favorite: !on })}>
+      <Star aria-hidden="true" className={cn(on && 'fill-current text-warning')} />
+      {on ? t('catalog.favorited') : t('catalog.addFavorite')}
+    </Button>
+  );
+}
+
 function SpecFreshness({ api: apiDef }: { api: ApiDefinition }) {
   const { t } = useTranslation();
-  if (!apiDef.lastSpecRefreshAt) return <Badge variant="warning">{t('api.neverRefreshed')}</Badge>;
-  const ok = !apiDef.lastSpecStatus || /^(ok|success|200)/i.test(apiDef.lastSpecStatus);
+  const health = specHealth({ specState: apiDef.specState ?? 'ok', lastSpecRefreshAt: apiDef.lastSpecRefreshAt });
+  const when = apiDef.lastSpecRefreshAt ? formatRelative(apiDef.lastSpecRefreshAt) : '';
+  const title = [apiDef.lastSpecRefreshAt && formatDateTime(apiDef.lastSpecRefreshAt), apiDef.specError]
+    .filter(Boolean)
+    .join(' — ');
+  if (health === 'error')
+    return (
+      <Badge variant="destructive" title={title || undefined}>
+        {t('catalog.spec.error')}
+      </Badge>
+    );
+  if (health === 'missing') return <Badge variant="warning">{t('catalog.spec.missing')}</Badge>;
   return (
-    <Badge variant={ok ? 'neutral' : 'warning'} title={formatDateTime(apiDef.lastSpecRefreshAt)}>
-      {t('api.specRefreshed', { when: formatRelative(apiDef.lastSpecRefreshAt) })}
-      {!ok && ` · ${apiDef.lastSpecStatus}`}
+    <Badge variant={health === 'stale' ? 'warning' : 'neutral'} title={title || undefined}>
+      {health === 'stale' ? t('catalog.spec.stale', { when }) : t('catalog.spec.ok', { when })}
     </Badge>
   );
 }
