@@ -22,8 +22,14 @@ type errorBody struct {
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	writeErrorCode(w, r, status, errorCode(status), message)
+}
+
+// writeErrorCode is writeError with a more specific code the UI acts on (e.g. which
+// form field the message belongs to).
+func writeErrorCode(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	auditReason(r, message)
-	writeJSON(w, status, errorBody{Error: message, Code: errorCode(status), RequestID: logging.RequestID(r.Context())})
+	writeJSON(w, status, errorBody{Error: message, Code: code, RequestID: logging.RequestID(r.Context())})
 }
 
 func errorCode(status int) string {

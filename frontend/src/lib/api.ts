@@ -12,8 +12,22 @@ export type User = {
 };
 
 export type Role = { id: number; name: string; description: string; createdAt: string };
-export type Group = { id: number; name: string; description: string; createdAt: string; azureGroupId?: string; ldapGroupDn?: string };
-export type ScopeDef = { scope: string; group: string; family: 'read' | 'write' | 'destructive'; description: string; perApi?: boolean; action?: string };
+export type Group = {
+  id: number;
+  name: string;
+  description: string;
+  createdAt: string;
+  azureGroupId?: string;
+  ldapGroupDn?: string;
+};
+export type ScopeDef = {
+  scope: string;
+  group: string;
+  family: 'read' | 'write' | 'destructive';
+  description: string;
+  perApi?: boolean;
+  action?: string;
+};
 export type ApiAccess = { groupId: number; groupName?: string; level: 'view' | 'invoke' };
 export type Features = { tryIt: boolean; ldap: boolean; azureAd: boolean; auditExport: boolean };
 export type Capabilities = {
@@ -23,7 +37,16 @@ export type Capabilities = {
   canCreateApi: boolean;
   canExportAudit: boolean;
 };
-export type AuditFilter = { from?: string; to?: string; user?: string; action?: string; outcome?: string; targetType?: string; targetId?: string };
+export type AuditFilter = {
+  from?: string;
+  to?: string;
+  user?: string;
+  action?: string;
+  outcome?: string;
+  targetType?: string;
+  targetId?: string;
+  apiId?: string;
+};
 export type Permission = { id: number; roleId: number; scope: string; description: string };
 export type LdapUser = { username: string; displayName: string; email: string; dn: string };
 export type AuditLog = {
@@ -44,6 +67,7 @@ export type AuditLog = {
   outcome?: 'success' | 'denied' | 'failed' | '';
   actorSource?: string;
   changes?: string;
+  userAgent?: string;
 };
 export type ApiSummary = {
   id: number;
@@ -231,39 +255,56 @@ const CSRF_HEADER = 'X-CSRF-Protection';
 
 // ApiError carries the backend's error body: {"error", "code", "requestId"}.
 // message is the human-readable text; requestId lets support find the log lines.
+// status 0 means the request never got an answer (network down, server gone).
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly requestId: string;
+  /** Seconds from a Retry-After header (429: login lockout, rate limit). */
+  readonly retryAfter: number;
 
-  constructor(status: number, message: string, code = '', requestId = '') {
+  constructor(status: number, message: string, code = '', requestId = '', retryAfter = 0) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.retryAfter = retryAfter;
   }
+}
+
+export function isApiError(error: unknown, status?: number): error is ApiError {
+  return error instanceof ApiError && (status === undefined || error.status === status);
 }
 
 async function toApiError(response: Response): Promise<ApiError> {
   const text = await response.text();
   const requestId = response.headers.get('X-Request-Id') ?? '';
+  const retryAfter = Number(response.headers.get('Retry-After') ?? 0) || 0;
   try {
     const body = JSON.parse(text) as { error?: string; code?: string; requestId?: string };
     if (body && typeof body.error === 'string') {
-      return new ApiError(response.status, body.error, body.code ?? '', body.requestId || requestId);
+      return new ApiError(response.status, body.error, body.code ?? '', body.requestId || requestId, retryAfter);
     }
   } catch {
     // Not JSON (e.g. a proxy's HTML error page): fall back to the raw text.
   }
-  return new ApiError(response.status, text.trim() || `Request failed (${response.status})`, '', requestId);
+  return new ApiError(response.status, text.trim() || `Request failed (${response.status})`, '', requestId, retryAfter);
+}
+
+async function send(path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(path, { ...init, credentials: 'same-origin' });
+  } catch {
+    throw new ApiError(0, 'The portal could not be reached.', 'network');
+  }
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers ?? {});
   headers.set('Content-Type', 'application/json');
   headers.set(CSRF_HEADER, '1');
-  const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
+  const response = await send(path, { ...options, headers });
   if (!response.ok) {
     throw await toApiError(response);
   }
@@ -279,7 +320,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
   const headers = new Headers();
   headers.set(CSRF_HEADER, '1');
-  const response = await fetch(path, { method: 'POST', body: formData, headers, credentials: 'same-origin' });
+  const response = await send(path, { method: 'POST', body: formData, headers });
   if (!response.ok) {
     throw await toApiError(response);
   }
@@ -295,17 +336,27 @@ export const api = {
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   mySessions: () => request<{ items: Session[] }>('/api/auth/sessions'),
   revokeMySession: (id: number) => request(`/api/auth/sessions/${id}`, { method: 'DELETE' }),
-  revokeMyOtherSessions: () => request<{ sessionsRevoked: number }>('/api/auth/sessions/revoke-others', { method: 'POST' }),
+  revokeMyOtherSessions: () =>
+    request<{ sessionsRevoked: number }>('/api/auth/sessions/revoke-others', { method: 'POST' }),
   sessions: () => request<{ items: Session[] }>('/api/admin/sessions'),
   revokeSession: (id: number) => request(`/api/admin/sessions/${id}`, { method: 'DELETE' }),
-  revokeUserSessions: (id: number) => request<{ sessionsRevoked: number }>(`/api/admin/users/${id}/revoke-sessions`, { method: 'POST' }),
+  revokeUserSessions: (id: number) =>
+    request<{ sessionsRevoked: number }>(`/api/admin/users/${id}/revoke-sessions`, { method: 'POST' }),
   resetPassword: (id: number) =>
-    request<{ temporaryPassword: string; sessionsRevoked: number }>(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
+    request<{ temporaryPassword: string; sessionsRevoked: number }>(`/api/admin/users/${id}/reset-password`, {
+      method: 'POST',
+    }),
   testLdapLogin: (username: string, password: string) =>
-    request<{ ok: boolean; steps: LdapLoginStep[] }>('/api/admin/ldap/test-login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+    request<{ ok: boolean; steps: LdapLoginStep[] }>('/api/admin/ldap/test-login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    }),
   me: () => request<MeResponse>('/api/auth/me'),
   changePassword: (currentPassword: string, newPassword: string) =>
-    request('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
+    request<{ sessionsRevoked?: number }>('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
   publicSettings: () => request<SystemSettings>('/api/system/public'),
   authProviders: () => request<AuthProviders>('/api/auth/providers'),
   startAzureLogin: () => {
@@ -317,61 +368,86 @@ export const api = {
   invoke: (id: string, payload: Record<string, unknown>) =>
     request<InvokeResponse>(`/api/apis/${id}/invoke`, { method: 'POST', body: JSON.stringify(payload) }),
   users: () => request<User[]>('/api/admin/users'),
-  createUser: (payload: UserPayload) => request('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) }),
-  updateUser: (id: number, payload: UserPayload) => request(`/api/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  createUser: (payload: UserPayload) =>
+    request<{ id: number }>('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) }),
+  updateUser: (id: number, payload: UserPayload) =>
+    request(`/api/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteUser: (id: number) => request(`/api/admin/users/${id}`, { method: 'DELETE' }),
   userGroups: (id: number) => request<number[]>(`/api/admin/users/${id}/groups`),
-  setUserGroups: (id: number, groupIds: number[]) => request(`/api/admin/users/${id}/groups`, { method: 'PUT', body: JSON.stringify(groupIds) }),
+  setUserGroups: (id: number, groupIds: number[]) =>
+    request(`/api/admin/users/${id}/groups`, { method: 'PUT', body: JSON.stringify(groupIds) }),
   groups: () => request<Group[]>('/api/admin/groups'),
-  createGroup: (payload: GroupPayload) => request('/api/admin/groups', { method: 'POST', body: JSON.stringify(payload) }),
-  updateGroup: (id: number, payload: GroupPayload) => request(`/api/admin/groups/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  createGroup: (payload: GroupPayload) =>
+    request<{ id: number }>('/api/admin/groups', { method: 'POST', body: JSON.stringify(payload) }),
+  updateGroup: (id: number, payload: GroupPayload) =>
+    request(`/api/admin/groups/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteGroup: (id: number) => request(`/api/admin/groups/${id}`, { method: 'DELETE' }),
   groupRoles: (id: number) => request<number[]>(`/api/admin/groups/${id}/roles`),
-  setGroupRoles: (id: number, roleIds: number[]) => request(`/api/admin/groups/${id}/roles`, { method: 'PUT', body: JSON.stringify(roleIds) }),
+  setGroupRoles: (id: number, roleIds: number[]) =>
+    request(`/api/admin/groups/${id}/roles`, { method: 'PUT', body: JSON.stringify(roleIds) }),
   roles: () => request<Role[]>('/api/admin/roles'),
-  createRole: (payload: RolePayload) => request('/api/admin/roles', { method: 'POST', body: JSON.stringify(payload) }),
-  updateRole: (id: number, payload: RolePayload) => request(`/api/admin/roles/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  createRole: (payload: RolePayload) =>
+    request<{ id: number }>('/api/admin/roles', { method: 'POST', body: JSON.stringify(payload) }),
+  updateRole: (id: number, payload: RolePayload) =>
+    request(`/api/admin/roles/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteRole: (id: number) => request(`/api/admin/roles/${id}`, { method: 'DELETE' }),
   permissions: (roleId: number) => request<Permission[]>(`/api/admin/roles/${roleId}/permissions`),
-  addPermission: (roleId: number, payload: { scope: string; description: string }) => request(`/api/admin/roles/${roleId}/permissions`, { method: 'POST', body: JSON.stringify(payload) }),
-  replacePermissions: (roleId: number, scopes: string[]) => request(`/api/admin/roles/${roleId}/permissions`, { method: 'PUT', body: JSON.stringify({ scopes }) }),
+  addPermission: (roleId: number, payload: { scope: string; description: string }) =>
+    request(`/api/admin/roles/${roleId}/permissions`, { method: 'POST', body: JSON.stringify(payload) }),
+  replacePermissions: (roleId: number, scopes: string[]) =>
+    request(`/api/admin/roles/${roleId}/permissions`, { method: 'PUT', body: JSON.stringify({ scopes }) }),
   deletePermission: (id: number) => request(`/api/admin/permissions/${id}`, { method: 'DELETE' }),
   ldap: () => request<LdapConfig>('/api/admin/ldap'),
   updateLdap: (payload: LdapConfig) => request('/api/admin/ldap', { method: 'PUT', body: JSON.stringify(payload) }),
   testLdap: (payload: LdapConfig) => request('/api/admin/ldap/test', { method: 'POST', body: JSON.stringify(payload) }),
-  searchLdap: (query: string) => request<LdapUser[]>('/api/admin/ldap/search', { method: 'POST', body: JSON.stringify({ query }) }),
+  searchLdap: (query: string) =>
+    request<LdapUser[]>('/api/admin/ldap/search', { method: 'POST', body: JSON.stringify({ query }) }),
   // skipped: usernames that already belong to a local or Azure AD account (left unchanged).
   importLdap: (payload: LdapUser[]) =>
-    request<{ imported: number; skipped: string[] }>('/api/admin/ldap/import', { method: 'POST', body: JSON.stringify(payload) }),
+    request<{ imported: number; skipped: string[] }>('/api/admin/ldap/import', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   azureAd: () => request<AzureADConfig>('/api/admin/azure-ad'),
-  updateAzureAd: (payload: AzureADConfig) => request('/api/admin/azure-ad', { method: 'PUT', body: JSON.stringify(payload) }),
-  testAzureAd: (payload: AzureADConfig) => request('/api/admin/azure-ad/test', { method: 'POST', body: JSON.stringify(payload) }),
+  updateAzureAd: (payload: AzureADConfig) =>
+    request('/api/admin/azure-ad', { method: 'PUT', body: JSON.stringify(payload) }),
+  testAzureAd: (payload: AzureADConfig) =>
+    request('/api/admin/azure-ad/test', { method: 'POST', body: JSON.stringify(payload) }),
   adminApis: () => request<ApiDefinition[]>('/api/admin/apis'),
-  createApi: (payload: ApiDefinitionPayload) => request('/api/admin/apis', { method: 'POST', body: JSON.stringify(payload) }),
-  updateApi: (id: number, payload: ApiDefinitionPayload) => request(`/api/admin/apis/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  createApi: (payload: ApiDefinitionPayload) =>
+    request<{ id: number }>('/api/admin/apis', { method: 'POST', body: JSON.stringify(payload) }),
+  updateApi: (id: number, payload: ApiDefinitionPayload) =>
+    request(`/api/admin/apis/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteApi: (id: number) => request(`/api/admin/apis/${id}`, { method: 'DELETE' }),
   refreshApiSpec: (id: number) => request(`/api/admin/apis/${id}/refresh`, { method: 'POST' }),
   auditLogs: (query = '') => request<PaginatedAuditLogs>(`/api/admin/audit-logs${query}`),
   // Same filters as the list. truncated: more rows matched than AUDIT_EXPORT_MAX_ROWS.
   exportAuditLogs: async (filter: AuditFilter = {}) => {
-    const response = await fetch(`/api/admin/audit-logs/export${auditQuery(filter)}`, { credentials: 'same-origin' });
+    const response = await send(`/api/admin/audit-logs/export${auditQuery(filter)}`, {});
     if (!response.ok) {
       throw await toApiError(response);
     }
-    return { csv: await response.text(), truncated: response.headers.get('X-Audit-Export-Truncated') === 'true', rows: Number(response.headers.get('X-Audit-Export-Rows') ?? 0) };
+    return {
+      csv: await response.text(),
+      truncated: response.headers.get('X-Audit-Export-Truncated') === 'true',
+      rows: Number(response.headers.get('X-Audit-Export-Rows') ?? 0),
+    };
   },
   features: () => request<Features>('/api/features'),
   permissionCatalog: () => request<{ items: ScopeDef[] }>('/api/permissions/catalog'),
   apiAccess: (id: number) => request<{ items: ApiAccess[] }>(`/api/admin/apis/${id}/access`),
-  setApiAccess: (id: number, access: ApiAccess[]) => request(`/api/admin/apis/${id}/access`, { method: 'PUT', body: JSON.stringify(access) }),
+  setApiAccess: (id: number, access: ApiAccess[]) =>
+    request(`/api/admin/apis/${id}/access`, { method: 'PUT', body: JSON.stringify(access) }),
   session: () => request<SessionSettings>('/api/admin/session'),
-  updateSession: (payload: SessionSettings) => request('/api/admin/session', { method: 'PUT', body: JSON.stringify(payload) }),
+  updateSession: (payload: SessionSettings) =>
+    request('/api/admin/session', { method: 'PUT', body: JSON.stringify(payload) }),
   system: () => request<SystemSettings>('/api/admin/system'),
-  updateSystem: (payload: SystemSettings) => request('/api/admin/system', { method: 'PUT', body: JSON.stringify(payload) }),
+  updateSystem: (payload: SystemSettings) =>
+    request('/api/admin/system', { method: 'PUT', body: JSON.stringify(payload) }),
   uploadSystemLogo: (file: File) => {
     const formData = new FormData();
     formData.append('logo', file);
     return uploadRequest<SystemSettings>('/api/admin/system/logo', formData);
   },
-  deleteSystemLogo: () => request<SystemSettings>('/api/admin/system/logo', { method: 'DELETE' })
+  deleteSystemLogo: () => request<SystemSettings>('/api/admin/system/logo', { method: 'DELETE' }),
 };

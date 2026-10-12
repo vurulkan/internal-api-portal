@@ -206,8 +206,13 @@ func TestMustChangePasswordBlocksEverythingElse(t *testing.T) {
 	}
 	e.expect(http.MethodPost, "/api/apis/1/invoke", token, map[string]string{"method": "GET", "path": "/"}, http.StatusForbidden)
 
-	e.expect(http.MethodPost, "/api/auth/change-password", token, map[string]string{"currentPassword": testPassword, "newPassword": "short"}, http.StatusBadRequest)
-	e.expect(http.MethodPost, "/api/auth/change-password", token, map[string]string{"currentPassword": "wrong-password", "newPassword": "a-new-password-1"}, http.StatusBadRequest)
+	// The code tells the UI which field the message belongs to.
+	if out := e.expect(http.MethodPost, "/api/auth/change-password", token, map[string]string{"currentPassword": testPassword, "newPassword": "short"}, http.StatusBadRequest); !strings.Contains(out, `"code":"password_policy"`) {
+		t.Errorf("policy failure: %s", out)
+	}
+	if out := e.expect(http.MethodPost, "/api/auth/change-password", token, map[string]string{"currentPassword": "wrong-password", "newPassword": "a-new-password-1"}, http.StatusBadRequest); !strings.Contains(out, `"code":"invalid_current_password"`) {
+		t.Errorf("wrong current password: %s", out)
+	}
 	e.expect(http.MethodPost, "/api/auth/change-password", token, map[string]string{"currentPassword": testPassword, "newPassword": "a-new-password-1"}, http.StatusOK)
 	e.expect(http.MethodGet, "/api/catalog", token, nil, http.StatusOK)
 }

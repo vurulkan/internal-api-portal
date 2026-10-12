@@ -66,14 +66,24 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
       # The bundle ships to browsers, so high / critical advisories in runtime
-      # dependencies fail the build. (Known moderate ones: react-router 6, fixed only
-      # in 7 — M6 rewrites routing; swagger-ui-react's markdown chain — M8.)
+      # dependencies fail the build. (Known moderate one: swagger-ui-react's markdown
+      # chain, replaced by the own operation view in M8.)
       - name: npm audit
         run: npm audit --omit=dev --audit-level=high
       - name: type check
         run: npx tsc --noEmit
+      # Includes the design-token rule: no palette classes or raw hex in components.
+      - name: lint
+        run: npm run lint
+      - name: format
+        run: npm run format:check
+      # Vitest + Testing Library + axe (both themes), i18n parity.
+      - name: test
+        run: npm test
       - name: build
         run: npm run build
+      - name: bundle budget
+        run: npm run budget
 
   # Pull requests and main: build the image to prove the Dockerfile works.
   # Release tags (1.6.0): build linux/amd64 + linux/arm64 with an SBOM and SLSA

@@ -79,10 +79,11 @@ func (s *Server) secureRequest(r *http.Request) bool {
 // ─── Headers ─────────────────────────────────────────────────────────────────
 
 // contentSecurityPolicy applies to every response. Notes on the exceptions:
-//   - style-src 'unsafe-inline': Swagger UI and React set inline style attributes.
-//   - fonts.googleapis.com / fonts.gstatic.com: the Inter web font; removed when the
-//     fonts are self-hosted (M6).
+//   - style-src 'unsafe-inline': Swagger UI, the overlay positioning (Radix) and the
+//     toast library set inline styles.
 //   - img-src data:: the brand logo is stored as a data URL.
+//
+// Fonts are self-hosted (Fira Sans / Fira Code), so no third-party origin is allowed.
 //
 // Scripts are 'self' only: no inline script anywhere (the Azure AD callback sets the
 // session cookie and redirects; it no longer renders a page).
@@ -92,8 +93,8 @@ const contentSecurityPolicy = "default-src 'self'; " +
 	"frame-ancestors 'none'; " +
 	"form-action 'self'; " +
 	"script-src 'self'; " +
-	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-	"font-src 'self' data: https://fonts.gstatic.com; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"font-src 'self' data:; " +
 	"img-src 'self' data: blob:; " +
 	"connect-src 'self'; " +
 	"worker-src 'self' blob:"
