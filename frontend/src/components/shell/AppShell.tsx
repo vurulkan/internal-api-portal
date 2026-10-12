@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, NavLink, Outlet, useLocation, useNavigate, useNavigation, useSearchParams } from 'react-router';
+import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate, useNavigation, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -219,22 +219,22 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
 
 function RailLink({ item }: { item: NavItem }) {
   const Icon = item.icon;
+  // A plain Link: the tooltip's Slot can't merge NavLink's function className.
+  const active = !!useMatch({ path: item.to, end: !!item.end });
   return (
     <Tooltip content={item.label} side="right">
-      <NavLink
+      <Link
         to={item.to}
-        end={item.end}
         aria-label={item.label}
-        className={({ isActive }) =>
-          cn(
-            'relative flex size-10 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground',
-            isActive &&
-              'bg-muted text-foreground before:absolute before:top-2 before:bottom-2 before:-left-3 before:w-0.5 before:rounded-full before:bg-foreground',
-          )
-        }
+        aria-current={active ? 'page' : undefined}
+        className={cn(
+          'relative flex size-10 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground',
+          active &&
+            'bg-muted text-foreground before:absolute before:top-2 before:bottom-2 before:-left-3 before:w-0.5 before:rounded-full before:bg-foreground',
+        )}
       >
         <Icon className="size-5" strokeWidth={1.75} aria-hidden="true" />
-      </NavLink>
+      </Link>
     </Tooltip>
   );
 }
@@ -340,6 +340,7 @@ function GlobalSearch() {
   return (
     <form
       role="search"
+      aria-label={t('shell.searchLabel')}
       className="relative w-full max-w-md"
       onSubmit={(event) => {
         event.preventDefault();

@@ -11,6 +11,7 @@ export function NotFoundPage() {
   useDocumentTitle(t('errors.notFoundTitle'));
   return (
     <EmptyState
+      headingLevel={1}
       icon={FileQuestion}
       title={t('errors.notFoundTitle')}
       description={t('errors.notFoundBody')}
@@ -44,6 +45,7 @@ export function RouteError() {
   return (
     <div className="flex flex-col items-center px-4 py-20 text-center">
       <EmptyState
+        headingLevel={1}
         icon={TriangleAlert}
         title={t('errors.crashTitle')}
         description={t('errors.crashBody')}

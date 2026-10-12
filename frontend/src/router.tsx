@@ -1,5 +1,5 @@
 import { createBrowserRouter, createMemoryRouter, type RouteObject } from 'react-router';
-import { AuthGate } from '@/routes/AuthGate';
+import { AuthGate, ShellSkeleton } from '@/routes/AuthGate';
 import { NotFoundPage, RouteError } from '@/routes/errors';
 import LoginPage from '@/pages/LoginPage';
 import CatalogPage from '@/pages/CatalogPage';
@@ -13,6 +13,8 @@ export const routes: RouteObject[] = [
   {
     path: '/',
     element: <AuthGate />,
+    // Shown while the first route's lazy module loads.
+    hydrateFallbackElement: <ShellSkeleton />,
     errorElement: <RouteError />,
     children: [
       {

@@ -247,6 +247,13 @@ describe('admin', () => {
     const { router } = renderApp('/admin');
     await screen.findByRole('heading', { level: 1, name: 'API definitions' });
     expect(router.state.location.pathname).toBe('/admin/apis');
+    // The rail marks where you are (regression: the tooltip used to break NavLink's className).
+    const rail = screen.getByRole('navigation', { name: 'Main navigation' });
+    expect(within(rail).getByRole('link', { name: 'Admin' })).toHaveAttribute('aria-current', 'page');
+    const adminLink = within(rail).getByRole('link', { name: 'Admin' });
+    expect(adminLink.className).not.toContain('=>');
+    expect(adminLink.classList.contains('bg-muted')).toBe(true);
+    expect(within(rail).getByRole('link', { name: 'API Catalog' })).not.toHaveAttribute('aria-current');
     const sections = screen.getByRole('navigation', { name: 'Admin sections' });
     expect(within(sections).getAllByRole('link')).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'New API' })).not.toBeInTheDocument();
@@ -270,7 +277,10 @@ describe('admin', () => {
     });
     const user = userEvent.setup();
     renderApp('/admin/users');
-    await user.click(await screen.findByText('bob'));
+    // Rows open from the keyboard: the first cell is a button.
+    const bobRow = await screen.findByRole('button', { name: /bob/ });
+    bobRow.focus();
+    await user.keyboard('{Enter}');
     const drawer = await screen.findByRole('dialog', { name: 'Edit bob' });
     await waitFor(() => expect(within(drawer).getByText('payments-team')).toBeInTheDocument());
     await expectNoA11yViolations();

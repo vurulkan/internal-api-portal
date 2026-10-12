@@ -338,6 +338,7 @@ function UserImport() {
       <CardContent className="space-y-3">
         <form
           role="search"
+          aria-label={t('admin.ldap.import')}
           className="flex flex-wrap items-end gap-2"
           onSubmit={(event) => {
             event.preventDefault();

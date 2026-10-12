@@ -9,7 +9,10 @@ export function EmptyState({
   description,
   action,
   className,
+  headingLevel,
 }: {
+  /** When the empty state is the whole page (404), its title is the page's h1. */
+  headingLevel?: 1 | 2;
   icon?: LucideIcon;
   title: ReactNode;
   description?: ReactNode;
@@ -23,7 +26,13 @@ export function EmptyState({
           <Icon className="size-5" strokeWidth={1.75} aria-hidden="true" />
         </div>
       )}
-      <p className="text-sm font-medium text-foreground">{title}</p>
+      {headingLevel === 1 ? (
+        <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+      ) : headingLevel === 2 ? (
+        <h2 className="text-base font-semibold text-foreground">{title}</h2>
+      ) : (
+        <p className="text-sm font-medium text-foreground">{title}</p>
+      )}
       {description && <p className="max-w-md text-[13px] text-muted-foreground">{description}</p>}
       {action && <div className="mt-2">{action}</div>}
     </div>

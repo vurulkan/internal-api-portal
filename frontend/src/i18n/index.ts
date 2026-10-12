@@ -1,8 +1,13 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { z } from 'zod';
 import { readPref, writePref } from '@/lib/storage';
 import { en } from './en';
 import { tr } from './tr';
+
+// zod's fast path compiles validators with new Function, which the CSP (script-src
+// 'self', no 'unsafe-eval') refuses and reports; the interpreted path is enough here.
+z.config({ jitless: true });
 
 export const SUPPORTED_LOCALES = ['en', 'tr'] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];

@@ -43,7 +43,7 @@ export function AuthGate() {
   return <AppShell restricted={mustChange} />;
 }
 
-function ShellSkeleton() {
+export function ShellSkeleton() {
   return (
     <LoadingRegion className="min-h-dvh">
       <div className="flex h-14 items-center gap-3 border-b border-border bg-card px-4">
