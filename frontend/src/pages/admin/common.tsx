@@ -72,6 +72,8 @@ export function SearchInput({
   return (
     <Input
       type="search"
+      data-page-search
+      aria-keyshortcuts="/"
       aria-label={label}
       placeholder={label}
       value={value}

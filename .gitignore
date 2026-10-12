@@ -28,3 +28,9 @@ backend/server
 
 # Misc
 *.log
+# Browser tests (frontend/e2e)
+backend/.e2e/
+frontend/e2e/.auth/
+frontend/e2e/.results/
+frontend/e2e/.report/
+frontend/e2e/.screens/

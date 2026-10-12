@@ -1,5 +1,6 @@
 import {
   useMemo,
+  useRef,
   useState,
   type HTMLAttributes,
   type ReactNode,
@@ -9,17 +10,28 @@ import {
 import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Rows3, Rows4 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { pressed } from '@/lib/shortcuts';
 import { readPref, writePref } from '@/lib/storage';
 import { Button } from './button';
 import { Checkbox } from './checkbox';
+import { AlertDialog } from './dialog';
 import { IconButton } from './icon-button';
 import { Select } from './select';
+import { useScrollFocus } from './use-scroll-focus';
 
 // ── Primitives ───────────────────────────────────────────────────────────────
 
 /** The table scrolls inside its own box; the page never scrolls sideways. */
 export function TableContainer({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('min-w-0 overflow-auto rounded-lg border border-border', className)} {...props} />;
+  const ref = useRef<HTMLDivElement>(null);
+  useScrollFocus(ref);
+  return (
+    <div
+      ref={ref}
+      className={cn('relative min-w-0 overflow-auto rounded-lg border border-border', className)}
+      {...props}
+    />
+  );
 }
 
 export function Table({ className, ...props }: HTMLAttributes<HTMLTableElement>) {
@@ -54,6 +66,16 @@ export function TD({ className, ...props }: TdHTMLAttributes<HTMLTableCellElemen
 
 // ── DataTable ────────────────────────────────────────────────────────────────
 
+export type RowDelete<T> = {
+  can?: (row: T) => boolean;
+  title: (row: T) => string;
+  description: (row: T) => ReactNode;
+  /** The user types this (the resource's name) before the button enables. */
+  confirmText?: (row: T) => string;
+  confirmLabel: string;
+  run: (row: T) => Promise<unknown>;
+};
+
 export type Column<T> = {
   id: string;
   header: ReactNode;
@@ -85,6 +107,7 @@ export function DataTable<T>({
   toolbar,
   onRowClick,
   activeRowKey,
+  rowDelete,
   className,
 }: {
   rows: T[];
@@ -103,9 +126,12 @@ export function DataTable<T>({
   /** Opens a row: the first cell becomes a button (keyboard), the whole row is clickable (mouse). */
   onRowClick?: (row: T) => void;
   activeRowKey?: string;
+  /** "d" on a focused row asks to delete it (only rows for which `can` is true). */
+  rowDelete?: RowDelete<T>;
   className?: string;
 }) {
   const { t } = useTranslation();
+  const [deleting, setDeleting] = useState<T | null>(null);
   const [sort, setSort] = useState<{ id: string; dir: 'asc' | 'desc' } | null>(null);
   const [pageSize, setPageSize] = useState(pageSizes[0]);
   const [page, setPage] = useState(0);
@@ -221,12 +247,25 @@ export function DataTable<T>({
               })}
             </tr>
           </THead>
-          <TBody>
+          <TBody
+            data-shortcut-list
+            onKeyDown={(event) => {
+              if (!rowDelete || event.metaKey || event.ctrlKey || event.altKey || !pressed(event.nativeEvent, 'd'))
+                return;
+              const key = (event.target as HTMLElement).closest('tr')?.dataset.rowKey;
+              const row = visible.find((r) => rowKey(r) === key);
+              if (row && (rowDelete.can?.(row) ?? true)) {
+                event.preventDefault();
+                setDeleting(row);
+              }
+            }}
+          >
             {visible.map((row) => {
               const key = rowKey(row);
               return (
                 <TR
                   key={key}
+                  data-row-key={key}
                   className={cn(
                     rowHeight,
                     onRowClick && 'cursor-pointer',
@@ -249,6 +288,7 @@ export function DataTable<T>({
                       {onRowClick && index === 0 ? (
                         <button
                           type="button"
+                          data-shortcut-item
                           className="max-w-full cursor-pointer rounded-sm text-left hover:underline"
                           aria-current={activeRowKey === key ? 'true' : undefined}
                           onClick={(event) => {
@@ -290,16 +330,39 @@ export function DataTable<T>({
               }}
               options={pageSizes.map((n) => ({ value: String(n), label: String(n) }))}
             />
-            <Button size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>
+            <Button
+              size="sm"
+              data-shortcut="prev-page"
+              aria-keyshortcuts="P"
+              disabled={currentPage === 0}
+              onClick={() => setPage(currentPage - 1)}
+            >
               <ChevronLeft aria-hidden="true" />
               {t('table.previous')}
             </Button>
-            <Button size="sm" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>
+            <Button
+              size="sm"
+              data-shortcut="next-page"
+              aria-keyshortcuts="N"
+              disabled={currentPage >= pageCount - 1}
+              onClick={() => setPage(currentPage + 1)}
+            >
               {t('table.next')}
               <ChevronRight aria-hidden="true" />
             </Button>
           </div>
         </div>
+      )}
+      {rowDelete && deleting && (
+        <AlertDialog
+          open
+          onOpenChange={(open) => !open && setDeleting(null)}
+          title={rowDelete.title(deleting)}
+          description={rowDelete.description(deleting)}
+          confirmLabel={rowDelete.confirmLabel}
+          confirmText={rowDelete.confirmText?.(deleting)}
+          onConfirm={() => rowDelete.run(deleting)}
+        />
       )}
     </div>
   );

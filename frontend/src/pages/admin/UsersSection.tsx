@@ -18,8 +18,9 @@ import {
   notifyError,
   Select,
   type Column,
+  type RowDelete,
 } from '@/components/ui';
-import { matches, SearchInput, SectionToolbar, TableSkeleton } from './common';
+import { matches, SearchInput, SectionToolbar, TableSkeleton, useAdminMutation } from './common';
 import { UserBulkActions } from './users/UserBulkActions';
 import { UserDrawer } from './users/UserDrawer';
 import { userRules } from './users/rules';
@@ -68,6 +69,11 @@ export default function UsersSection() {
   const filtered = !!(search || source || status || groupFilter);
 
   const queryClient = useQueryClient();
+  const remove = useAdminMutation({
+    mutationFn: (id: number) => api.deleteUser(id),
+    success: t('admin.users.deleted'),
+    invalidate: [queryKeys.admin.users, queryKeys.admin.groups],
+  });
   // Optimistic: the switch flips at once and flips back if the server refuses.
   const toggle = useMutation({
     mutationFn: ({ user, active }: { user: User; active: boolean }) => adminApi.bulkUserStatus([user.id], active),
@@ -176,6 +182,16 @@ export default function UsersSection() {
     );
 
   const selectedUsers = (users.data ?? []).filter((u) => selected.includes(String(u.id)));
+  const rowDelete: RowDelete<User> | undefined = canManage
+    ? {
+        can: (u) => !rules.isSelf(u) && !rules.isLastAdmin(u) && (!u.isAdmin || !!me.data?.user.isAdmin),
+        title: (u) => t('admin.users.deleteTitle', { name: u.username }),
+        description: () => t('admin.users.deleteBody'),
+        confirmText: (u) => u.username,
+        confirmLabel: t('common.delete'),
+        run: (u) => remove.mutateAsync(u.id),
+      }
+    : undefined;
   return (
     <>
       <DataTable
@@ -187,6 +203,7 @@ export default function UsersSection() {
         selectable={canManage}
         selected={selected}
         onSelectedChange={setSelected}
+        rowDelete={rowDelete}
         onRowClick={(u) => setEditing(u)}
         activeRowKey={editing && editing !== 'new' ? String(editing.id) : undefined}
         toolbar={
@@ -204,7 +221,7 @@ export default function UsersSection() {
               <SearchInput value={search} onChange={(v) => setFilter('q', v)} label={t('admin.users.search')} />
               <Select
                 aria-label={t('admin.users.source')}
-                className="w-40"
+                className="w-full sm:w-40"
                 value={source}
                 onValueChange={(v) => setFilter('source', v)}
                 options={[
@@ -214,7 +231,7 @@ export default function UsersSection() {
               />
               <Select
                 aria-label={t('admin.users.status')}
-                className="w-44"
+                className="w-full sm:w-44"
                 value={status}
                 onValueChange={(v) => setFilter('status', v)}
                 options={[
@@ -225,7 +242,7 @@ export default function UsersSection() {
               {(groups.data ?? []).length > 0 && (
                 <Select
                   aria-label={t('admin.users.groupFilter')}
-                  className="w-44"
+                  className="w-full sm:w-44"
                   value={groupFilter ? String(groupFilter) : ''}
                   onValueChange={(v) => setFilter('group', v)}
                   options={[

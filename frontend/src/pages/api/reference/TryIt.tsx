@@ -23,6 +23,7 @@ import {
   requestHeaders,
   resolvePath,
   resolveRef,
+  snippet,
   stringifyExample,
   typeLabel,
   validateParameters,
@@ -33,6 +34,7 @@ import {
   type ValidationError,
 } from '@/lib/openapi';
 import { useFeatures } from '@/hooks/queries';
+import { useShortcuts } from '@/lib/shortcuts';
 import {
   Alert,
   Badge,
@@ -48,6 +50,8 @@ import {
   Skeleton,
   StatusBadge,
   Switch,
+  notifyError,
+  notifySuccess,
 } from '@/components/ui';
 import { ResponseViewer } from './ResponseViewer';
 import { Snippets } from './Snippets';
@@ -188,6 +192,29 @@ function TryItForm({ spec, op, apiDef }: { spec: NormalizedSpec; op: Operation; 
       abort.current = null;
     }
   }
+
+  const snippetInput = {
+    method: op.method,
+    url: path + (query ? `?${query}` : ''),
+    headers,
+    injected,
+    body: withBody ? body : '',
+    baseUrl: apiDef.internalBaseUrl,
+  };
+  // ⌘⇧C anywhere on the page: the cURL command (secrets as placeholders, like the snippet).
+  useShortcuts([
+    {
+      keys: 'c',
+      mod: true,
+      shift: true,
+      run: () => {
+        void navigator.clipboard
+          ?.writeText(snippet('curl', snippetInput))
+          .then(() => notifySuccess(t('api.curlCopied')))
+          .catch(() => notifyError(null, t('api.copyFailed')));
+      },
+    },
+  ]);
 
   function onKeyDown(event: KeyboardEvent<HTMLFormElement>) {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -458,16 +485,7 @@ function TryItForm({ spec, op, apiDef }: { spec: NormalizedSpec; op: Operation; 
         />
       )}
 
-      <Snippets
-        input={{
-          method: op.method,
-          url: path + (query ? `?${query}` : ''),
-          headers,
-          injected,
-          body: withBody ? body : '',
-          baseUrl: apiDef.internalBaseUrl,
-        }}
-      />
+      <Snippets input={snippetInput} />
 
       <section aria-labelledby="history-heading" className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">

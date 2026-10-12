@@ -6,7 +6,7 @@ import { api, type Group } from '@/lib/api';
 import { queryKeys } from '@/lib/query';
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, type Column } from '@/components/ui';
 import { GroupDrawer } from './groups/GroupDrawer';
-import { matches, SearchInput, SectionToolbar, TableSkeleton } from './common';
+import { matches, SearchInput, SectionToolbar, TableSkeleton, useAdminMutation } from './common';
 
 export default function GroupsSection() {
   const { t } = useTranslation();
@@ -15,6 +15,11 @@ export default function GroupsSection() {
   const roles = useQuery({ queryKey: queryKeys.admin.roles, queryFn: async () => (await api.roles()) ?? [] });
   const roleNames = useMemo(() => new Map((roles.data ?? []).map((r) => [r.id, r.name])), [roles.data]);
   const [editing, setEditing] = useState<Group | 'new' | null>(null);
+  const remove = useAdminMutation({
+    mutationFn: (id: number) => api.deleteGroup(id),
+    success: t('admin.groups.deleted'),
+    invalidate: [queryKeys.admin.groups, queryKeys.admin.users, queryKeys.admin.roles],
+  });
   const rows = useMemo(
     () => (groups.data ?? []).filter((g) => matches(search, g.name, g.description)),
     [groups.data, search],
@@ -86,6 +91,17 @@ export default function GroupsSection() {
         caption={t('admin.sections.groups')}
         rows={rows}
         columns={columns}
+        rowDelete={{
+          title: (g) => t('admin.groups.deleteTitle', { name: g.name }),
+          description: (g) =>
+            t('admin.groups.deleteImpact', {
+              members: t('admin.groups.memberCount', { count: g.memberIds?.length ?? 0 }),
+              roles: t('admin.groups.roleCount', { count: g.roleIds?.length ?? 0 }),
+            }),
+          confirmText: (g) => g.name,
+          confirmLabel: t('common.delete'),
+          run: (g) => remove.mutateAsync(g.id),
+        }}
         rowKey={(g) => String(g.id)}
         onRowClick={(g) => setEditing(g)}
         activeRowKey={editing && editing !== 'new' ? String(editing.id) : undefined}

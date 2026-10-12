@@ -2,6 +2,15 @@ import type { Dictionary } from './en';
 import { adminTr } from './admin.tr';
 
 // Türkçe. en.ts ile aynı anahtarlar (tip ve i18n.test.ts denetler).
+//
+// Terim sözlüğü (iki dosyada da, admin.tr.ts dahil, bunlar kullanılır):
+//   invoke / call → çağır, çağrı        scope / permission → yetki
+//   operation → operasyon                  allowed → izin verilen
+//   spec → spec                            try it → Try it (ürün adı)
+//   group / role → grup / rol              owner group → sahip grup
+//   session → oturum                       sign in / sign out → giriş / çıkış
+//   audit log → denetim kaydı              directory (LDAP) → dizin
+//   header → header                        favorite → favori
 
 export const tr: Dictionary = {
   common: {
@@ -50,15 +59,54 @@ export const tr: Dictionary = {
   language: { en: 'English', tr: 'Türkçe' },
   authSource: { local: 'Yerel', ldap: 'LDAP', azuread: 'Azure AD' },
   help: {
-    title: 'Yardım ve kısayollar',
-    description: 'Her şey klavyeyle kullanılabilir.',
-    focusSearch: 'API ve operasyon ara',
-    or: 'veya',
-    skipToContent: 'İçeriğe geç',
-    onPageLoad: 'sayfada ilk',
+    title: 'Klavye kısayolları',
+    description: 'Her şey klavyeyle kullanılabilir. Tek tuşlu kısayollar bir alana yazarken devre dışıdır.',
+    everywhere: 'Her yerde',
+    onPages: 'Sayfalarda ve panellerde',
+    tryIt: 'Try it',
+    palette: 'Komut paleti: API’ler, operasyonlar, sayfalar, eylemler',
+    focusSearch: 'Bu sayfada ara (veya API ve operasyon ara)',
+    showHelp: 'Bu kısayolları göster',
+    goCatalog: 'Kataloğa git',
+    goAdmin: 'Yönetim konsoluna git',
+    skipToContent: 'İçeriğe geç (sayfada ilk)',
     closeOverlay: 'Pencere, menü veya paneli kapat',
-    moveInLists: 'Listelerde ve menülerde gezin, seç',
+    tabs: 'Önceki / sonraki sekme',
+    moveInLists: 'Satırlarda, kartlarda veya operasyonlarda gezin; aç',
+    pages: 'Tablonun sonraki / önceki sayfası',
+    deleteRow: 'Odaktaki satırı sil (önce sorar)',
+    favorite: 'Açık API’yi favorilere ekle veya çıkar',
+    send: 'İsteği gönder',
+    copyCurl: 'İsteği cURL olarak kopyala',
+    layoutNote:
+      'Tuşlar Türkçe ve diğer düzenlerde de çalışır: [ ] / AltGr veya Shift ile yazılabilir ya da ABD klavyesindeki yerlerine basılabilir.',
   },
+  palette: {
+    choose: 'aç',
+    title: 'Komut paleti',
+    open: 'Komut paleti',
+    inputLabel: 'Komut, API ve operasyon ara',
+    placeholder: 'Bir API’ye, operasyona veya sayfaya git ya da bir eylem çalıştır…',
+    results: 'Sonuçlar',
+    empty: 'Eşleşen bir şey yok.',
+    move: 'gezin',
+    allShortcuts: 'tüm kısayollar',
+    count_one: '{{count}} sonuç',
+    count_other: '{{count}} sonuç',
+    groups: {
+      recent: 'Son kullanılanlar',
+      apis: 'API’ler',
+      operations: 'Operasyonlar',
+      navigate: 'Git',
+      actions: 'Eylemler',
+    },
+    backTo: '{{name}} sayfasına dön',
+    themeLight: 'Tema: açık',
+    themeDark: 'Tema: koyu',
+    themeSystem: 'Tema: sistemi izle',
+    shortcuts: 'Klavye kısayollarını göster',
+  },
+  shortcuts: { hint: 'Kısayol: {{key}}' },
   session: { expired: 'Oturumunuz sona erdi. Devam etmek için yeniden giriş yapın.' },
   warnings: {
     encryption_key_in_database:
@@ -260,6 +308,8 @@ export const tr: Dictionary = {
     accessLevel: { manage: 'Yönetim', invoke: 'Görüntüleme ve çağırma', view: 'Yalnız görüntüleme', none: 'Kısıtlı' },
   },
   api: {
+    curlCopied: 'cURL komutu kopyalandı.',
+    copyFailed: 'Panoya kopyalanamadı.',
     title: 'API',
     operations: 'Operasyonlar',
     sections: 'API bölümleri',

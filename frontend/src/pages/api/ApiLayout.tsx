@@ -95,6 +95,7 @@ function TabNav({ tabs }: { tabs: { to: string; label: string; also?: string }[]
   return (
     <nav
       aria-label={t('api.sections')}
+      data-shortcut-tabs
       className="flex min-w-0 gap-1 overflow-x-auto shadow-[inset_0_-1px_0_var(--border)]"
     >
       {tabs.map((tab) => {
@@ -185,7 +186,13 @@ function HeaderActions({ context }: { context: ApiWorkspace }) {
 
   return (
     <>
-      <Button aria-pressed={on} onClick={() => toggle.mutate({ id: apiDef.id, favorite: !on })}>
+      <Button
+        aria-pressed={on}
+        aria-keyshortcuts="F"
+        title={t('shortcuts.hint', { key: 'F' })}
+        data-shortcut="favorite"
+        onClick={() => toggle.mutate({ id: apiDef.id, favorite: !on })}
+      >
         <Star aria-hidden="true" className={cn(on && 'fill-current text-warning')} />
         {on ? t('catalog.favorited') : t('catalog.addFavorite')}
       </Button>

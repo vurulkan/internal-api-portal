@@ -1,10 +1,11 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertDialog as AlertPrimitive, Dialog as DialogPrimitive } from 'radix-ui';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from './button';
 import { Input } from './input';
+import { useScrollFocus } from './use-scroll-focus';
 
 const overlayClasses = 'fixed inset-0 z-50 bg-overlay';
 
@@ -57,7 +58,7 @@ export function Dialog({
               </Button>
             </DialogPrimitive.Close>
           </div>
-          {children && <div className="min-h-0 overflow-y-auto px-5 py-4">{children}</div>}
+          {children && <DialogBody>{children}</DialogBody>}
           {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-border px-5 py-3">{footer}</div>}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
@@ -145,8 +146,20 @@ export function DrawerBody({
 }: { children: ReactNode; className?: string } & React.HTMLAttributes<HTMLDivElement> & {
     'data-panel-scroll'?: boolean;
   }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useScrollFocus(ref);
   return (
-    <div className={cn('min-h-0 flex-1 overflow-y-auto', className)} {...rest}>
+    <div ref={ref} className={cn('min-h-0 flex-1 overflow-y-auto', className)} {...rest}>
+      {children}
+    </div>
+  );
+}
+
+function DialogBody({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useScrollFocus(ref);
+  return (
+    <div ref={ref} className="min-h-0 overflow-y-auto px-5 py-4">
       {children}
     </div>
   );

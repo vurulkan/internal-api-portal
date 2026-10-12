@@ -62,6 +62,12 @@ export default function ApisSection() {
     errorFallback: t('admin.apis.refreshFailed'),
   });
 
+  const remove = useAdminMutation({
+    mutationFn: (id: number) => api.deleteApi(id),
+    success: t('admin.apis.deleted'),
+    invalidate: [queryKeys.admin.apis, queryKeys.admin.overview, queryKeys.catalog],
+  });
+
   const columns: Column<ApiDefinition>[] = [
     {
       id: 'name',
@@ -139,6 +145,13 @@ export default function ApisSection() {
         caption={t('admin.sections.apis')}
         rows={rows}
         columns={columns}
+        rowDelete={{
+          title: (a) => t('admin.apis.deleteTitle', { name: a.name }),
+          description: () => t('admin.apis.deleteBody'),
+          confirmText: (a) => a.slug,
+          confirmLabel: t('common.delete'),
+          run: (a) => remove.mutateAsync(a.id),
+        }}
         rowKey={(a) => String(a.id)}
         onRowClick={(a) => setEditing(a)}
         activeRowKey={editing ? String(editing.id) : undefined}

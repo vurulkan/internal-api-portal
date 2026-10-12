@@ -74,7 +74,7 @@ export default function SessionsSection() {
       header: <span className="sr-only">{t('common.actions')}</span>,
       cell: (s) =>
         !s.current && (
-          <Button size="sm" variant="destructive-ghost" onClick={() => setEnding(s)}>
+          <Button size="sm" variant="destructive-ghost" data-shortcut-item onClick={() => setEnding(s)}>
             {t('admin.sessions.end')}
           </Button>
         ),
@@ -96,6 +96,12 @@ export default function SessionsSection() {
         caption={t('admin.sections.sessions')}
         rows={rows}
         columns={columns}
+        rowDelete={{
+          title: (s) => t('admin.sessions.endTitle', { name: s.username }),
+          description: () => t('admin.sessions.endBody'),
+          confirmLabel: t('admin.sessions.end'),
+          run: (s) => end.mutateAsync(s),
+        }}
         rowKey={(s) => String(s.id)}
         toolbar={
           <SectionToolbar

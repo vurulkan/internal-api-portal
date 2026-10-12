@@ -347,11 +347,23 @@ export default function AuditSection() {
                 }}
                 options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
               />
-              <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>
+              <Button
+                size="sm"
+                data-shortcut="prev-page"
+                aria-keyshortcuts="P"
+                disabled={offset === 0}
+                onClick={() => setOffset(Math.max(0, offset - limit))}
+              >
                 <ChevronLeft aria-hidden="true" />
                 {t('table.previous')}
               </Button>
-              <Button size="sm" disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}>
+              <Button
+                size="sm"
+                data-shortcut="next-page"
+                aria-keyshortcuts="N"
+                disabled={offset + limit >= total}
+                onClick={() => setOffset(offset + limit)}
+              >
                 {t('table.next')}
                 <ChevronRight aria-hidden="true" />
               </Button>
