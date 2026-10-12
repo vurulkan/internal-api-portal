@@ -391,15 +391,15 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := auth.ComparePassword(identity.User.PasswordHash, payload.CurrentPassword); err != nil {
 		// 400, not 401: the session itself is fine, and the UI treats 401 as "signed out".
-		writeError(w, r, http.StatusBadRequest, "current password is incorrect")
+		writeErrorCode(w, r, http.StatusBadRequest, "invalid_current_password", "current password is incorrect")
 		return
 	}
 	if msg := s.passwords.Problem(payload.NewPassword, identity.User.Username); msg != "" {
-		writeError(w, r, http.StatusBadRequest, msg)
+		writeErrorCode(w, r, http.StatusBadRequest, "password_policy", msg)
 		return
 	}
 	if payload.NewPassword == payload.CurrentPassword {
-		writeError(w, r, http.StatusBadRequest, "the new password must differ from the current one")
+		writeErrorCode(w, r, http.StatusBadRequest, "password_policy", "the new password must differ from the current one")
 		return
 	}
 	hash, err := auth.HashPassword(payload.NewPassword)

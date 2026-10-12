@@ -1,0 +1,37 @@
+/*
+ * Swagger UI (documentation tab) assumes a light page. Until the own operation view
+ * (M8) it renders on a light surface in both themes.
+ */
+.swagger-island {
+  color-scheme: light;
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 8px;
+  padding: 12px;
+}
+.swagger-island .swagger-ui .topbar {
+  display: none !important;
+}
+.swagger-island .swagger-ui .information-container {
+  padding: 0 !important;
+}
+.swagger-island .swagger-ui .info {
+  margin: 0 0 1rem !important;
+}
+.swagger-island .swagger-ui .info .title {
+  font-size: 1.125rem !important;
+}
+.swagger-island .swagger-ui .wrapper {
+  padding: 0 !important;
+  max-width: none !important;
+}
+.swagger-island .swagger-ui .scheme-container {
+  padding: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+.swagger-island .swagger-ui,
+.swagger-island .swagger-ui .opblock-tag,
+.swagger-island .swagger-ui .opblock .opblock-summary-description {
+  font-family: 'Fira Sans', ui-sans-serif, system-ui, sans-serif;
+}

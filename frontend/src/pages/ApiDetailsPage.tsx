@@ -1,772 +1,579 @@
-import type { Dispatch, SetStateAction } from 'react';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { Copy, Check } from 'lucide-react';
-import SwaggerUI from 'swagger-ui-react';
-import { Alert, Badge, Button, FieldWrap, NativeSelect, Textarea, cn, fieldBase } from '../components/ui';
-import { api, ApiDefinition, InvokeResponse } from '../services/api';
+import { lazy, Suspense, useMemo, useState, type FormEvent } from 'react';
+import { useParams, useSearchParams } from 'react-router';
+import { useTranslation } from 'react-i18next';
+import { FileWarning, Send } from 'lucide-react';
+import { api, isApiError, type ApiDefinition, type InvokeResponse } from '@/lib/api';
+import { cn } from '@/lib/cn';
+import { formatDateTime, formatNumber, formatRelative } from '@/lib/format';
+import {
+  beautifyBody,
+  buildHeaders,
+  buildParamDefaults,
+  buildQueryString,
+  buildResolvedPath,
+  decodeBase64Utf8,
+  encodeBase64Utf8,
+  parseOperations,
+  type OperationOption,
+  type OperationParameter,
+  type SpecObject,
+} from '@/lib/openapi';
+import { useApiDetails, useApiSpec, useFeatures } from '@/hooks/queries';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { SectionPanel } from '@/components/shell/shell-context';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CodeBlock,
+  EmptyState,
+  ErrorState,
+  Field,
+  Input,
+  KeyValueList,
+  LoadingRegion,
+  MethodBadge,
+  PageHeader,
+  Select,
+  Skeleton,
+  StatusBadge,
+  Table,
+  TableContainer,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+  Textarea,
+} from '@/components/ui';
 
-type SpecObject = Record<string, any>;
+const SwaggerDocs = lazy(() => import('@/components/SwaggerDocs'));
 
-type OperationParameter = {
-  id: string;
-  name: string;
-  in: 'path' | 'query' | 'header';
-  description: string;
-  required: boolean;
-  defaultValue: string;
-  type: string;
-};
-
-type OperationOption = {
-  id: string;
-  method: string;
-  path: string;
-  summary: string;
-  description: string;
-  tags: string[];
-  parameters: OperationParameter[];
-  requestContentTypes: string[];
-  responseContentTypes: string[];
-  requestBodyExample: string;
-  hasRequestBody: boolean;
-};
-
-const supportedMethods = ['get', 'post', 'put', 'patch', 'delete', 'options', 'head'];
-
-const methodColors: Record<string, string> = {
-  GET:     'bg-green-50 text-green-700 border-green-200',
-  POST:    'bg-blue-50 text-blue-700 border-blue-200',
-  PUT:     'bg-amber-50 text-amber-700 border-amber-200',
-  PATCH:   'bg-amber-50 text-amber-700 border-amber-200',
-  DELETE:  'bg-red-50 text-red-700 border-red-200',
-  OPTIONS: 'bg-gray-50 text-gray-600 border-gray-200',
-  HEAD:    'bg-gray-50 text-gray-600 border-gray-200',
-};
-
-function MethodBadge({ method }: { method: string }) {
-  const cls = methodColors[method] ?? 'bg-gray-50 text-gray-600 border-gray-200';
-  return (
-    <span className={cn('inline-flex items-center rounded border px-1.5 py-0.5 text-xs font-mono font-bold', cls)}>
-      {method}
-    </span>
-  );
-}
-
-function MetaRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5 py-2 border-b border-gray-100 last:border-0">
-      <span className="text-xs text-gray-400">{label}</span>
-      <span className="text-sm font-medium text-gray-800">{value}</span>
-    </div>
-  );
-}
-
-function OperationSummary({ operation }: { operation: OperationOption }) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        <MethodBadge method={operation.method} />
-        <span className="font-mono text-xs text-gray-600">{operation.path}</span>
-        {operation.tags.map((tag) => (
-          <span key={tag} className="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-600">{tag}</span>
-        ))}
-      </div>
-      {operation.summary && <p className="text-sm font-medium text-gray-800">{operation.summary}</p>}
-      {operation.description && <p className="mt-0.5 text-xs text-gray-500">{operation.description}</p>}
-    </div>
-  );
-}
-
-function ParameterSection({
-  title,
-  parameters,
-  values,
-  onChange,
-}: {
-  title: string;
-  parameters: OperationParameter[];
-  values: Record<string, string>;
-  onChange: Dispatch<SetStateAction<Record<string, string>>>;
-}) {
-  return (
-    <div>
-      <p className="mb-2 text-sm font-semibold text-gray-700">{title}</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {parameters.map((param) => (
-          <FieldWrap
-            key={param.id}
-            label={param.name}
-            helperText={param.description || `${param.in} parameter${param.required ? ' • required' : ''}`}
-            required={param.required}
-          >
-            <input
-              type="text"
-              required={param.required}
-              value={values[param.id] ?? ''}
-              onChange={(e) => onChange((prev) => ({ ...prev, [param.id]: e.target.value }))}
-              className={fieldBase}
-            />
-          </FieldWrap>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export function ApiDetailsPage() {
+export default function ApiDetailsPage() {
+  const { t } = useTranslation();
   const { id = '' } = useParams();
-  const [details, setDetails] = useState<ApiDefinition | null>(null);
-  const [spec, setSpec] = useState<SpecObject | null>(null);
-  const [selectedOperationId, setSelectedOperationId] = useState('');
-  const [paramValues, setParamValues] = useState<Record<string, string>>({});
-  const [contentType, setContentType] = useState('');
-  const [acceptType, setAcceptType] = useState('application/json');
-  const [additionalHeaders, setAdditionalHeaders] = useState('');
-  const [requestBody, setRequestBody] = useState('');
-  const [selectedOperationTag, setSelectedOperationTag] = useState('__all__');
+  const details = useApiDetails(id);
+  const spec = useApiSpec(id);
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') ?? 'try';
+  useDocumentTitle(details.data?.name ?? t('api.title'));
+
+  const operations = useMemo(() => parseOperations((spec.data as SpecObject) ?? null), [spec.data]);
+  const operationId = params.get('op') ?? operations[0]?.id ?? '';
+  const selected = operations.find((op) => op.id === operationId) ?? operations[0] ?? null;
+
+  function setParam(key: string, value: string) {
+    const next = new URLSearchParams(params);
+    next.set(key, value);
+    setParams(next, { replace: true });
+  }
+
+  if (details.isPending) {
+    return (
+      <LoadingRegion className="space-y-4">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-8 w-80" />
+        <Skeleton className="h-96" />
+      </LoadingRegion>
+    );
+  }
+  if (details.isError) {
+    return (
+      <Card>
+        <ErrorState error={details.error} onRetry={() => void details.refetch()} />
+      </Card>
+    );
+  }
+
+  const apiDef = details.data;
+  const canInvoke = !!apiDef.permissions?.invoke;
+
+  return (
+    <>
+      <SectionPanel title={t('api.operations')}>
+        <OperationList
+          operations={operations}
+          loading={spec.isPending}
+          selectedId={selected?.id ?? ''}
+          onSelect={(op) => {
+            const next = new URLSearchParams(params);
+            next.set('op', op.id);
+            next.set('tab', 'try');
+            setParams(next, { replace: true });
+          }}
+        />
+      </SectionPanel>
+
+      <PageHeader
+        breadcrumbs={[{ label: t('catalog.title'), to: '/' }, { label: apiDef.name }]}
+        title={apiDef.name}
+        description={apiDef.description}
+        meta={
+          <>
+            <Badge variant={canInvoke ? 'success' : 'info'}>
+              {canInvoke ? t('catalog.accessLevel.invoke') : t('catalog.accessLevel.view')}
+            </Badge>
+            {apiDef.ownerTeam && <Badge variant="outline">{apiDef.ownerTeam}</Badge>}
+            <SpecFreshness api={apiDef} />
+          </>
+        }
+      />
+
+      <Tabs value={tab} onValueChange={(value) => setParam('tab', value)}>
+        <TabsList label={t('api.sections')}>
+          <TabsTrigger value="try">{t('api.tryIt')}</TabsTrigger>
+          <TabsTrigger value="docs">{t('api.documentation')}</TabsTrigger>
+          <TabsTrigger value="details">{t('api.details')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="try">
+          <TryIt api={apiDef} operation={selected} specState={spec} operationsCount={operations.length} />
+        </TabsContent>
+        <TabsContent value="docs">
+          <Card>
+            <CardContent>
+              {spec.isPending ? (
+                <LoadingRegion>
+                  <Skeleton className="h-96" />
+                </LoadingRegion>
+              ) : spec.isError ? (
+                <ErrorState error={spec.error} onRetry={() => void spec.refetch()} />
+              ) : (
+                <Suspense
+                  fallback={
+                    <LoadingRegion>
+                      <Skeleton className="h-96" />
+                    </LoadingRegion>
+                  }
+                >
+                  <SwaggerDocs spec={spec.data as SpecObject} />
+                </Suspense>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="details">
+          <Card>
+            <CardContent className="py-1">
+              <KeyValueList
+                items={[
+                  { label: t('catalog.slug'), value: apiDef.slug, mono: true },
+                  {
+                    label: t('api.allowedMethods'),
+                    value: apiDef.allowedMethods?.length
+                      ? apiDef.allowedMethods.join(', ')
+                      : t('api.allDocumentedMethods'),
+                  },
+                  {
+                    label: t('api.allowedPaths'),
+                    value: apiDef.allowedPathPrefixes?.length
+                      ? apiDef.allowedPathPrefixes.join(', ')
+                      : t('api.allDocumentedPaths'),
+                    mono: !!apiDef.allowedPathPrefixes?.length,
+                  },
+                  { label: t('catalog.tags'), value: apiDef.tags?.length ? apiDef.tags.join(', ') : '–' },
+                  { label: t('api.tryIt'), value: apiDef.tryItEnabled ? t('common.enabled') : t('common.disabled') },
+                  {
+                    label: t('api.rateLimit'),
+                    value: apiDef.rateLimitPerMinute
+                      ? t('api.perMinute', { count: apiDef.rateLimitPerMinute })
+                      : t('api.defaultLimit'),
+                  },
+                  {
+                    label: t('api.lastRefresh'),
+                    value: apiDef.lastSpecRefreshAt
+                      ? formatDateTime(apiDef.lastSpecRefreshAt)
+                      : t('api.neverRefreshed'),
+                  },
+                ]}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </>
+  );
+}
+
+function SpecFreshness({ api: apiDef }: { api: ApiDefinition }) {
+  const { t } = useTranslation();
+  if (!apiDef.lastSpecRefreshAt) return <Badge variant="warning">{t('api.neverRefreshed')}</Badge>;
+  const ok = !apiDef.lastSpecStatus || /^(ok|success|200)/i.test(apiDef.lastSpecStatus);
+  return (
+    <Badge variant={ok ? 'neutral' : 'warning'} title={formatDateTime(apiDef.lastSpecRefreshAt)}>
+      {t('api.specRefreshed', { when: formatRelative(apiDef.lastSpecRefreshAt) })}
+      {!ok && ` · ${apiDef.lastSpecStatus}`}
+    </Badge>
+  );
+}
+
+function OperationList({
+  operations,
+  loading,
+  selectedId,
+  onSelect,
+}: {
+  operations: OperationOption[];
+  loading: boolean;
+  selectedId: string;
+  onSelect: (op: OperationOption) => void;
+}) {
+  const { t } = useTranslation();
+  const [filter, setFilter] = useState('');
+  const groups = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    const visible = operations.filter((op) => !q || `${op.method} ${op.path} ${op.summary}`.toLowerCase().includes(q));
+    const byTag = new Map<string, OperationOption[]>();
+    visible.forEach((op) => {
+      const tag = op.tags[0] ?? t('api.untagged');
+      byTag.set(tag, [...(byTag.get(tag) ?? []), op]);
+    });
+    return Array.from(byTag.entries());
+  }, [operations, filter, t]);
+
+  if (loading) {
+    return (
+      <LoadingRegion className="space-y-2 px-2">
+        {Array.from({ length: 6 }, (_, i) => (
+          <Skeleton key={i} className="h-7" />
+        ))}
+      </LoadingRegion>
+    );
+  }
+  if (operations.length === 0) {
+    return <p className="px-2 text-[13px] text-muted-foreground">{t('api.noOperations')}</p>;
+  }
+  return (
+    <div className="space-y-3">
+      <div className="px-1">
+        <label htmlFor="operation-filter" className="sr-only">
+          {t('api.filterOperations')}
+        </label>
+        <Input
+          id="operation-filter"
+          type="search"
+          className="h-8"
+          placeholder={t('api.filterOperations')}
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+        />
+      </div>
+      {groups.length === 0 && <p className="px-2 text-[13px] text-muted-foreground">{t('api.noOperationMatch')}</p>}
+      {groups.map(([tag, ops]) => (
+        <section key={tag} aria-label={tag}>
+          <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">{tag}</p>
+          <ul className="space-y-0.5">
+            {ops.map((op) => (
+              <li key={op.id}>
+                <button
+                  type="button"
+                  onClick={() => onSelect(op)}
+                  aria-current={op.id === selectedId ? 'true' : undefined}
+                  className={cn(
+                    'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted',
+                    op.id === selectedId && 'bg-muted',
+                  )}
+                  title={op.summary || undefined}
+                >
+                  <MethodBadge method={op.method} className="min-w-[3rem]" />
+                  <span className="min-w-0 font-mono text-xs break-token">{op.path}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function TryIt({
+  api: apiDef,
+  operation,
+  specState,
+  operationsCount,
+}: {
+  api: ApiDefinition;
+  operation: OperationOption | null;
+  specState: ReturnType<typeof useApiSpec>;
+  operationsCount: number;
+}) {
+  const { t } = useTranslation();
+  const features = useFeatures();
+
+  if (features.data && !features.data.tryIt) {
+    return <Alert variant="info">{t('api.tryItOff')}</Alert>;
+  }
+  if (!apiDef.permissions?.invoke || !apiDef.tryItEnabled) {
+    return <Alert variant="info">{t('api.tryItNotAllowed')}</Alert>;
+  }
+  if (specState.isPending) {
+    return (
+      <LoadingRegion>
+        <Skeleton className="h-80" />
+      </LoadingRegion>
+    );
+  }
+  if (specState.isError) {
+    return (
+      <Card>
+        <ErrorState error={specState.error} onRetry={() => void specState.refetch()} />
+      </Card>
+    );
+  }
+  if (!operation || operationsCount === 0) {
+    return (
+      <Card>
+        <EmptyState icon={FileWarning} title={t('api.noOperations')} description={t('api.noOperationsBody')} />
+      </Card>
+    );
+  }
+
+  return <TryItForm key={operation.id} apiDef={apiDef} operation={operation} />;
+}
+
+/** Remounted per operation, so parameters and body start from that operation's examples. */
+function TryItForm({ apiDef, operation }: { apiDef: ApiDefinition; operation: OperationOption }) {
+  const { t } = useTranslation();
+  const [values, setValues] = useState<Record<string, string>>(() => buildParamDefaults(operation));
+  const [contentType, setContentType] = useState(operation.requestContentTypes[0] ?? '');
+  const [accept, setAccept] = useState(operation.responseContentTypes[0] ?? 'application/json');
+  const [extraHeaders, setExtraHeaders] = useState('');
+  const [body, setBody] = useState(operation.requestBodyExample);
+  const [missing, setMissing] = useState<string[]>([]);
   const [result, setResult] = useState<InvokeResponse | null>(null);
-  // FEATURE_TRY_IT=false turns try-it off portal-wide.
-  const [tryItFeature, setTryItFeature] = useState(true);
-  useEffect(() => {
-    api.features().then((f) => setTryItFeature(f.tryIt)).catch(() => undefined);
-  }, []);
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [sending, setSending] = useState(false);
 
-  useEffect(() => {
-    setError('');
-    setResult(null);
-    api.apiDetails(id).then(setDetails).catch((err) => setError(err.message));
-    api.apiSpec(id).then(setSpec).catch((err) => setError(err.message));
-  }, [id]);
-
-  const operations = useMemo(() => parseOperations(spec), [spec]);
-
-  const operationTags = useMemo(() => {
-    const tags = new Set<string>();
-    operations.forEach((op) => op.tags.forEach((t) => tags.add(t)));
-    return Array.from(tags).sort();
-  }, [operations]);
-
-  const visibleOperations = useMemo(() => {
-    if (selectedOperationTag === '__all__') return operations;
-    return operations.filter((op) => op.tags.includes(selectedOperationTag));
-  }, [operations, selectedOperationTag]);
-
-  const selectedOperation = useMemo(
-    () => visibleOperations.find((op) => op.id === selectedOperationId) ?? visibleOperations[0] ?? null,
-    [visibleOperations, selectedOperationId]
+  const prettyBody = useMemo(
+    () => (result ? beautifyBody(decodeBase64Utf8(result.bodyBase64), result.contentType) : ''),
+    [result],
   );
 
-  useEffect(() => {
-    if (selectedOperationTag !== '__all__' && !operationTags.includes(selectedOperationTag)) {
-      setSelectedOperationTag('__all__');
-    }
-  }, [operationTags, selectedOperationTag]);
+  const pathParams = operation.parameters.filter((p) => p.in === 'path');
+  const queryParams = operation.parameters.filter((p) => p.in === 'query');
+  const headerParams = operation.parameters.filter((p) => p.in === 'header');
 
-  useEffect(() => {
-    if (!selectedOperation) {
-      setSelectedOperationId('');
-      return;
-    }
-    setSelectedOperationId(selectedOperation.id);
-    setParamValues(buildParamDefaults(selectedOperation));
-    setContentType(selectedOperation.requestContentTypes[0] ?? '');
-    setAcceptType(selectedOperation.responseContentTypes[0] ?? 'application/json');
-    setRequestBody(selectedOperation.requestBodyExample);
-    setAdditionalHeaders('');
-  }, [selectedOperation?.id]);
-
-  const prettyBody = useMemo(() => {
-    if (!result) return '';
-    return beautifyBody(decodeBase64Utf8(result.bodyBase64), result.contentType);
-  }, [result]);
-
-  const pathParams = selectedOperation?.parameters.filter((p) => p.in === 'path') ?? [];
-  const queryParams = selectedOperation?.parameters.filter((p) => p.in === 'query') ?? [];
-  const headerParams = selectedOperation?.parameters.filter((p) => p.in === 'header') ?? [];
-
-  async function submitInvoke(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!selectedOperation) {
-      setError('No documented operation available for this API.');
+    const required = operation.parameters.filter((p) => p.required && !values[p.id]?.trim()).map((p) => p.id);
+    setMissing(required);
+    if (required.length) {
+      document.getElementById(`param-${required[0]}`)?.focus();
       return;
     }
-    const missingRequired = selectedOperation.parameters.find(
-      (p) => p.required && !paramValues[p.id]?.trim()
-    );
-    if (missingRequired) {
-      setError(`${missingRequired.name} is required.`);
-      return;
-    }
-    setSubmitting(true);
-    setError('');
+    setSending(true);
+    setError(null);
     setResult(null);
     try {
-      const headers = buildHeaders(headerParams, paramValues, additionalHeaders, acceptType, contentType, selectedOperation.hasRequestBody);
-      const path = buildResolvedPath(selectedOperation.path, pathParams, paramValues);
-      const query = buildQueryString(queryParams, paramValues);
-      const response = await api.invoke(id, {
-        method: selectedOperation.method,
-        path,
-        query,
-        headers,
-        bodyBase64: requestBody ? encodeBase64Utf8(requestBody) : '',
+      const response = await api.invoke(String(apiDef.id), {
+        method: operation.method,
+        path: buildResolvedPath(operation.path, pathParams, values),
+        query: buildQueryString(queryParams, values),
+        headers: buildHeaders(headerParams, values, extraHeaders, accept, contentType, operation.hasRequestBody),
+        bodyBase64: body ? encodeBase64Utf8(body) : '',
       });
       setResult(response);
     } catch (invokeError) {
-      setError(invokeError instanceof Error ? invokeError.message : 'Invocation failed');
+      setError(invokeError);
     } finally {
-      setSubmitting(false);
+      setSending(false);
     }
   }
 
-  if (!details) {
-    return (
-      <div className="flex items-center justify-center py-20 text-sm text-gray-400">Loading API details…</div>
-    );
-  }
+  const acceptOptions = (
+    operation.responseContentTypes.length ? operation.responseContentTypes : ['application/json']
+  ).map((v) => ({ value: v, label: v }));
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">{details.name}</h1>
-          {details.description && <p className="mt-1 text-sm text-gray-500">{details.description}</p>}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Badge variant={details.permissions?.invoke ? 'green' : 'amber'}>
-            {details.permissions?.invoke ? 'Invoke allowed' : 'View only'}
-          </Badge>
-          {details.ownerTeam && <Badge variant="gray">{details.ownerTeam}</Badge>}
-          {details.lastSpecStatus && <Badge variant="blue">{details.lastSpecStatus}</Badge>}
-        </div>
-      </div>
-
-      {/* 2-col layout */}
-      <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
-        {/* API Profile */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold text-gray-700">API Profile</h2>
-          <MetaRow label="Slug" value={details.slug} />
-          <MetaRow label="Methods" value={details.allowedMethods?.length ? details.allowedMethods.join(', ') : 'All documented methods'} />
-          <MetaRow label="Paths" value={details.allowedPathPrefixes?.length ? details.allowedPathPrefixes.join(', ') : 'All documented paths'} />
-          <MetaRow label="Tags" value={details.tags?.length ? details.tags.join(', ') : 'No tags'} />
-          <MetaRow label="Try It Out" value={details.tryItEnabled ? 'Enabled' : 'Disabled'} />
-        </div>
-
-        {/* Try It Out */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700">Try It Out</h2>
-              <p className="mt-0.5 text-xs text-gray-500">Choose a documented operation. Method and path are locked to the spec.</p>
-            </div>
-            {selectedOperation && (
-              <div className="flex items-center gap-1.5">
-                <MethodBadge method={selectedOperation.method} />
-                <span className="font-mono text-xs text-gray-500">{selectedOperation.path}</span>
-              </div>
-            )}
-          </div>
-
-          {!tryItFeature ? (
-            <p className="text-sm text-gray-500">Try-it is turned off on this portal.</p>
-          ) : !details.permissions?.invoke || !details.tryItEnabled ? (
-            <p className="text-sm text-gray-500">Invocation is not enabled for your account or this API.</p>
-          ) : operations.length === 0 ? (
-            <Alert variant="warning">No operations were parsed from the OpenAPI document.</Alert>
-          ) : (
-            <form onSubmit={submitInvoke} className="space-y-4">
-              {/* Tag filter */}
-              <NativeSelect
-                label="Operation Tag"
-                value={selectedOperationTag}
-                onChange={setSelectedOperationTag}
-                helperText="Filter operations by OpenAPI tag."
-                options={[
-                  { label: 'All tags', value: '__all__' },
-                  ...operationTags.map((t) => ({ label: t, value: t })),
-                ]}
-              />
-
-              {/* Operation selector */}
-              <FieldWrap label="Operation" helperText="Select the path and method from the imported OpenAPI spec.">
-                <select
-                  value={selectedOperationId}
-                  onChange={(e) => setSelectedOperationId(e.target.value)}
-                  disabled={visibleOperations.length === 0}
-                  className={cn(fieldBase, 'cursor-pointer')}
-                >
-                  {visibleOperations.length === 0 ? (
-                    <option value="" disabled>No operations found for this tag</option>
-                  ) : null}
-                  {visibleOperations.map((op) => (
-                    <option key={op.id} value={op.id}>
-                      {op.method} {op.path}{op.summary ? ` – ${op.summary}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </FieldWrap>
-
-              {selectedOperation && (
-                <>
-                  <OperationSummary operation={selectedOperation} />
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <NativeSelect
-                      label="Accept"
-                      value={acceptType}
-                      onChange={setAcceptType}
-                      helperText="Derived from documented responses."
-                      options={(selectedOperation.responseContentTypes.length ? selectedOperation.responseContentTypes : ['application/json']).map((v) => ({ label: v, value: v }))}
-                    />
-                    {selectedOperation.hasRequestBody ? (
-                      <NativeSelect
-                        label="Content-Type"
-                        value={contentType}
-                        onChange={setContentType}
-                        helperText="Derived from documented request bodies."
-                        options={selectedOperation.requestContentTypes.map((v) => ({ label: v, value: v }))}
-                      />
-                    ) : (
-                      <FieldWrap label="Content-Type">
-                        <input disabled value="No request body" className={fieldBase} />
-                      </FieldWrap>
-                    )}
-                  </div>
-
-                  {pathParams.length > 0 && (
-                    <ParameterSection title="Path Parameters" parameters={pathParams} values={paramValues} onChange={setParamValues} />
-                  )}
-                  {queryParams.length > 0 && (
-                    <ParameterSection title="Query Parameters" parameters={queryParams} values={paramValues} onChange={setParamValues} />
-                  )}
-                  {headerParams.length > 0 && (
-                    <ParameterSection title="Header Parameters" parameters={headerParams} values={paramValues} onChange={setParamValues} />
-                  )}
-
-                  {selectedOperation.hasRequestBody && (
-                    <Textarea
-                      label="Request Body"
-                      value={requestBody}
-                      onChange={setRequestBody}
-                      rows={10}
-                      helperText="Prefilled from the OpenAPI example when available."
-                    />
-                  )}
-
-                  <Textarea
-                    label="Additional Headers"
-                    value={additionalHeaders}
-                    onChange={setAdditionalHeaders}
-                    rows={4}
-                    helperText="Optional extra headers as Header-Name: value, one per line."
+    <div className="grid min-w-0 gap-5 2xl:grid-cols-2">
+      <Card>
+        <CardHeader
+          title={
+            <span className="flex min-w-0 flex-wrap items-center gap-2">
+              <MethodBadge method={operation.method} />
+              <span className="font-mono text-sm break-token">{operation.path}</span>
+            </span>
+          }
+          description={operation.summary || operation.description || undefined}
+        />
+        <CardContent>
+          <form onSubmit={submit} noValidate className="space-y-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label={t('api.accept')} helper={t('api.acceptHelper')}>
+                <Select value={accept} onValueChange={setAccept} options={acceptOptions} />
+              </Field>
+              {operation.hasRequestBody && operation.requestContentTypes.length > 0 ? (
+                <Field label={t('api.contentType')} helper={t('api.contentTypeHelper')}>
+                  <Select
+                    value={contentType}
+                    onValueChange={setContentType}
+                    options={operation.requestContentTypes.map((v) => ({ value: v, label: v }))}
                   />
-
-                  <Button type="submit" variant="primary" disabled={submitting}>
-                    {submitting ? 'Sending…' : 'Send Through Portal Proxy'}
-                  </Button>
-                </>
-              )}
-            </form>
-          )}
-
-          {error && (
-            <div className="mt-4">
-              <Alert variant="error">{error}</Alert>
+                </Field>
+              ) : null}
             </div>
-          )}
+            <ParameterGroup
+              title={t('api.pathParameters')}
+              params={pathParams}
+              values={values}
+              onChange={setValues}
+              missing={missing}
+            />
+            <ParameterGroup
+              title={t('api.queryParameters')}
+              params={queryParams}
+              values={values}
+              onChange={setValues}
+              missing={missing}
+            />
+            <ParameterGroup
+              title={t('api.headerParameters')}
+              params={headerParams}
+              values={values}
+              onChange={setValues}
+              missing={missing}
+            />
+            {operation.hasRequestBody && (
+              <Field label={t('api.requestBody')} helper={t('api.requestBodyHelper')}>
+                <Textarea
+                  rows={10}
+                  className="font-mono text-xs"
+                  spellCheck={false}
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                />
+              </Field>
+            )}
+            <Field label={t('api.extraHeaders')} helper={t('api.extraHeadersHelper')} optional>
+              <Textarea
+                rows={3}
+                className="font-mono text-xs"
+                spellCheck={false}
+                value={extraHeaders}
+                onChange={(e) => setExtraHeaders(e.target.value)}
+              />
+            </Field>
+            <Button type="submit" variant="accent" loading={sending}>
+              <Send aria-hidden="true" />
+              {t('api.send')}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
-          {result && (
-            <div className="mt-4 space-y-3">
-              <div className="flex flex-wrap gap-2">
-                <Badge variant={result.statusCode >= 200 && result.statusCode < 300 ? 'green' : 'amber'}>
-                  HTTP {result.statusCode}
-                </Badge>
-                {result.contentType && <Badge variant="blue">{result.contentType}</Badge>}
-                {result.truncated && <Badge variant="amber">Body truncated</Badge>}
-                {result.durationMs !== undefined && <Badge variant="gray">{result.durationMs} ms</Badge>}
-                {result.rateLimit && (
-                  <Badge variant={result.rateLimit.remaining <= 1 ? 'amber' : 'gray'}>
-                    {result.rateLimit.remaining} of {result.rateLimit.limitPerMinute}/min left
-                  </Badge>
-                )}
-              </div>
-
-              {/* Response headers */}
-              <div className="overflow-hidden rounded-lg border border-gray-200">
-                <table className="min-w-full text-xs">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-medium text-gray-500">Response Header</th>
-                      <th className="px-3 py-2 text-left font-medium text-gray-500">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {Object.entries(result.headers ?? {}).map(([name, value]) => (
-                      <tr key={name}>
-                        <td className="px-3 py-2 font-mono text-gray-700">{name}</td>
-                        <td className="px-3 py-2 break-all text-gray-600">{value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Response body */}
-              <div className="rounded-lg bg-slate-900 p-4">
-                <div className="mb-2 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await navigator.clipboard.writeText(prettyBody);
-                      setCopied(true);
-                      window.setTimeout(() => setCopied(false), 1500);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-600 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-400 hover:text-slate-100 transition-colors"
-                  >
-                    {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                    {copied ? 'Copied' : 'Copy'}
-                  </button>
+      <div className="min-w-0" aria-live="polite">
+        {error !== null && (
+          <Alert variant="destructive" role="alert" title={t('api.sendFailed')}>
+            {error instanceof Error ? error.message : String(error)}
+            {isApiError(error) && error.requestId && (
+              <span className="mt-1 block text-xs">
+                {t('errors.requestId')}: <code className="font-mono select-all">{error.requestId}</code>
+              </span>
+            )}
+          </Alert>
+        )}
+        {result ? (
+          <Card>
+            <CardHeader
+              title={t('api.response')}
+              actions={
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <StatusBadge status={result.statusCode} />
+                  {result.durationMs !== undefined && (
+                    <Badge variant="outline">{formatNumber(result.durationMs)} ms</Badge>
+                  )}
+                  <Badge variant="outline">{t('api.bytes', { count: result.responseBytes })}</Badge>
+                  {result.truncated && <Badge variant="warning">{t('api.truncated')}</Badge>}
+                  {result.rateLimit && (
+                    <Badge variant={result.rateLimit.remaining <= 1 ? 'warning' : 'outline'}>
+                      {t('api.rateLeft', {
+                        remaining: result.rateLimit.remaining,
+                        limit: result.rateLimit.limitPerMinute,
+                      })}
+                    </Badge>
+                  )}
                 </div>
-                <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-200">
-                  {prettyBody}
-                </pre>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Documentation */}
-      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-sm font-semibold text-gray-700">Documentation</h2>
-        {spec ? (
-          <SwaggerUI spec={spec} supportedSubmitMethods={[]} />
+              }
+            />
+            <CardContent className="space-y-4">
+              <CodeBlock code={prettyBody || t('api.emptyBody')} label={result.contentType || t('api.body')} />
+              <TableContainer>
+                <Table>
+                  <caption className="sr-only">{t('api.responseHeaders')}</caption>
+                  <THead>
+                    <tr>
+                      <TH>{t('api.header')}</TH>
+                      <TH>{t('api.value')}</TH>
+                    </tr>
+                  </THead>
+                  <TBody>
+                    {Object.entries(result.headers ?? {}).map(([name, value]) => (
+                      <TR key={name}>
+                        <TD className="font-mono text-xs whitespace-nowrap">{name}</TD>
+                        <TD className="text-xs break-token">{value}</TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              </TableContainer>
+            </CardContent>
+          </Card>
         ) : (
-          <p className="text-sm text-gray-400">Loading spec…</p>
+          !error && (
+            <div className="rounded-lg border border-dashed border-border">
+              <EmptyState icon={Send} title={t('api.noResponseYet')} description={t('api.noResponseYetBody')} />
+            </div>
+          )
         )}
       </div>
     </div>
   );
 }
 
-// ── Utility functions (unchanged) ─────────────────────────────────────────────
-
-function parseOperations(spec: SpecObject | null): OperationOption[] {
-  if (!spec?.paths || typeof spec.paths !== 'object') return [];
-
-  const isOpenAPI3 = typeof spec.openapi === 'string';
-  const globalConsumes = listStrings(spec.consumes);
-  const globalProduces = listStrings(spec.produces);
-  const operations: OperationOption[] = [];
-
-  Object.entries(spec.paths).forEach(([path, pathItem]) => {
-    if (!pathItem || typeof pathItem !== 'object') return;
-    const pathParameters = extractParameters((pathItem as SpecObject).parameters, spec);
-
-    supportedMethods.forEach((methodKey) => {
-      const operation = (pathItem as SpecObject)[methodKey];
-      if (!operation || typeof operation !== 'object') return;
-
-      const operationParameters = mergeParameters(pathParameters, extractParameters((operation as SpecObject).parameters, spec));
-      const requestContentTypes = isOpenAPI3
-        ? objectKeys((resolveRef(spec, (operation as SpecObject).requestBody) as SpecObject | undefined)?.content)
-        : listStrings((operation as SpecObject).consumes).concat(globalConsumes);
-      const responseContentTypes = isOpenAPI3
-        ? extractResponseContentTypes((operation as SpecObject).responses, spec)
-        : listStrings((operation as SpecObject).produces).concat(globalProduces);
-      const bodyExample = isOpenAPI3
-        ? openAPI3BodyExample((operation as SpecObject).requestBody, spec)
-        : swagger2BodyExample((operation as SpecObject).parameters, spec);
-
-      operations.push({
-        id: `${methodKey.toUpperCase()} ${path}`,
-        method: methodKey.toUpperCase(),
-        path,
-        summary: String((operation as SpecObject).summary ?? ''),
-        description: String((operation as SpecObject).description ?? ''),
-        tags: listStrings((operation as SpecObject).tags),
-        parameters: operationParameters,
-        requestContentTypes: uniq(requestContentTypes).filter(Boolean),
-        responseContentTypes: uniq(responseContentTypes).filter(Boolean),
-        requestBodyExample: bodyExample,
-        hasRequestBody:
-          isOpenAPI3
-            ? Boolean((operation as SpecObject).requestBody)
-            : requestContentTypes.length > 0 || ['POST', 'PUT', 'PATCH'].includes(methodKey.toUpperCase()),
-      });
-    });
-  });
-
-  return operations.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
-}
-
-function buildParamDefaults(operation: OperationOption) {
-  return operation.parameters.reduce<Record<string, string>>((acc, p) => {
-    acc[p.id] = p.defaultValue;
-    return acc;
-  }, {});
-}
-
-function buildResolvedPath(template: string, parameters: OperationParameter[], values: Record<string, string>) {
-  return parameters.reduce(
-    (path, p) => path.split(`{${p.name}}`).join(encodeURIComponent(values[p.id] ?? '')),
-    template
+function ParameterGroup({
+  title,
+  params,
+  values,
+  onChange,
+  missing,
+}: {
+  title: string;
+  params: OperationParameter[];
+  values: Record<string, string>;
+  onChange: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  missing: string[];
+}) {
+  const { t } = useTranslation();
+  if (params.length === 0) return null;
+  return (
+    <fieldset className="min-w-0 space-y-3">
+      <legend className="mb-2 text-sm font-semibold">{title}</legend>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {params.map((param) => (
+          <Field
+            key={param.id}
+            id={`param-${param.id}`}
+            label={<span className="font-mono text-[13px]">{param.name}</span>}
+            helper={param.description || param.type}
+            required={param.required}
+            error={missing.includes(param.id) ? t('api.paramRequired', { name: param.name }) : undefined}
+          >
+            <Input
+              value={values[param.id] ?? ''}
+              onChange={(event) => onChange((prev) => ({ ...prev, [param.id]: event.target.value }))}
+              className="font-mono text-[13px]"
+              spellCheck={false}
+            />
+          </Field>
+        ))}
+      </div>
+    </fieldset>
   );
-}
-
-function buildQueryString(parameters: OperationParameter[], values: Record<string, string>) {
-  const query = new URLSearchParams();
-  parameters.forEach((p) => {
-    const value = values[p.id]?.trim();
-    if (value) query.append(p.name, value);
-  });
-  return query.toString();
-}
-
-function buildHeaders(
-  headerParams: OperationParameter[],
-  values: Record<string, string>,
-  additionalHeaders: string,
-  acceptType: string,
-  contentType: string,
-  hasRequestBody: boolean
-) {
-  const headers: Record<string, string> = {};
-  if (acceptType) headers.Accept = acceptType;
-  if (hasRequestBody && contentType) headers['Content-Type'] = contentType;
-  headerParams.forEach((p) => {
-    const value = values[p.id]?.trim();
-    if (value) headers[p.name] = value;
-  });
-  additionalHeaders
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .forEach((line) => {
-      const [name, ...rest] = line.split(':');
-      if (name && rest.length > 0) headers[name.trim()] = rest.join(':').trim();
-    });
-  return headers;
-}
-
-function extractParameters(raw: unknown, spec: SpecObject): OperationParameter[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((item, i) => normalizeParameter(item as SpecObject, i, spec)).filter((p): p is OperationParameter => Boolean(p));
-}
-
-function mergeParameters(pathParameters: OperationParameter[], operationParameters: OperationParameter[]) {
-  const merged = [...pathParameters];
-  operationParameters.forEach((p) => {
-    const idx = merged.findIndex((m) => m.name === p.name && m.in === p.in);
-    if (idx >= 0) merged[idx] = p;
-    else merged.push(p);
-  });
-  return merged;
-}
-
-function normalizeParameter(rawParameter: SpecObject, index: number, spec: SpecObject): OperationParameter | null {
-  const parameter = resolveRef(spec, rawParameter) as SpecObject;
-  const location = parameter?.in;
-  if (location !== 'path' && location !== 'query' && location !== 'header') return null;
-
-  const schema = (resolveRef(spec, parameter.schema) as SpecObject) ?? {};
-  const defaultValue =
-    resolveExampleValue(spec, parameter.example) ??
-    resolveExampleValue(spec, parameter.default) ??
-    resolveExampleValue(spec, schema.example) ??
-    resolveExampleValue(spec, schema.default) ??
-    generateExampleFromSchema(schema, spec) ??
-    '';
-
-  return {
-    id: `${location}:${String(parameter.name ?? index)}`,
-    name: String(parameter.name ?? `param_${index}`),
-    in: location,
-    description: String(parameter.description ?? ''),
-    required: Boolean(parameter.required),
-    defaultValue: defaultValue == null ? '' : stringifyExample(defaultValue),
-    type: String(schema.type ?? parameter.type ?? 'string'),
-  };
-}
-
-function openAPI3BodyExample(requestBody: unknown, spec: SpecObject) {
-  const body = resolveRef(spec, requestBody) as SpecObject | undefined;
-  const content = (body?.content as SpecObject) ?? {};
-  for (const entry of Object.values(content)) {
-    const media = resolveRef(spec, entry) as SpecObject;
-    const directExample = resolveExampleValue(spec, media.example);
-    if (directExample !== undefined) return stringifyExample(directExample);
-    if (media.examples && typeof media.examples === 'object') {
-      const first = resolveRef(spec, Object.values(media.examples as SpecObject)[0]) as SpecObject | undefined;
-      if (first?.value !== undefined) return stringifyExample(resolveExampleValue(spec, first.value));
-    }
-    const schema = resolveRef(spec, media.schema) as SpecObject | undefined;
-    const schemaExample = resolveExampleValue(spec, schema?.example) ?? generateExampleFromSchema(schema, spec);
-    if (schemaExample !== undefined) return stringifyExample(schemaExample);
-  }
-  return '';
-}
-
-function swagger2BodyExample(rawParameters: unknown, spec: SpecObject) {
-  if (!Array.isArray(rawParameters)) return '';
-  const parameter = rawParameters.map((item) => resolveRef(spec, item) as SpecObject).find((item) => item?.in === 'body');
-  if (!parameter) return '';
-  const schema = resolveRef(spec, parameter.schema) as SpecObject | undefined;
-  const example =
-    resolveExampleValue(spec, parameter['x-example']) ??
-    resolveExampleValue(spec, parameter.example) ??
-    resolveExampleValue(spec, schema?.example) ??
-    generateExampleFromSchema(schema, spec);
-  return example !== undefined ? stringifyExample(example) : '';
-}
-
-function extractResponseContentTypes(responses: unknown, spec: SpecObject) {
-  const out: string[] = [];
-  if (!responses || typeof responses !== 'object') return out;
-  Object.entries(responses as SpecObject).forEach(([status, response]) => {
-    if (!status.startsWith('2') && status !== 'default') return;
-    const content = ((resolveRef(spec, response) as SpecObject | undefined)?.content as SpecObject) ?? {};
-    out.push(...Object.keys(content));
-  });
-  return out;
-}
-
-function listStrings(value: unknown) {
-  return Array.isArray(value) ? value.map((item) => String(item)) : [];
-}
-
-function objectKeys(value: unknown) {
-  return value && typeof value === 'object' ? Object.keys(value as Record<string, unknown>) : [];
-}
-
-function uniq(values: string[]) {
-  return Array.from(new Set(values));
-}
-
-function stringifyExample(value: unknown) {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value ?? '');
-  }
-}
-
-function encodeBase64Utf8(value: string) {
-  const bytes = new TextEncoder().encode(value);
-  let binary = '';
-  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  return btoa(binary);
-}
-
-function decodeBase64Utf8(value: string) {
-  try {
-    const binary = atob(value);
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    return new TextDecoder('utf-8').decode(bytes);
-  } catch {
-    return value;
-  }
-}
-
-function beautifyBody(body: string, contentType: string) {
-  const trimmed = body.trim();
-  if (!trimmed) return '';
-  if (contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch { return body; }
-  }
-  return body;
-}
-
-// Follows local $ref chains. A ref seen twice (A -> B -> A) stops the walk instead of
-// recursing forever.
-function resolveRef(spec: SpecObject, value: unknown): unknown {
-  let current: unknown = value;
-  const seen = new Set<string>();
-  while (current && typeof current === 'object') {
-    const ref = (current as SpecObject).$ref;
-    if (typeof ref !== 'string' || !ref.startsWith('#/') || seen.has(ref)) break;
-    seen.add(ref);
-    const target = lookupPointer(spec, ref);
-    if (target === undefined) break;
-    current = target;
-  }
-  return current ?? value;
-}
-
-function lookupPointer(spec: SpecObject, ref: string): unknown {
-  const parts = ref.slice(2).split('/').map((p) => p.replace(/~1/g, '/').replace(/~0/g, '~'));
-  let current: unknown = spec;
-  for (const part of parts) {
-    if (!current || typeof current !== 'object') return undefined;
-    current = (current as SpecObject)[part];
-  }
-  return current;
-}
-
-const MAX_EXAMPLE_DEPTH = 8;
-
-function resolveExampleValue(spec: SpecObject, value: unknown): unknown {
-  const resolved = resolveRef(spec, value);
-  if (resolved && typeof resolved === 'object' && 'value' in (resolved as SpecObject)) {
-    return (resolved as SpecObject).value;
-  }
-  return resolved;
-}
-
-// Builds an example value from a schema. Self-referencing schemas (a Node with
-// children: Node[]) stop at the first repeat on the current path, and nesting is
-// capped at MAX_EXAMPLE_DEPTH, so recursive specs can't hang the page.
-function generateExampleFromSchema(
-  schema: SpecObject | undefined,
-  spec: SpecObject,
-  path: Set<object> = new Set(),
-): unknown {
-  if (!schema || path.size >= MAX_EXAMPLE_DEPTH) return undefined;
-  const resolved = resolveRef(spec, schema) as SpecObject | undefined;
-  if (!resolved || typeof resolved !== 'object' || path.has(resolved)) return undefined;
-  path.add(resolved);
-  try {
-    return exampleForResolvedSchema(resolved, spec, path);
-  } finally {
-    path.delete(resolved);
-  }
-}
-
-function exampleForResolvedSchema(resolved: SpecObject, spec: SpecObject, path: Set<object>): unknown {
-  if (resolved.example !== undefined) return resolveExampleValue(spec, resolved.example);
-  if (resolved.default !== undefined) return resolveExampleValue(spec, resolved.default);
-  if (Array.isArray(resolved.enum) && resolved.enum.length > 0) return resolved.enum[0];
-  const schemaType = resolved.type;
-  if (schemaType === 'object' || resolved.properties) {
-    const out: Record<string, unknown> = {};
-    Object.entries((resolved.properties as SpecObject) ?? {}).forEach(([key, value]) => {
-      const example = generateExampleFromSchema(value as SpecObject, spec, path);
-      if (example !== undefined) out[key] = example;
-    });
-    return out;
-  }
-  if (schemaType === 'array') {
-    const itemExample = generateExampleFromSchema((resolved.items as SpecObject) ?? {}, spec, path);
-    return itemExample === undefined ? [] : [itemExample];
-  }
-  if (schemaType === 'integer' || schemaType === 'number') return 0;
-  if (schemaType === 'boolean') return false;
-  if (schemaType === 'string' && resolved.format === 'date-time') return new Date().toISOString();
-  if (schemaType === 'string' && resolved.format === 'date') return new Date().toISOString().slice(0, 10);
-  if (schemaType === 'string') return '';
-  if (Array.isArray(resolved.allOf) && resolved.allOf.length > 0) {
-    return resolved.allOf.reduce<Record<string, unknown>>((acc, item) => {
-      const value = generateExampleFromSchema(item as SpecObject, spec, path);
-      if (value && typeof value === 'object' && !Array.isArray(value)) return { ...acc, ...(value as Record<string, unknown>) };
-      return acc;
-    }, {});
-  }
-  return undefined;
 }

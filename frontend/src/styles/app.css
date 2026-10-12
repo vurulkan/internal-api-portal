@@ -1,11 +1,231 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
 
-/* Swagger UI overrides */
-.swagger-ui .topbar { display: none !important; }
-.swagger-ui .information-container { padding: 0 !important; }
-.swagger-ui .info { margin: 0 0 1rem !important; }
-.swagger-ui .info .title { font-size: 1.125rem !important; }
-.swagger-ui .wrapper { padding: 0 !important; max-width: none !important; }
-.swagger-ui .scheme-container { padding: 0 !important; box-shadow: none !important; background: transparent !important; }
+/* Dark mode follows the .dark class on <html> (set by ThemeProvider: light / dark / system). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens: DESIGN_SYSTEM.md (milestones repo). Components use only these
+ * (bg-background, text-muted-foreground, border-input, …), never palette colors;
+ * eslint enforces it. Every text pair is >= 4.5:1, every control border >= 3:1,
+ * in both themes.
+ */
+:root {
+  color-scheme: light;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #475569;
+  --border: #e2e8f0;
+  --input: #64748b;
+  --primary: #0f172a;
+  --primary-foreground: #ffffff;
+  --accent: #15803d;
+  --accent-foreground: #ffffff;
+  --link: #2563eb;
+  --ring: #2563eb;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --warning: #b45309;
+  --success: #15803d;
+  /* Subtle backgrounds (alerts, badges) and the text that goes on them. */
+  --success-subtle: #f0fdf4;
+  --success-subtle-foreground: #15803d;
+  --warning-subtle: #fffbeb;
+  --warning-subtle-foreground: #b45309;
+  --destructive-subtle: #fef2f2;
+  --destructive-subtle-foreground: #b91c1c;
+  --info-subtle: #eff6ff;
+  --info-subtle-foreground: #1d4ed8;
+  /* HTTP methods (always shown as text too). */
+  --method-get: #eff6ff;
+  --method-get-foreground: #1d4ed8;
+  --method-post: #f0fdf4;
+  --method-post-foreground: #15803d;
+  --method-put: #fffbeb;
+  --method-put-foreground: #92400e;
+  --method-patch: #f5f3ff;
+  --method-patch-foreground: #6d28d9;
+  --method-delete: #fef2f2;
+  --method-delete-foreground: #b91c1c;
+  --overlay: rgb(2 6 23 / 0.5);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #020617;
+  --foreground: #f8fafc;
+  --card: #0e1223;
+  --card-foreground: #f8fafc;
+  --muted: #1a1e2f;
+  --muted-foreground: #94a3b8;
+  --border: #1e293b;
+  --input: #64748b;
+  --primary: #f8fafc;
+  --primary-foreground: #020617;
+  --accent: #22c55e;
+  --accent-foreground: #0f172a;
+  --link: #60a5fa;
+  --ring: #60a5fa;
+  --destructive: #f87171;
+  --destructive-foreground: #020617;
+  --warning: #fbbf24;
+  --success: #4ade80;
+  --success-subtle: #052e16;
+  --success-subtle-foreground: #4ade80;
+  --warning-subtle: #451a03;
+  --warning-subtle-foreground: #fbbf24;
+  --destructive-subtle: #450a0a;
+  --destructive-subtle-foreground: #f87171;
+  --info-subtle: #172554;
+  --info-subtle-foreground: #60a5fa;
+  --method-get: #172554;
+  --method-get-foreground: #93c5fd;
+  --method-post: #052e16;
+  --method-post-foreground: #86efac;
+  --method-put: #451a03;
+  --method-put-foreground: #fcd34d;
+  --method-patch: #2e1065;
+  --method-patch-foreground: #c4b5fd;
+  --method-delete: #450a0a;
+  --method-delete-foreground: #fca5a5;
+  --overlay: rgb(0 0 0 / 0.6);
+}
+
+/* z-index scale (DESIGN_SYSTEM.md): sticky z-30, dropdown z-40, drawer / modal z-50,
+   toast and tooltip z-60, command palette z-70. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-link: var(--link);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-subtle-foreground: var(--success-subtle-foreground);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-subtle-foreground: var(--warning-subtle-foreground);
+  --color-destructive-subtle: var(--destructive-subtle);
+  --color-destructive-subtle-foreground: var(--destructive-subtle-foreground);
+  --color-info-subtle: var(--info-subtle);
+  --color-info-subtle-foreground: var(--info-subtle-foreground);
+  --color-method-get: var(--method-get);
+  --color-method-get-foreground: var(--method-get-foreground);
+  --color-method-post: var(--method-post);
+  --color-method-post-foreground: var(--method-post-foreground);
+  --color-method-put: var(--method-put);
+  --color-method-put-foreground: var(--method-put-foreground);
+  --color-method-patch: var(--method-patch);
+  --color-method-patch-foreground: var(--method-patch-foreground);
+  --color-method-delete: var(--method-delete);
+  --color-method-delete-foreground: var(--method-delete-foreground);
+  --color-overlay: var(--overlay);
+}
+
+@theme {
+  --font-sans: 'Fira Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  --animate-in: fade-in 200ms ease-out;
+  --animate-out: fade-out 130ms ease-in;
+  --animate-shimmer: shimmer 1.5s ease-in-out infinite;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes shimmer {
+    50% {
+      opacity: 0.55;
+    }
+  }
+}
+
+@layer base {
+  html {
+    /* The sticky 56px top bar never hides a focused element. */
+    scroll-padding-top: 64px;
+  }
+  body {
+    @apply bg-background font-sans text-sm text-foreground antialiased;
+    line-height: 1.5;
+  }
+  h1,
+  h2,
+  h3 {
+    line-height: 1.25;
+  }
+  *,
+  ::after,
+  ::before {
+    border-color: var(--border);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  /* Radix sets data-state on overlays; enter / exit with opacity + transform only. */
+  [data-state='open'][data-animate] {
+    animation: var(--animate-in);
+  }
+  [data-state='closed'][data-animate] {
+    animation: var(--animate-out);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::after,
+    ::before {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@keyframes nav-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+/* Long tokens (URLs, paths, ids) wrap anywhere instead of overflowing. */
+@utility break-token {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
