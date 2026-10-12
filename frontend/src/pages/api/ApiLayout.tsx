@@ -93,7 +93,10 @@ function TabNav({ tabs }: { tabs: { to: string; label: string; also?: string }[]
   const { t } = useTranslation();
   const location = useLocation();
   return (
-    <nav aria-label={t('api.sections')} className="flex min-w-0 gap-1 overflow-x-auto border-b border-border">
+    <nav
+      aria-label={t('api.sections')}
+      className="flex min-w-0 gap-1 overflow-x-auto shadow-[inset_0_-1px_0_var(--border)]"
+    >
       {tabs.map((tab) => {
         const active = location.pathname === tab.to || (!!tab.also && location.pathname.startsWith(tab.also));
         return (
@@ -102,7 +105,7 @@ function TabNav({ tabs }: { tabs: { to: string; label: string; also?: string }[]
             to={tab.to}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              '-mb-px inline-flex items-center whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
+              'inline-flex items-center whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
               active && 'border-foreground text-foreground',
             )}
           >

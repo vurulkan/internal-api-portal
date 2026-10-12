@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { FileWarning, PanelRightClose, PanelRightOpen, SearchX } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { readPref, writePref } from '@/lib/storage';
+import { firstOperation } from '@/lib/openapi';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { SectionPanel } from '@/components/shell/shell-context';
 import {
@@ -55,7 +56,7 @@ export default function ReferenceTab() {
     );
   }
   // /reference opens the first operation; an unknown key says so.
-  if (!opKey) return <Navigate to={operationPath(base, spec.operations[0].key)} replace />;
+  if (!opKey) return <Navigate to={operationPath(base, firstOperation(spec)!.key)} replace />;
   const op = spec.operations.find((o) => o.key === opKey);
   const panel = (
     <SectionPanel title={t('api.operations')}>
@@ -73,7 +74,7 @@ export default function ReferenceTab() {
             description={t('api.operationNotFoundBody', { key: opKey })}
             action={
               <Button asChild>
-                <Link to={operationPath(base, spec.operations[0].key)}>{t('api.firstOperation')}</Link>
+                <Link to={operationPath(base, firstOperation(spec)!.key)}>{t('api.firstOperation')}</Link>
               </Button>
             }
           />

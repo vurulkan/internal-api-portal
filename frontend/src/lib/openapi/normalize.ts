@@ -239,6 +239,12 @@ function securitySchemes(spec: SpecObject, swagger2: boolean) {
   return out;
 }
 
+/** The operation an API opens on: the first in the tree (first tag group, not deprecated). */
+export function firstOperation(spec: NormalizedSpec) {
+  const live = { ...spec, operations: spec.operations.filter((op) => !op.deprecated) };
+  return operationsByTag(live.operations.length ? live : spec, '\uffff')[0]?.[1][0];
+}
+
 /** Operations grouped by their first tag (untagged last), in spec order. */
 export function operationsByTag(spec: NormalizedSpec, untagged: string) {
   const order = spec.tags.map((t) => t.name);

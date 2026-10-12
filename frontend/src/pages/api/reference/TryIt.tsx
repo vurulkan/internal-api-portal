@@ -629,15 +629,8 @@ function ProxyFailure({ error, apiDef }: { error: unknown; apiDef: ApiDefinition
     if (error.status === 0) {
       title = t('errors.networkTitle');
       body = t('errors.networkBody');
-    } else if (error.status === 403) {
-      title = t('api.errors.forbiddenTitle');
-    } else if (error.code === 'upstream_timeout' || error.status === 504) {
-      title = t('api.errors.timeoutTitle');
-      body = t('api.errors.timeout', { seconds: apiDef.timeoutSeconds || 30 });
-    } else if (error.code === 'upstream_error' || error.status === 502) {
-      title = t('api.errors.unreachableTitle');
-      body = t('api.errors.unreachable');
     } else if (/allowlist|not allowed/i.test(message)) {
+      // The portal refuses paths / methods outside the API's allow-lists (403).
       title = t('api.errors.policyTitle');
       body = (
         <>
@@ -654,6 +647,16 @@ function ProxyFailure({ error, apiDef }: { error: unknown; apiDef: ApiDefinition
           )}
         </>
       );
+    } else if (error.status === 403) {
+      title = t('api.errors.forbiddenTitle');
+    } else if (error.status === 429) {
+      title = t('api.errors.rateLimitedTitle');
+    } else if (error.code === 'upstream_timeout' || error.status === 504) {
+      title = t('api.errors.timeoutTitle');
+      body = t('api.errors.timeout', { seconds: apiDef.timeoutSeconds || 30 });
+    } else if (error.code === 'upstream_error' || error.status === 502) {
+      title = t('api.errors.unreachableTitle');
+      body = t('api.errors.unreachable');
     }
   }
   return (

@@ -72,7 +72,8 @@ export function OperationDoc({ spec, op, apiDef }: { spec: NormalizedSpec; op: O
             {t('api.parameters')}
           </h3>
           <TableContainer>
-            <Table>
+            {/* Below ~520px the table scrolls inside its box instead of breaking names apart. */}
+            <Table className="min-w-[32rem]">
               <caption className="sr-only">{t('api.parameters')}</caption>
               <THead>
                 <tr>
@@ -165,7 +166,7 @@ function ParameterRow({ spec, p, apiDef }: { spec: NormalizedSpec; p: Parameter;
   return (
     <TR>
       <TD className="align-top">
-        <span className="font-mono text-[13px] font-medium break-token">
+        <span className="font-mono text-[13px] font-medium whitespace-nowrap">
           {p.name}
           {p.required && (
             <span className="text-destructive" aria-label={t('schema.required')}>

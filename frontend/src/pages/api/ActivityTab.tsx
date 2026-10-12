@@ -87,7 +87,14 @@ export default function ActivityTab() {
                   return (
                     <li key={call.id} className="flex flex-wrap items-center gap-2 py-2 text-[13px]">
                       {details.method && <MethodBadge method={details.method} />}
-                      <code className="min-w-0 font-mono text-xs break-token">{details.path ?? '–'}</code>
+                      {details.path ? (
+                        <code className="min-w-0 font-mono text-xs break-token">{details.path}</code>
+                      ) : (
+                        // Refused before the request was read (rate limit, no permission).
+                        <span className="min-w-0 text-xs text-muted-foreground">
+                          {call.errorMessage || call.action}
+                        </span>
+                      )}
                       {call.statusCode ? <StatusBadge status={call.statusCode} /> : null}
                       <span className="ml-auto text-muted-foreground" title={formatDateTime(call.timestamp)}>
                         {call.user} · {formatRelative(call.timestamp)}

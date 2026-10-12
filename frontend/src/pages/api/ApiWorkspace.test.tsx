@@ -215,7 +215,8 @@ describe('API workspace', () => {
   });
 
   it('explains portal refusals and counts down a rate limit', async () => {
-    let reply: Response = apiError(400, "path /admin is not in this API's allowlist");
+    // What the portal really answers (403 + code forbidden).
+    let reply: Response = apiError(403, "path /admin is not in this API's allowlist", 'forbidden');
     mockFetch(routes({ 'POST /api/apis/1/invoke': () => reply }));
     const user = userEvent.setup();
     renderApp('/apis/payments/operations/getCharge');

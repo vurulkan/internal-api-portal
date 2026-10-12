@@ -3,6 +3,7 @@ import {
   decodeBase64Utf8,
   encodeBase64Utf8,
   exampleFromSchema,
+  firstOperation,
   headerAllowed,
   normalizeSpec,
   operationsByTag,
@@ -128,6 +129,10 @@ describe('normalizeSpec (OpenAPI 3)', () => {
     expect(byKey('createCharge').security[0][0]).toMatchObject({ type: 'apiKey', name: 'X-Api-Key', in: 'header' });
     expect(byKey('DELETE /v1/charges/{id}').security).toEqual([]);
     expect(byKey('createCharge').responses.map((r) => r.status)).toEqual(['201', 'default']);
+  });
+
+  it('opens on the first operation of the tree, not the first path', () => {
+    expect(firstOperation(spec)?.key).toBe('POST /v1/tree');
   });
 
   it('groups by tag in the spec order, untagged last', () => {
