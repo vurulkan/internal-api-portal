@@ -2,6 +2,8 @@ package openapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"sort"
@@ -55,7 +57,9 @@ func ExtractOperations(spec json.RawMessage) (string, []models.APIOperation) {
 				// First line of the description, shortened.
 				summary = strings.TrimSpace(strings.SplitN(op.Description, "\n", 2)[0])
 			}
+			sum := sha256.Sum256(append(append([]byte(path+"\x00"), pathLevel(item)...), raw...))
 			ops = append(ops, models.APIOperation{
+				Fingerprint: hex.EncodeToString(sum[:12]),
 				Method:      strings.ToUpper(method),
 				Path:        path,
 				OperationID: limit(op.OperationID, 200),
@@ -74,6 +78,12 @@ func ExtractOperations(spec json.RawMessage) (string, []models.APIOperation) {
 	return limit(version, 64), ops
 }
 
+// pathLevel is the path item's shared parameters: a change there changes every
+// operation of the path.
+func pathLevel(item map[string]json.RawMessage) []byte {
+	return item["parameters"]
+}
+
 func limit(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -82,10 +92,13 @@ func limit(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
-// index stores the operations of a freshly cached spec.
+// index stores the operations of a freshly cached spec and records what changed.
+// The spec is canonical JSON (sanitize re-encodes it with sorted keys), so equal
+// specs hash equally.
 func (s *Service) index(ctx context.Context, apiID int, spec json.RawMessage) {
 	version, ops := ExtractOperations(spec)
-	if err := s.store.ReplaceAPIOperations(ctx, apiID, version, ops); err != nil {
+	sum := sha256.Sum256(spec)
+	if err := s.store.ApplySpecIndex(ctx, apiID, hex.EncodeToString(sum[:]), version, ops); err != nil {
 		slog.ErrorContext(ctx, "spec.index_failed", "portal.api_id", apiID, "error", err.Error())
 	}
 }

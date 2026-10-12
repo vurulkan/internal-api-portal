@@ -103,6 +103,19 @@ export type OperationHit = {
   tags?: string[];
   deprecated?: boolean;
 };
+export type SpecChange = {
+  at: string;
+  kind: 'initial' | 'changed' | 'failed';
+  version?: string;
+  operationCount: number;
+  addedCount: number;
+  removedCount: number;
+  changedCount: number;
+  added: string[];
+  removed: string[];
+  changed: string[];
+  error?: string;
+};
 export type SearchResponse = { query: string; apis: ApiSummary[]; operations: OperationHit[] };
 export type ApiDefinition = {
   id: number;
@@ -320,7 +333,9 @@ async function toApiError(response: Response): Promise<ApiError> {
 async function send(path: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(path, { ...init, credentials: 'same-origin' });
-  } catch {
+  } catch (error) {
+    // A cancelled request (AbortController) is not a network failure.
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new ApiError(0, 'The portal could not be reached.', 'network');
   }
 }
@@ -392,10 +407,14 @@ export const api = {
     request<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}`, { signal }),
   setFavorite: (id: number, favorite: boolean) =>
     request<{ favorite: boolean }>(`/api/me/favorites/${id}`, { method: favorite ? 'PUT' : 'DELETE' }),
-  apiDetails: (id: string) => request<ApiDefinition>(`/api/apis/${id}`),
-  apiSpec: (id: string) => request<Record<string, unknown>>(`/api/apis/${id}/spec`),
-  invoke: (id: string, payload: Record<string, unknown>) =>
-    request<InvokeResponse>(`/api/apis/${id}/invoke`, { method: 'POST', body: JSON.stringify(payload) }),
+  apiDetails: (ref: string) => request<ApiDefinition>(`/api/apis/${encodeURIComponent(ref)}`),
+  apiSpec: (ref: string) => request<Record<string, unknown>>(`/api/apis/${encodeURIComponent(ref)}/spec`),
+  apiActivity: (ref: string) => request<{ items: SpecChange[] }>(`/api/apis/${encodeURIComponent(ref)}/activity`),
+  /** A URL the browser downloads (same-origin, cookie-authenticated GET). */
+  specDownloadUrl: (ref: string, format: 'json' | 'yaml') =>
+    `/api/apis/${encodeURIComponent(ref)}/spec?format=${format}&download=1`,
+  invoke: (id: string, payload: Record<string, unknown>, signal?: AbortSignal) =>
+    request<InvokeResponse>(`/api/apis/${id}/invoke`, { method: 'POST', body: JSON.stringify(payload), signal }),
   users: () => request<User[]>('/api/admin/users'),
   createUser: (payload: UserPayload) =>
     request<{ id: number }>('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) }),

@@ -54,6 +54,7 @@ var authzTable = []routeRule{
 	{"DELETE", "/api/me/favorites/{id}", signedIn, ""},
 	{"GET", "/api/apis/{id}", signedIn, ""},
 	{"GET", "/api/apis/{id}/spec", signedIn, ""},
+	{"GET", "/api/apis/{id}/activity", signedIn, ""},
 	{"POST", "/api/apis/{id}/invoke", signedIn, ""},
 
 	{"GET", "/api/admin/users", signedIn, "user.view"},

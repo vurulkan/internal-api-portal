@@ -116,6 +116,7 @@ func (s *Server) Router() http.Handler {
 		r.With(a("api.favorite_remove")).Delete("/api/me/favorites/{id}", s.handleSetFavorite)
 		r.Get("/api/apis/{id}", s.handleAPIDetails)
 		r.Get("/api/apis/{id}/spec", s.handleAPISpec)
+		r.Get("/api/apis/{id}/activity", s.handleAPIActivity)
 		r.With(a("api.invoke"), s.requireFeature("tryIt")).Post("/api/apis/{id}/invoke", s.handleInvoke)
 
 		r.With(perm("user.view")).Get("/api/admin/users", s.handleListUsers)

@@ -21,7 +21,32 @@ export const routes: RouteObject[] = [
         errorElement: <RouteError />,
         children: [
           { index: true, element: <CatalogPage /> },
-          { path: 'apis/:id', lazy: async () => ({ Component: (await import('@/pages/ApiDetailsPage')).default }) },
+          {
+            path: 'apis/:ref',
+            lazy: async () => ({ Component: (await import('@/pages/api/ApiLayout')).default }),
+            children: [
+              { index: true, lazy: async () => ({ Component: (await import('@/pages/api/ApiLayout')).ApiIndex }) },
+              {
+                path: 'overview',
+                lazy: async () => ({ Component: (await import('@/pages/api/OverviewTab')).default }),
+              },
+              {
+                path: 'reference',
+                lazy: async () => ({ Component: (await import('@/pages/api/ReferenceTab')).default }),
+              },
+              {
+                path: 'operations/:opKey',
+                lazy: async () => ({ Component: (await import('@/pages/api/ReferenceTab')).default }),
+              },
+              { path: 'classic', lazy: async () => ({ Component: (await import('@/pages/api/ClassicTab')).default }) },
+              { path: 'access', lazy: async () => ({ Component: (await import('@/pages/api/AccessTab')).default }) },
+              {
+                path: 'activity',
+                lazy: async () => ({ Component: (await import('@/pages/api/ActivityTab')).default }),
+              },
+              { path: '*', element: <NotFoundPage /> },
+            ],
+          },
           { path: 'account', lazy: async () => ({ Component: (await import('@/pages/AccountPage')).default }) },
           {
             path: 'change-password',

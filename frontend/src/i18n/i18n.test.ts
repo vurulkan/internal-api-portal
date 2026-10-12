@@ -90,6 +90,13 @@ describe('i18n dictionaries', () => {
         'account_disabled',
       ].map((s) => `login.authErrors.${s}`),
       'warnings.encryption_key_in_database',
+      ...['path', 'query', 'header'].map((s) => `api.groups.${s}`),
+      ...['path', 'query', 'header', 'cookie'].map((s) => `api.in.${s}`),
+      ...['portal', 'user', 'blocked', 'unknown'].map((s) => `api.security.${s}`),
+      ...['required', 'integer', 'number', 'boolean', 'enum', 'json'].map((s) => `api.validation.${s}`),
+      ...['initial', 'changed', 'failed'].map((s) => `api.activity.kind.${s}`),
+      ...['added', 'removed', 'changed'].map((s) => `api.activity.${s}`),
+      ...['overview', 'reference', 'classic', 'access', 'activity'].map((s) => `api.tabs.${s}`),
     ];
     const missing = dynamic.flatMap((key) =>
       [

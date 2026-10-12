@@ -79,8 +79,9 @@ func (s *Server) secureRequest(r *http.Request) bool {
 // ─── Headers ─────────────────────────────────────────────────────────────────
 
 // contentSecurityPolicy applies to every response. Notes on the exceptions:
-//   - style-src 'unsafe-inline': Swagger UI, the overlay positioning (Radix) and the
-//     toast library set inline styles.
+//   - style-src 'unsafe-inline': Swagger UI, the overlay positioning (Radix), the toast
+//     library and the code editor (CodeMirror) add inline styles or <style> elements.
+//     Dropping it needs a per-response nonce passed to the page; scripts are strict.
 //   - img-src data:: the brand logo is stored as a data URL.
 //
 // Fonts are self-hosted (Fira Sans / Fira Code), so no third-party origin is allowed.

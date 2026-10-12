@@ -87,17 +87,26 @@ export default function ApisSection() {
   const canCreate = !!caps?.canCreateApi || !!me.data?.user.isAdmin;
   const apis = useQuery({ queryKey: queryKeys.admin.apis, queryFn: async () => (await api.adminApis()) ?? [] });
   const [search, setSearch] = useState('');
-  // /admin/apis?new=1 (the catalog's "New API") opens the create drawer.
+  // /admin/apis?new=1 (the catalog's "New API") opens the create drawer; ?edit=<id>
+  // (the API page's "Edit definition") opens that API once the list is in.
   const [params, setParams] = useSearchParams();
   const [editing, setEditing] = useState<ApiDefinition | 'new' | null>(() =>
     params.get('new') && canCreate ? 'new' : null,
   );
+  const editId = Number(params.get('edit'));
+  const [openedEdit, setOpenedEdit] = useState(0);
+  if (editId && editId !== openedEdit && apis.data) {
+    setOpenedEdit(editId);
+    const target = apis.data.find((a) => a.id === editId);
+    if (target) setEditing(target);
+  }
   useEffect(() => {
-    if (!params.has('new')) return;
+    if (!params.has('new') && !params.has('edit')) return;
     const rest = new URLSearchParams(params);
     rest.delete('new');
+    if (apis.data) rest.delete('edit');
     setParams(rest, { replace: true });
-  }, [params, setParams]);
+  }, [params, setParams, apis.data]);
   const rows = useMemo(
     () => (apis.data ?? []).filter((a) => matches(search, a.name, a.slug, a.ownerTeam, ...(a.tags ?? []))),
     [apis.data, search],

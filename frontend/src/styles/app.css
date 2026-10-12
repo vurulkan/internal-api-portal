@@ -50,6 +50,13 @@
   --method-delete: #fef2f2;
   --method-delete-foreground: #b91c1c;
   --overlay: rgb(2 6 23 / 0.5);
+  /* Code (request / response bodies): >= 4.5:1 on --muted and --card. */
+  --syntax-key: #1d4ed8;
+  --syntax-string: #15803d;
+  --syntax-number: #b45309;
+  --syntax-literal: #7c3aed;
+  --syntax-punct: #475569;
+  --selection: #bfdbfe;
 }
 
 .dark {
@@ -91,6 +98,12 @@
   --method-delete: #450a0a;
   --method-delete-foreground: #fca5a5;
   --overlay: rgb(0 0 0 / 0.6);
+  --syntax-key: #93c5fd;
+  --syntax-string: #86efac;
+  --syntax-number: #fcd34d;
+  --syntax-literal: #c4b5fd;
+  --syntax-punct: #94a3b8;
+  --selection: #1e3a8a;
 }
 
 /* z-index scale (DESIGN_SYSTEM.md): sticky z-30, dropdown z-40, drawer / modal z-50,
@@ -133,6 +146,11 @@
   --color-method-delete: var(--method-delete);
   --color-method-delete-foreground: var(--method-delete-foreground);
   --color-overlay: var(--overlay);
+  --color-syntax-key: var(--syntax-key);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-literal: var(--syntax-literal);
+  --color-syntax-punct: var(--syntax-punct);
 }
 
 @theme {

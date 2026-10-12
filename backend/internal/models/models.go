@@ -187,6 +187,24 @@ type APIOperation struct {
 	Summary     string   `json:"summary,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 	Deprecated  bool     `json:"deprecated,omitempty"`
+	// Fingerprint changes when the operation's definition does (parameters,
+	// body, responses, …): the spec history reports it as changed.
+	Fingerprint string `json:"-"`
+}
+
+// SpecChange is one entry of an API's spec history.
+type SpecChange struct {
+	At             time.Time `json:"at"`
+	Kind           string    `json:"kind"` // initial, changed, failed
+	Version        string    `json:"version,omitempty"`
+	OperationCount int       `json:"operationCount"`
+	AddedCount     int       `json:"addedCount"`
+	RemovedCount   int       `json:"removedCount"`
+	ChangedCount   int       `json:"changedCount"`
+	Added          []string  `json:"added"`
+	Removed        []string  `json:"removed"`
+	Changed        []string  `json:"changed"`
+	Error          string    `json:"error,omitempty"`
 }
 
 type APISpecCache struct {

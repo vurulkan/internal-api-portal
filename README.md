@@ -615,7 +615,7 @@ Supported formats:
 - Swagger 2.0 YAML
 - OpenAPI 3.0 JSON
 - OpenAPI 3.0 YAML
-- many OpenAPI 3.1 documents will also work in practice, but 3.0.x is the safer target
+- OpenAPI 3.1 (type arrays, `examples`)
 
 The portal:
 
@@ -634,47 +634,64 @@ A failed refresh shows the API as *Spec error* in the catalog. The error text ca
 - **Filters** in the side panel: tags, owner team, *my favorites*, *I can try*, *I manage*, *spec problem*, *spec older than 7 days*, *inactive*; sorting by name, recently viewed or recently refreshed; cards or table. Everything is in the URL (`/?tag=billing&status=favorites&view=list`), so a filtered view can be shared and Back undoes a filter change.
 - **Favorites** (star on a card or the API page) and **recently viewed** APIs (the last 10) are stored per user in the database, so they follow the user across devices. `PUT` / `DELETE /api/me/favorites/{id}`; both are audited (`api.favorite_add`, `api.favorite_remove`).
 
-## Try It Out Behavior
+## API Page
 
-Try-it-out is spec-driven.
+Each API has its own address, by slug: `/apis/payments`. Its tabs are routes, so every view can be linked and Back / Forward work:
 
-The UI now:
+| Route | |
+|---|---|
+| `/apis/payments/reference` | Opens the first operation |
+| `/apis/payments/operations/createCharge` | One operation: the `operationId`, or `METHOD /path` when the spec has none (or duplicates) |
+| `/apis/payments/overview` | Description, operations by tag, owner, version, refresh state, limits, spec download (JSON / YAML) |
+| `/apis/payments/classic` | Swagger UI, loaded only when this tab opens |
+| `/apis/payments/access`, `/activity` | API managers only, see below |
 
-- reads available operations from the imported spec
-- lets the user choose a documented operation
-- locks method and path to the selected operation
-- auto-builds:
-  - path parameters
-  - query parameters
-  - header parameters
-  - request body editor
-  - `Accept` selector
-  - `Content-Type` selector
+Links from before 2.0.0 (`/apis/1?op=…&tab=…`) redirect to their new place. `GET /api/apis/{id}` and `/spec` accept the numeric id or the slug.
 
-### Prefill Behavior
+### Reference
 
-The portal attempts to prefill request values from:
+- The side panel lists the operations grouped by tag. Deprecated operations have their own group. A filter box narrows the list, and long lists (1000+ operations) render only what is visible.
+- Each operation shows:
+  - its summary and description (Markdown, rendered without HTML), tags and operationId
+  - a parameter table: name, location, type, required, enum, default
+  - the request body and responses as schema trees, with examples per content type and status
+  - the authentication it needs, and whether the portal adds it ("API key X-Service-Key in the header — the portal adds it for you"), the user sends it, or the portal doesn't forward it
+- OpenAPI 2.0, 3.0 and 3.1 are normalised into one model. Circular `$ref`s show as *circular* instead of looping.
 
-- parameter `example`
-- parameter `default`
-- schema `example`
-- schema `default`
-- referenced examples via local `$ref`
-- request body media type `example`
-- request body media type `examples`
-- schema-generated fallback examples for objects, arrays, strings, booleans, and numbers
+### Try it
 
-If your spec already defines example values, the form should now prefill them much more reliably, including common `$ref`-based structures.
+All requests go through `/api/apis/:id/invoke`; the browser never calls the upstream service.
 
-### Invocation Path
+- **Form:** built from the spec. Enums become a select, booleans true / false, and numbers are checked when a field loses focus. Required fields are marked. A failed send lists every problem.
+- **Prefilled values:** parameters start from the spec's `example` / `default`, never from invented values. The body starts from the media type example, otherwise one built from the schema (readOnly properties left out).
+- **Headers:**
+  - Only the API's allow-listed headers are forwarded; a header the portal would drop is flagged.
+  - Headers the portal adds (e.g. a service key) are listed with a lock and their name only. Their values never reach the browser.
+- **Body editor:** CodeMirror with JSON highlighting, lint, search and folding, in both themes. The body can be reset to the example or formatted.
+- **Sending:** **⌘↵ / Ctrl↵** from anywhere in the form sends it, and a request in flight can be cancelled.
+- **Response:**
+  - Status with reason phrase, duration, size and remaining rate limit.
+  - Body views: Pretty (searchable), Tree, Raw, and Headers. It can be copied or downloaded.
+  - Focus moves to the response and screen readers hear "Response received: 201, 182 ms".
+- **Portal refusals are explained:** a path outside the allow-list (with the allowed prefixes), the rate limit (with a countdown), an upstream timeout or an unreachable API.
+- **Code snippets:** cURL, fetch, HTTPie and Go for the same request.
+  - The upstream address is filled in only for the API's managers; everyone else gets `$BASE_URL` (internal URLs stay server-side).
+  - Header values with secret names (`Authorization`, `*api-key*`, `*token*`, …) and headers the portal adds become `<Name>` placeholders.
+- **History:** the last 20 requests per operation, kept in this browser only.
+  - By default only status, duration and time are kept.
+  - *Keep parameter values and bodies* is an opt-in.
+  - Header values are never kept.
 
-All requests still go through:
+### Access and Activity (API managers)
 
-```text
-/api/apis/:id/invoke
-```
+- **Access:** the groups that may view or call the API, besides roles. This is the same list as Admin → API definitions.
+- **Activity:**
+  - Every spec change: the version, and the operations added, removed and changed. Each operation's definition is fingerprinted, so a changed parameter or schema shows up as *changed*.
+  - Failed refreshes, recorded once per distinct error, not on every scheduled retry.
+  - The last 20 try-it calls, if the manager may read the audit log.
+  - `GET /api/apis/{id}/activity` returns the history; the last 50 entries per API are kept.
 
-The browser never calls the upstream service directly.
+The page also has *Add to favorites*, a *Spec* menu (download JSON / YAML, Classic view, refresh for managers) and *Edit definition* for managers, which opens Admin → API definitions.
 
 ## LDAP Setup
 

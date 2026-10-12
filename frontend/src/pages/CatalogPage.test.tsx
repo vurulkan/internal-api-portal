@@ -65,7 +65,7 @@ describe('catalog page', () => {
     expect(router.state.location.search).toBe('?q=charg');
     const section = await screen.findByRole('region', { name: '2 operations' });
     const link = within(section).getByRole('link', { name: 'POST /v1/charges Create a charge Payments API' });
-    expect(link).toHaveAttribute('href', `/apis/1?${new URLSearchParams({ op: 'POST /v1/charges', tab: 'try' })}`);
+    expect(link).toHaveAttribute('href', `/apis/payments?${new URLSearchParams({ op: 'POST /v1/charges' })}`);
     // Marked in the path and in the summary.
     expect(within(link).getAllByText('charg', { selector: 'mark' })).toHaveLength(2);
     expect(within(section).getByText('Deprecated')).toBeInTheDocument();
@@ -84,6 +84,8 @@ describe('catalog page', () => {
     expect(router.state.location.search).toBe('?tag=core&view=list');
     await router.navigate(-1);
     await waitFor(() => expect(router.state.location.search).toBe('?tag=core'));
+    // Wait for the page too, not only the router, before typing.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cards' })).toHaveAttribute('aria-pressed', 'true'));
     expect(screen.getByRole('checkbox', { name: 'core' })).toBeChecked();
     await user.type(screen.getByRole('searchbox', { name: 'Search APIs and operations' }), 'pay');
     expect(router.state.location.search).toBe('?tag=core&q=pay');
