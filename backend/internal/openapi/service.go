@@ -80,6 +80,7 @@ func (s *Service) Refresh(ctx context.Context, api models.APIDefinition) (*model
 	if err := s.store.SaveSpecCache(ctx, api.ID, cache); err != nil {
 		return nil, err
 	}
+	s.index(ctx, api.ID, sanitized)
 	return &cache, nil
 }
 

@@ -244,6 +244,60 @@ var migrations = []migration{
 	{8, "audit_logs.user_agent (1.6.0)", false, func(ctx context.Context, tx *sql.Tx) error {
 		return addColumn(ctx, tx, `ALTER TABLE audit_logs ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''`)
 	}},
+	{9, "operation index, favorites, recently viewed (2.0.0)", false, catalogIndex},
+}
+
+// catalogIndex: the operations of every cached spec, searchable with FTS5 (kept in
+// sync by triggers), plus per-user favorites and recently viewed APIs.
+func catalogIndex(ctx context.Context, tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`ALTER TABLE api_definitions ADD COLUMN spec_version TEXT NOT NULL DEFAULT ''`,
+		// NULL: the cached spec hasn't been indexed yet (filled at startup).
+		`ALTER TABLE api_definitions ADD COLUMN operation_count INTEGER`,
+	} {
+		if err := addColumn(ctx, tx, stmt); err != nil {
+			return err
+		}
+	}
+	return execAll(ctx, tx,
+		`CREATE TABLE IF NOT EXISTS api_operations (
+			id INTEGER PRIMARY KEY,
+			api_id INTEGER NOT NULL REFERENCES api_definitions(id) ON DELETE CASCADE,
+			method TEXT NOT NULL,
+			path TEXT NOT NULL,
+			operation_id TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			tags TEXT NOT NULL DEFAULT '[]',
+			deprecated INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_operations_api ON api_operations(api_id)`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS api_operations_fts USING fts5(
+			method, path, operation_id, summary, tags,
+			content='api_operations', content_rowid='id',
+			tokenize='unicode61 remove_diacritics 2'
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS api_operations_ai AFTER INSERT ON api_operations BEGIN
+			INSERT INTO api_operations_fts(rowid, method, path, operation_id, summary, tags)
+			VALUES (new.id, new.method, new.path, new.operation_id, new.summary, new.tags);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS api_operations_ad AFTER DELETE ON api_operations BEGIN
+			INSERT INTO api_operations_fts(api_operations_fts, rowid, method, path, operation_id, summary, tags)
+			VALUES ('delete', old.id, old.method, old.path, old.operation_id, old.summary, old.tags);
+		END`,
+		`CREATE TABLE IF NOT EXISTS user_favorites (
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			api_id INTEGER NOT NULL REFERENCES api_definitions(id) ON DELETE CASCADE,
+			created_at DATETIME NOT NULL,
+			PRIMARY KEY (user_id, api_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS user_recent_apis (
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			api_id INTEGER NOT NULL REFERENCES api_definitions(id) ON DELETE CASCADE,
+			viewed_at DATETIME NOT NULL,
+			PRIMARY KEY (user_id, api_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_recent_apis_time ON user_recent_apis(user_id, viewed_at)`,
+	)
 }
 
 func authzV2(ctx context.Context, tx *sql.Tx) error {

@@ -44,6 +44,12 @@ type Server struct {
 	dummyHash string
 }
 
+// IndexMissingSpecs builds the operation search index for specs cached before it
+// existed (2.0.0); later refreshes keep it current.
+func (s *Server) IndexMissingSpecs(ctx context.Context) {
+	s.openapi.IndexMissing(ctx)
+}
+
 func NewServer(store *store.Store, auditLogger *audit.Logger, cfg config.Config) *Server {
 	tz, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
@@ -103,6 +109,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/permissions/catalog", s.handlePermissionCatalog)
 
 		r.Get("/api/catalog", s.handleCatalog)
+		r.Get("/api/search", s.handleSearch)
+		r.With(a("api.favorite_add")).Put("/api/me/favorites/{id}", s.handleSetFavorite)
+		r.With(a("api.favorite_remove")).Delete("/api/me/favorites/{id}", s.handleSetFavorite)
 		r.Get("/api/apis/{id}", s.handleAPIDetails)
 		r.Get("/api/apis/{id}/spec", s.handleAPISpec)
 		r.With(a("api.invoke"), s.requireFeature("tryIt")).Post("/api/apis/{id}/invoke", s.handleInvoke)

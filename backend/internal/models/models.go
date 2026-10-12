@@ -121,6 +121,9 @@ type APIDefinition struct {
 	UpdatedAt           time.Time  `json:"updatedAt"`
 	LastSpecRefreshAt   *time.Time `json:"lastSpecRefreshAt,omitempty"`
 	LastSpecStatus      string     `json:"lastSpecStatus,omitempty"`
+	// From the cached spec: info.version and the number of operations (nil: not indexed).
+	SpecVersion    string `json:"specVersion,omitempty"`
+	OperationCount *int   `json:"operationCount,omitempty"`
 
 	// OwnerGroupID: members of this group manage the API (nil: no owner group).
 	OwnerGroupID *int `json:"ownerGroupId"`
@@ -160,11 +163,30 @@ type APISummary struct {
 	OwnerTeam         string     `json:"ownerTeam"`
 	Tags              []string   `json:"tags"`
 	LastSpecRefreshAt *time.Time `json:"lastSpecRefreshAt,omitempty"`
-	LastSpecStatus    string     `json:"lastSpecStatus,omitempty"`
-	CanView           bool       `json:"canView"`
-	CanInvoke         bool       `json:"canInvoke"`
-	CanManage         bool       `json:"canManage"`
-	OwnerGroupID      *int       `json:"ownerGroupId,omitempty"`
+	// SpecState: ok, error (the last refresh failed; an older spec may still be
+	// served) or missing (never fetched). The error text can name internal hosts,
+	// so only the API's managers get it (SpecError).
+	SpecState      string     `json:"specState"`
+	SpecError      string     `json:"specError,omitempty"`
+	SpecVersion    string     `json:"specVersion,omitempty"`
+	OperationCount *int       `json:"operationCount,omitempty"`
+	CanView        bool       `json:"canView"`
+	CanInvoke      bool       `json:"canInvoke"`
+	CanManage      bool       `json:"canManage"`
+	OwnerGroupID   *int       `json:"ownerGroupId,omitempty"`
+	Favorite       bool       `json:"favorite"`
+	LastViewedAt   *time.Time `json:"lastViewedAt,omitempty"`
+}
+
+// APIOperation is one documented operation of an API, from its cached spec.
+type APIOperation struct {
+	APIID       int      `json:"apiId"`
+	Method      string   `json:"method"`
+	Path        string   `json:"path"`
+	OperationID string   `json:"operationId,omitempty"`
+	Summary     string   `json:"summary,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Deprecated  bool     `json:"deprecated,omitempty"`
 }
 
 type APISpecCache struct {
