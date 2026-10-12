@@ -250,6 +250,7 @@ The LDAP bind password and the Azure AD client secret are stored encrypted (AES-
 | `FEATURE_TRY_IT` / `FEATURE_LDAP` / `FEATURE_AZURE_AD` / `FEATURE_AUDIT_EXPORT` | `true` | `false` switches the capability off for everyone (see Feature switches) |
 | `AUDIT_EXPORT_MAX_ROWS` | `100000` | Rows in one audit CSV export |
 | `PROXY_TIMEOUT_SECONDS` | `30` | Upstream request timeout |
+| `SPEC_REFRESH_INTERVAL` | `6h` | How often every active API's spec is re-fetched (Go duration, at least `1m`); a saved API's spec is also fetched right away. `0` turns both off (specs are then fetched when first opened or refreshed by hand). |
 | `MAX_REQUEST_BYTES` | `1048576` | Max proxied request body size |
 | `MAX_RESPONSE_BYTES` | `5242880` | Max proxied response body size |
 | `TRUSTED_PROXIES` | _(empty)_ | Comma-separated CIDRs / IPs of reverse proxies (ingress) whose `X-Forwarded-For` / `X-Forwarded-Proto` are believed. Empty: the headers are ignored and the TCP peer address is used for audit and login lockout. Set it to your ingress controller's pod CIDR. |
@@ -618,11 +619,20 @@ Supported formats:
 
 The portal:
 
-- fetches specs in the backend
+- fetches specs in the backend: right after an API is saved, then every `SPEC_REFRESH_INTERVAL` (6 hours), and when a manager clicks *Refresh spec*
 - caches them in SQLite
 - keeps the last successful spec if a later refresh fails
+- indexes every operation (method, path, operationId, summary, tags) for the catalog search, and shows the spec's `info.version` and operation count in the catalog
 - renders docs in the frontend
 - uses the docs to drive the try-it-out form
+
+A failed refresh shows the API as *Spec error* in the catalog. The error text can name internal hosts, so only the API's managers see it (in the catalog tooltip, the API's admin page and the refresh response); everyone else sees only that there is a problem.
+
+## Catalog
+
+- **Search** (top bar, `/` or ⌘K) finds APIs by name, slug, description, owner and tags, and **operations** by method, path, operationId, summary and tags (SQLite FTS5, every word as a prefix: `ref char` finds `POST /v1/refunds — Refund a charge`). Results are filtered by the user's permissions on the server: an operation of an API the user can't see never appears. An operation result opens that operation on the API's page. `GET /api/search?q=` returns `{apis, operations}` (the 20 best APIs and 50 best operations).
+- **Filters** in the side panel: tags, owner team, *my favorites*, *I can try*, *I manage*, *spec problem*, *spec older than 7 days*, *inactive*; sorting by name, recently viewed or recently refreshed; cards or table. Everything is in the URL (`/?tag=billing&status=favorites&view=list`), so a filtered view can be shared and Back undoes a filter change.
+- **Favorites** (star on a card or the API page) and **recently viewed** APIs (the last 10) are stored per user in the database, so they follow the user across devices. `PUT` / `DELETE /api/me/favorites/{id}`; both are audited (`api.favorite_add`, `api.favorite_remove`).
 
 ## Try It Out Behavior
 

@@ -12,8 +12,10 @@ updates:
       npm-minor-patch:
         update-types: [minor, patch]
     ignore:
-      # Major upgrades of the build toolchain and UI framework are planned work
-      # (milestone M6: design system / app shell), not drive-by bumps.
+      # Major upgrades of the build toolchain and UI framework are planned work, not
+      # drive-by bumps. Held back on purpose: React 19 (and React Router 8, which needs
+      # it), TypeScript 7 and ESLint 10 (typescript-eslint / jsx-a11y don't support
+      # them yet).
       - dependency-name: tailwindcss
         update-types: ["version-update:semver-major"]
       - dependency-name: typescript
@@ -26,7 +28,15 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: react-dom
         update-types: ["version-update:semver-major"]
-      - dependency-name: react-router-dom
+      - dependency-name: react-router
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
         update-types: ["version-update:semver-major"]
   # Base image digests in the Dockerfile. Node majors are moved by hand from one
   # LTS to the next; odd (non-LTS) majors are skipped.

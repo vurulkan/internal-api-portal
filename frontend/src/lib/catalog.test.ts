@@ -32,8 +32,17 @@ describe('catalog filters', () => {
   });
 
   it('sort names naturally', () => {
-    const named = ['Service 15', 'Service 5', 'service 100', 'Service 25'].map((name, id) => ({ ...catalog[0], id, name }));
-    expect(sortApis(named, 'name').map((a) => a.name)).toEqual(['Service 5', 'Service 15', 'Service 25', 'service 100']);
+    const named = ['Service 15', 'Service 5', 'service 100', 'Service 25'].map((name, id) => ({
+      ...catalog[0],
+      id,
+      name,
+    }));
+    expect(sortApis(named, 'name').map((a) => a.name)).toEqual([
+      'Service 5',
+      'Service 15',
+      'Service 25',
+      'service 100',
+    ]);
   });
 
   it('sort by recently viewed, then name', () => {
