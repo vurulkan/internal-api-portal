@@ -540,6 +540,8 @@ export const adminTr: Dictionary['admin'] = {
     empty: 'Aktif oturum yok.',
   },
   audit: {
+    setByPeriod: 'Dönem belirliyor.',
+    untilNow: 'Şu ana kadar.',
     period: 'Dönem',
     presets: {
       '1h': 'Son 1 saat',

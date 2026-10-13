@@ -62,6 +62,14 @@ const ACTION_SUGGESTIONS = [
 ];
 const FILTER_KEYS = ['user', 'action', 'outcome', 'from', 'to', 'range'] as const;
 
+/** The local date a preset period starts on (shown in the disabled From field). */
+function presetStart(range: string) {
+  const ms = PRESET_MS[range as (typeof PRESETS)[number]];
+  if (!ms) return '';
+  const d = new Date(Date.now() - ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /** The filter in the URL; a preset range becomes "from" rounded to the minute (a stable query key). */
 function filterFromParams(params: URLSearchParams): AuditFilter {
   const range = params.get('range') as (typeof PRESETS)[number] | null;
@@ -216,76 +224,89 @@ export default function AuditSection() {
       <Card>
         <CardContent>
           <form
-            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
+            className="space-y-3"
             onSubmit={(event) => {
               event.preventDefault();
               apply(draft);
             }}
           >
-            <Field label={t('admin.audit.period')} id="audit-range">
-              <Select
-                value={draft.range || 'custom'}
-                onValueChange={(v) => {
-                  const next = { ...draft, range: v === 'custom' ? '' : v };
-                  setDraft(next);
-                  if (v !== 'custom') apply(next);
-                }}
-                options={[
-                  ...PRESETS.map((p) => ({ value: p, label: t(`admin.audit.presets.${p}`) })),
-                  { value: 'custom', label: t('admin.audit.presets.custom') },
-                ]}
-              />
-            </Field>
-            {!draft.range && (
-              <>
-                <Field label={t('admin.audit.from')} id="audit-from">
-                  <Input
-                    type="date"
-                    value={draft.from}
-                    onChange={(e) => setDraft({ ...draft, from: e.target.value })}
-                  />
-                </Field>
-                <Field label={t('admin.audit.to')} id="audit-to" helper={t('admin.audit.toHelper')}>
-                  <Input type="date" value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
-                </Field>
-              </>
-            )}
-            <Field label={t('admin.audit.user')} id="audit-user">
-              <Input value={draft.user} onChange={(e) => setDraft({ ...draft, user: e.target.value })} />
-            </Field>
-            <Field label={t('admin.audit.actionPrefix')} id="audit-action" helper={t('admin.audit.actionHelper')}>
-              <Input
-                className="font-mono text-[13px]"
-                list="audit-action-suggestions"
-                autoComplete="off"
-                placeholder="user. · api.invoke"
-                value={draft.action}
-                onChange={(e) => setDraft({ ...draft, action: e.target.value })}
-              />
-            </Field>
-            <datalist id="audit-action-suggestions">
-              {ACTION_SUGGESTIONS.map((a) => (
-                <option key={a} value={a} />
-              ))}
-            </datalist>
-            <Field label={t('admin.audit.outcome')} id="audit-outcome">
-              <Select
-                value={draft.outcome}
-                onValueChange={(v) => setDraft({ ...draft, outcome: v })}
-                options={[
-                  { value: '', label: t('admin.audit.anyOutcome') },
-                  { value: 'success', label: t('admin.audit.outcomes.success') },
-                  { value: 'denied', label: t('admin.audit.outcomes.denied') },
-                  { value: 'failed', label: t('admin.audit.outcomes.failed') },
-                ]}
-              />
-            </Field>
-            <div className="flex items-end gap-2">
-              <Button type="submit" variant="primary">
-                {t('admin.audit.apply')}
-              </Button>
+            {/* Every field always renders (a period only disables the dates), so the layout never jumps. */}
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <Field label={t('admin.audit.period')} id="audit-range">
+                <Select
+                  value={draft.range || 'custom'}
+                  onValueChange={(v) => {
+                    const next = { ...draft, range: v === 'custom' ? '' : v };
+                    setDraft(next);
+                    if (v !== 'custom') apply(next);
+                  }}
+                  options={[
+                    ...PRESETS.map((p) => ({ value: p, label: t(`admin.audit.presets.${p}`) })),
+                    { value: 'custom', label: t('admin.audit.presets.custom') },
+                  ]}
+                />
+              </Field>
+              <Field
+                label={t('admin.audit.from')}
+                id="audit-from"
+                helper={draft.range ? t('admin.audit.setByPeriod') : undefined}
+              >
+                <Input
+                  type="date"
+                  disabled={!!draft.range}
+                  value={draft.range ? presetStart(draft.range) : draft.from}
+                  onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+                />
+              </Field>
+              <Field
+                label={t('admin.audit.to')}
+                id="audit-to"
+                helper={draft.range ? t('admin.audit.untilNow') : t('admin.audit.toHelper')}
+              >
+                <Input
+                  type="date"
+                  disabled={!!draft.range}
+                  value={draft.range ? '' : draft.to}
+                  onChange={(e) => setDraft({ ...draft, to: e.target.value })}
+                />
+              </Field>
+              <Field label={t('admin.audit.user')} id="audit-user">
+                <Input value={draft.user} onChange={(e) => setDraft({ ...draft, user: e.target.value })} />
+              </Field>
+              <Field label={t('admin.audit.actionPrefix')} id="audit-action" helper={t('admin.audit.actionHelper')}>
+                <Input
+                  className="font-mono text-[13px]"
+                  list="audit-action-suggestions"
+                  autoComplete="off"
+                  placeholder="user. · api.invoke"
+                  value={draft.action}
+                  onChange={(e) => setDraft({ ...draft, action: e.target.value })}
+                />
+              </Field>
+              <datalist id="audit-action-suggestions">
+                {ACTION_SUGGESTIONS.map((a) => (
+                  <option key={a} value={a} />
+                ))}
+              </datalist>
+              <Field label={t('admin.audit.outcome')} id="audit-outcome">
+                <Select
+                  value={draft.outcome}
+                  onValueChange={(v) => setDraft({ ...draft, outcome: v })}
+                  options={[
+                    { value: '', label: t('admin.audit.anyOutcome') },
+                    { value: 'success', label: t('admin.audit.outcomes.success') },
+                    { value: 'denied', label: t('admin.audit.outcomes.denied') },
+                    { value: 'failed', label: t('admin.audit.outcomes.failed') },
+                  ]}
+                />
+              </Field>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
               <Button variant="ghost" onClick={reset}>
                 {t('admin.audit.reset')}
+              </Button>
+              <Button type="submit" variant="primary">
+                {t('admin.audit.apply')}
               </Button>
             </div>
           </form>

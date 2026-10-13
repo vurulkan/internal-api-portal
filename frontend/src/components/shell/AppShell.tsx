@@ -1,7 +1,16 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate, useNavigation } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { CircleHelp, Command, LayoutGrid, Menu, PanelLeftClose, PanelLeftOpen, ShieldCheck } from 'lucide-react';
+import {
+  CircleHelp,
+  Command,
+  Keyboard,
+  LayoutGrid,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ShieldCheck,
+} from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { clickShortcutTarget, modKey, moveInList, moveTab, useShortcuts } from '@/lib/shortcuts';
 import { readPref, writePref } from '@/lib/storage';
@@ -11,6 +20,7 @@ import { Alert, Drawer, DrawerBody, IconButton, Tooltip } from '@/components/ui'
 import { CommandPalette } from './CommandPalette';
 import { ShortcutHelp } from './ShortcutHelp';
 import { GlobalSearch } from './GlobalSearch';
+import { ProjectLink } from './ProjectLink';
 import { ShellContext } from './shell-context';
 import { LanguageMenu, ThemeMenu, UserMenu, useSignOut } from './TopBarMenus';
 
@@ -106,6 +116,7 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
         restricted={restricted}
         onOpenMenu={() => setMobileOpen(true)}
         onOpenPalette={() => setPaletteOpen(true)}
+        onOpenHelp={() => setHelpOpen(true)}
         panelToggle={
           isDesktop && panel ? (
             <IconButton
@@ -153,8 +164,8 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
             <div ref={setPanelTarget} className="px-2 pb-4" />
           </aside>
         )}
-        <main ref={mainRef} id="main" tabIndex={-1} className="min-w-0 flex-1 focus:outline-none">
-          <div className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6">
+        <main ref={mainRef} id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col focus:outline-none">
+          <div className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-5 sm:px-6">
             {warnings.map((code) => (
               <Alert key={code} variant="warning" role="status" className="mb-4">
                 {t(`warnings.${code}`, { defaultValue: code })}
@@ -162,6 +173,7 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
             ))}
             <Outlet />
           </div>
+          <ProjectLink />
         </main>
       </div>
       {!isDesktop && (
@@ -275,11 +287,13 @@ function TopBar({
   restricted,
   onOpenMenu,
   onOpenPalette,
+  onOpenHelp,
   panelToggle,
 }: {
   restricted: boolean;
   onOpenMenu: () => void;
   onOpenPalette: () => void;
+  onOpenHelp: () => void;
   panelToggle: ReactNode;
 }) {
   const { t } = useTranslation();
@@ -321,6 +335,17 @@ function TopBar({
             icon={<Command aria-hidden="true" />}
             onClick={onOpenPalette}
             aria-keyshortcuts="Meta+K Control+K"
+            tooltipSide="bottom"
+          />
+        )}
+        {!restricted && (
+          <IconButton
+            label={t('help.title')}
+            className="hidden sm:inline-flex"
+            shortcut="?"
+            icon={<Keyboard aria-hidden="true" />}
+            onClick={onOpenHelp}
+            aria-keyshortcuts="?"
             tooltipSide="bottom"
           />
         )}

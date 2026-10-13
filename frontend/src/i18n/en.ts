@@ -4,6 +4,7 @@ import { adminEn } from './admin.en';
 
 export const en = {
   common: {
+    opensInNewTab: 'opens in a new tab',
     save: 'Save',
     cancel: 'Cancel',
     delete: 'Delete',
@@ -132,8 +133,6 @@ export const en = {
     remove: 'Remove {{item}}',
   },
   table: {
-    compact: 'Show compact rows (more on screen)',
-    comfortable: 'Show taller rows (easier to read and click)',
     selectAll: 'Select all rows on this page',
     selectRow: 'Select {{row}}',
     rowsPerPage: 'Rows per page',

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import { ProjectLink } from '@/components/shell/ProjectLink';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
@@ -178,6 +179,7 @@ export default function LoginPage() {
           </div>
         </div>
       </main>
+      <ProjectLink />
     </div>
   );
 }

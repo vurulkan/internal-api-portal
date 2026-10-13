@@ -14,6 +14,7 @@ import { adminTr } from './admin.tr';
 
 export const tr: Dictionary = {
   common: {
+    opensInNewTab: 'yeni sekmede açılır',
     save: 'Kaydet',
     cancel: 'Vazgeç',
     delete: 'Sil',
@@ -142,8 +143,6 @@ export const tr: Dictionary = {
     remove: '{{item}} kaldır',
   },
   table: {
-    compact: 'Satırları sıklaştır (ekrana daha çok sığar)',
-    comfortable: 'Satırları genişlet (okuması ve tıklaması kolay)',
     selectAll: 'Bu sayfadaki tüm satırları seç',
     selectRow: '{{row}} seç',
     rowsPerPage: 'Sayfa başına satır',

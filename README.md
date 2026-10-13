@@ -367,7 +367,7 @@ Published to GHCR by CI for every release tag, for `linux/amd64` and `linux/arm6
 
 | Tag | Points to |
 |---|---|
-| `X.Y.Z` (e.g. `2.1.2`) | that release |
+| `X.Y.Z` (e.g. `2.1.3`) | that release |
 | `latest` | the newest release |
 
 Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requests are built, not published. CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access*).
@@ -375,7 +375,7 @@ Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requ
 Each image carries an SBOM and SLSA provenance (inside the image index) and is signed with cosign (keyless, GitHub OIDC); the signature sits next to the image as a `sha256-<digest>.sig` tag. Verify before deploying:
 
 ```bash
-cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.2 \
+cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.3 \
   --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -453,6 +453,15 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
 
+### Upgrading to 2.1.3
+
+- No migration and no configuration change.
+- The catalog remembers its view (cards / table) and sort order in the browser; a link that sets `?view=` or `?sort=` still wins.
+- The audit log's date fields stay in place (disabled) when a period is chosen.
+- A keyboard icon in the top bar opens the shortcuts.
+- The table row-density switch is gone (rows have one height).
+- The sign-in page and the app link to the project on GitHub at the bottom.
+
 ### Upgrading to 2.1.2
 
 - No migration and no configuration change. Groups get a **Permissions** tab, which shows what members get from roles and from direct API access (API definitions → Access, owner group). The Access tab, the role matrix and the user's permission sources now say whether a permission comes from a role.
@@ -482,7 +491,7 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
   - Admin sections moved (`/admin/ldap` → `/admin/identity?tab=ldap`, `/admin/system` → `/admin/settings?tab=branding`, …), with redirects, and `/admin` opens the Overview.
 - **New audit actions:** `user.bulk_status`, `group.members_add`, `group.member_remove`, `api.spec_preview`, `api.favorite_add`, `api.favorite_remove`.
 - **New endpoints:** `GET /api/search`, `GET /api/apis/{id}/activity`, `GET /api/admin/overview`, `GET /api/admin/system/info`, `GET /api/admin/users/{id}/permissions`, `POST /api/admin/users/bulk-status`, `POST`/`DELETE /api/admin/groups/{id}/members…`, `POST /api/admin/apis/spec-preview`, `GET /api/admin/apis/{id}/impact`; `GET /api/admin/sessions` accepts `?userId=`. `/api/auth/me` capabilities gain `canManageUsers`.
-- **Preferences:** theme, language, table density and try-it history (opt-in values) are kept in the browser per user; nothing secret is stored there.
+- **Preferences:** theme, language, the catalog's view (cards / table) and sort order, and try-it history (opt-in values) are kept in the browser per user; nothing secret is stored there.
 
 ### Upgrading to 1.6.0
 
@@ -537,7 +546,7 @@ A try-it call produces two lines with the same `http.request.id`:
 
 ```json
 {"@timestamp":"2026-10-12T06:58:25.354331203Z","log":{"level":"info"},"message":"root api.invoke success api Payments API",
- "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.2","environment":"prod","type":"api-portal"},
+ "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.3","environment":"prod","type":"api-portal"},
  "event":{"dataset":"portal.audit","kind":"event","category":["web"],"type":["access"],"action":"api.invoke","outcome":"success","duration":150000000},
  "user":{"name":"root","domain":"local"},"source":{"ip":"10.244.3.17"},"user_agent":{"original":"Mozilla/5.0 …"},
  "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"response":{"status_code":201}},"url":{"path":"/v1/charges"},
@@ -853,7 +862,7 @@ The page also has *Add to favorites*, a *Spec* menu (download JSON / YAML, Class
 
 ## Keyboard
 
-`?` lists every shortcut. Single-key shortcuts are off while typing in a field and while a dialog is open; ⌘ / Ctrl combinations work everywhere.
+`?` (or the keyboard icon in the top bar, next to the palette) lists every shortcut. Single-key shortcuts are off while typing in a field and while a dialog is open; ⌘ / Ctrl combinations work everywhere.
 
 | Keys | Action |
 |---|---|
