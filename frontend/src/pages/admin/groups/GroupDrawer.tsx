@@ -24,6 +24,7 @@ import {
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { GroupPermissions } from './GroupPermissions';
 import { EditorDrawer, FormSkeleton, sameValue, useAdminMutation, useDirty, useRequestClose } from '../common';
 
 type Form = {
@@ -113,7 +114,7 @@ function GroupForm({
     invalidate: (f) => [
       queryKeys.admin.groups,
       queryKeys.admin.roles,
-      ...(f.id ? [queryKeys.admin.groupRoles(f.id)] : []),
+      ...(f.id ? [queryKeys.admin.groupRoles(f.id), queryKeys.admin.groupPermissions(f.id)] : []),
     ],
     onSuccess: onClose,
   });
@@ -150,6 +151,7 @@ function GroupForm({
                 <Badge variant="outline">{members}</Badge>
               </TabsTrigger>
             )}
+            {existing && <TabsTrigger value="permissions">{t('admin.groups.tabs.permissions')}</TabsTrigger>}
           </TabsList>
           <TabsContent value="details" className="space-y-4">
             <Field label={t('admin.groups.name')} id="group-name" required error={nameError}>
@@ -192,6 +194,11 @@ function GroupForm({
           {existing && canSeeUsers && (
             <TabsContent value="members">
               <GroupMembers group={existing} />
+            </TabsContent>
+          )}
+          {existing && (
+            <TabsContent value="permissions">
+              <GroupPermissions groupId={existing.id} />
             </TabsContent>
           )}
         </Tabs>

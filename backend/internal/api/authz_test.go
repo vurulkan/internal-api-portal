@@ -76,6 +76,7 @@ var authzTable = []routeRule{
 	{"PUT", "/api/admin/groups/{id}", signedIn, "group.manage"},
 	{"DELETE", "/api/admin/groups/{id}", signedIn, "group.manage"},
 	{"GET", "/api/admin/groups/{id}/roles", signedIn, "group.manage"},
+	{"GET", "/api/admin/groups/{id}/permissions", signedIn, "group.manage"},
 	{"PUT", "/api/admin/groups/{id}/roles", signedIn, "group.manage"},
 	{"POST", "/api/admin/groups/{id}/members", signedIn, "user.manage"},
 	{"DELETE", "/api/admin/groups/{id}/members/{userId}", signedIn, "user.manage"},

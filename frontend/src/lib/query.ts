@@ -73,5 +73,6 @@ export const queryKeys = {
     userPermissions: (id: number, groupIds?: number[]) =>
       ['admin', 'users', id, 'permissions', groupIds?.join(',') ?? 'current'] as const,
     userSessions: (id: number) => ['admin', 'sessions', 'user', id] as const,
+    groupPermissions: (id: number) => ['admin', 'groups', id, 'permissions'] as const,
   },
 };

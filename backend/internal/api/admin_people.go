@@ -145,6 +145,23 @@ func (s *Server) handleUserPermissions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGroupPermissions lists what a group's members get through the group, by
+// source: its roles, the APIs it owns, and the API access lists it is on. Direct
+// API access is not part of any role, so this is the one place that shows it all.
+func (s *Server) handleGroupPermissions(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	if _, err := s.store.GetGroup(r.Context(), id); err != nil {
+		writeError(w, r, http.StatusNotFound, "group not found")
+		return
+	}
+	sources, err := s.store.PermissionSourcesForGroups(r.Context(), []int{id})
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "failed to resolve permissions")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groupId": id, "sources": sources})
+}
+
 // handleBulkUserStatus activates or deactivates several users. The single-user
 // rules hold for the whole batch (only admins change admins, nobody deactivates
 // themselves or the last active admin); a batch that breaks one changes nothing.

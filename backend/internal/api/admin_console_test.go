@@ -277,3 +277,32 @@ func TestCanManageUsersCapability(t *testing.T) {
 		t.Error("user.manage does not report canManageUsers")
 	}
 }
+
+// A group's permissions come from its roles, the APIs it owns and API access lists;
+// the last two are not part of any role, and this endpoint shows all three.
+func TestGroupPermissionsShowEverySource(t *testing.T) {
+	e := newEnv(t)
+	e.user("root", true)
+	ctx := context.Background()
+	apiID := e.api("Ledger")
+	owned := e.api("Billing")
+	group, _ := e.store.CreateGroup(ctx, "finance", "")
+	roleID, _ := e.store.CreateRole(ctx, "auditor", "")
+	_ = e.store.ReplaceRolePermissions(ctx, roleID, []string{"audit.view"})
+	_ = e.store.SetGroupRoles(ctx, group, []int{roleID})
+	_, _ = e.dbConn.ExecContext(ctx, `INSERT INTO api_access (api_id, group_id, level) VALUES (?, ?, 'invoke')`, apiID, group)
+	_, _ = e.dbConn.ExecContext(ctx, `UPDATE api_definitions SET owner_group_id = ? WHERE id = ?`, group, owned)
+	root := e.login("root")
+
+	body := e.expect(http.MethodGet, fmt.Sprintf("/api/admin/groups/%d/permissions", group), root, nil, http.StatusOK)
+	for _, want := range []string{
+		`"scope":"audit.view","via":"role"`,
+		fmt.Sprintf(`"scope":"api:%d:invoke","via":"access"`, apiID),
+		fmt.Sprintf(`"scope":"api:%d:manage","via":"owner"`, owned),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s in %s", want, body)
+		}
+	}
+	e.expect(http.MethodGet, "/api/admin/groups/9999/permissions", root, nil, http.StatusNotFound)
+}

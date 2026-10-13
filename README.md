@@ -155,6 +155,17 @@ plus two per-API shortcuts that don't need roles:
 - **Owner group** of an API: its members get `api:<id>:manage` on that API.
 - **Access** of an API (Admin → API definitions → Access): groups get `api:<id>:view` or `api:<id>:invoke` on that API.
 
+So a group's members get permissions from three places: **the group's roles**, **the APIs it owns**, and **the API access lists it is on**. The last two are given on the API and are not part of any role, so a role can look empty while its group can still use an API. Two views show all three sources together:
+
+- the group's **Permissions** tab (`GET /api/admin/groups/{id}/permissions`)
+- a user's **Groups & permissions** tab, with each scope's source, e.g. "payments-team → direct API access (no role)"
+
+When to use which:
+
+- **Roles** are for what many groups share ("call every API", "read the audit log").
+- **Access** is for one API, handed out by its owners without role management rights.
+- **The owner group** is the team that runs the API.
+
 `isAdmin` users hold every scope. The full list with descriptions is served at `GET /api/permissions/catalog`, and the role editor is built from it:
 
 | Scope | Family | Allows |
@@ -356,7 +367,7 @@ Published to GHCR by CI for every release tag, for `linux/amd64` and `linux/arm6
 
 | Tag | Points to |
 |---|---|
-| `X.Y.Z` (e.g. `2.1.1`) | that release |
+| `X.Y.Z` (e.g. `2.1.2`) | that release |
 | `latest` | the newest release |
 
 Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requests are built, not published. CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access*).
@@ -364,7 +375,7 @@ Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requ
 Each image carries an SBOM and SLSA provenance (inside the image index) and is signed with cosign (keyless, GitHub OIDC); the signature sits next to the image as a `sha256-<digest>.sig` tag. Verify before deploying:
 
 ```bash
-cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.1 \
+cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.2 \
   --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -440,6 +451,10 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
+
+### Upgrading to 2.1.2
+
+- No migration and no configuration change. Groups get a **Permissions** tab, which shows what members get from roles and from direct API access (API definitions → Access, owner group). The Access tab, the role matrix and the user's permission sources now say whether a permission comes from a role.
 
 ### Upgrading to 2.1.1
 
@@ -521,7 +536,7 @@ A try-it call produces two lines with the same `http.request.id`:
 
 ```json
 {"@timestamp":"2026-10-12T06:58:25.354331203Z","log":{"level":"info"},"message":"root api.invoke success api Payments API",
- "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.1","environment":"prod","type":"api-portal"},
+ "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.2","environment":"prod","type":"api-portal"},
  "event":{"dataset":"portal.audit","kind":"event","category":["web"],"type":["access"],"action":"api.invoke","outcome":"success","duration":150000000},
  "user":{"name":"root","domain":"local"},"source":{"ip":"10.244.3.17"},"user_agent":{"original":"Mozilla/5.0 …"},
  "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"response":{"status_code":201}},"url":{"path":"/v1/charges"},

@@ -103,8 +103,11 @@ function EditForm({
     range: t('admin.apis.outOfRange'),
   };
   const id = apiDef.id;
+  // Access and the owner group change what groups (and their members) may do.
   const invalidate = [
     queryKeys.admin.apis,
+    queryKeys.admin.groups,
+    queryKeys.admin.users,
     queryKeys.admin.apiAccess(id),
     queryKeys.admin.overview,
     queryKeys.catalog,
