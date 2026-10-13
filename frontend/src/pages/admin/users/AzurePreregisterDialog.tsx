@@ -28,7 +28,10 @@ export function AzurePreregisterDialog({ onClose }: { onClose: () => void }) {
         displayName: displayName.trim(),
         groupIds,
       }),
-    success: (r) => t('admin.azurePre.created', { name: r.username }),
+    success: (r) =>
+      r.sharesEmailWith
+        ? t('admin.azurePre.createdBeside', { name: r.username, other: r.sharesEmailWith })
+        : t('admin.azurePre.created', { name: r.username }),
     invalidate: [queryKeys.admin.users, queryKeys.admin.groups],
     onSuccess: onClose,
   });

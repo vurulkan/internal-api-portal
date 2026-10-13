@@ -96,7 +96,10 @@ export const adminApi = {
   userSessions: (id: number) => request<{ items: Session[] }>(`/api/admin/sessions?userId=${id}`),
   /** An Azure AD account waiting for its first Microsoft sign-in. */
   preregisterAzure: (payload: { email: string; upn?: string; displayName?: string; groupIds: number[] }) =>
-    request<{ id: number; username: string }>('/api/admin/users/azure', json('POST', payload)),
+    request<{ id: number; username: string; sharesEmailWith?: string }>(
+      '/api/admin/users/azure',
+      json('POST', payload),
+    ),
   bulkUserStatus: (userIds: number[], active: boolean) =>
     request<{ changed: number[]; sessionsRevoked: number }>(
       '/api/admin/users/bulk-status',

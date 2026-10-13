@@ -368,7 +368,7 @@ Published to GHCR by CI for every release tag, for `linux/amd64` and `linux/arm6
 
 | Tag | Points to |
 |---|---|
-| `X.Y.Z` (e.g. `2.2.0`) | that release |
+| `X.Y.Z` (e.g. `2.2.1`) | that release |
 | `latest` | the newest release |
 
 Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requests are built, not published. CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access*).
@@ -376,7 +376,7 @@ Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requ
 Each image carries an SBOM and SLSA provenance (inside the image index) and is signed with cosign (keyless, GitHub OIDC); the signature sits next to the image as a `sha256-<digest>.sig` tag. Verify before deploying:
 
 ```bash
-cosign verify ghcr.io/vurulkan/internal-api-portal:2.2.0 \
+cosign verify ghcr.io/vurulkan/internal-api-portal:2.2.1 \
   --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -449,10 +449,16 @@ What they set up:
 
 Secrets: the Deployment mounts the optional Secret `internal-api-portal-secrets` at `/etc/portal-secrets` for `DATA_ENCRYPTION_KEY_FILE` and `BOOTSTRAP_ADMIN_PASSWORD_FILE`. Create it as shown in [deploy/secret.example.yaml](deploy/secret.example.yaml) (it isn't part of the kustomization, so a re-apply never overwrites it). Without it the pod still starts: the key stays in the database and the generated bootstrap password is in the pod log.
 
-The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (`images.newTag`); bump it to upgrade. Optional examples, not applied by default:
+The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (`images.newTag`): `latest`, so with `imagePullPolicy: Always` a `kubectl -n internal-api-portal rollout restart deployment/internal-api-portal` upgrades to the newest release (read *Upgrading to …* first). To stay on a release, put its version (e.g. `2.2.1`) there. Optional examples, not applied by default:
 
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
+
+### Upgrading to 2.2.1
+
+- No migration.
+- **Azure AD pre-registration next to an LDAP or local account** of the same person: allowed now, as a separate account (`<name>-2` if the name is taken). Before, it was refused. Only another Azure AD account with that name or e-mail is a conflict.
+- A first Microsoft sign-in binds to such a suffixed pre-registration by sign-in name too (when there is exactly one).
 
 ### Upgrading to 2.2.0
 
@@ -565,7 +571,7 @@ A try-it call produces two lines with the same `http.request.id`:
 
 ```json
 {"@timestamp":"2026-10-12T06:58:25.354331203Z","log":{"level":"info"},"message":"root api.invoke success api Payments API",
- "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.2.0","environment":"prod","type":"api-portal"},
+ "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.2.1","environment":"prod","type":"api-portal"},
  "event":{"dataset":"portal.audit","kind":"event","category":["web"],"type":["access"],"action":"api.invoke","outcome":"success","duration":150000000},
  "user":{"name":"root","domain":"local"},"source":{"ip":"10.244.3.17"},"user_agent":{"original":"Mozilla/5.0 …"},
  "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"response":{"status_code":201}},"url":{"path":"/v1/charges"},
@@ -1038,6 +1044,8 @@ This first phase does not require Microsoft Graph permissions.
 - The login page shows `Sign in with Microsoft` only when Azure AD is enabled.
 - Users are matched on their Azure identity (tenant id + object id) only, never to local or LDAP accounts.
 - **Pre-registration** (`Admin → Users → New user ▾ → Azure AD user…`, `user.manage`): creates an Azure AD account before the person's first Microsoft sign-in, so it can be put in groups now (a grant, as above). Give the e-mail and, if it differs, the sign-in name (UPN). `POST /api/admin/users/azure` takes `{email, upn, displayName, groupIds}`.
+  - The same person may already have an LDAP or local account with that name or e-mail. That's fine: the Azure AD account is a separate one. If the name is taken it gets `<name>-2` (as a first sign-in would), and the first sign-in still binds to it. The response's `sharesEmailWith` names the other account; give the Azure AD account its own groups.
+  - Refused only when another Azure AD account has that name or e-mail.
 - At a first sign-in, an account that has **never been bound** and is an **Azure AD account** is bound:
   - by sign-in name first (`preferred_username`, usually the UPN)
   - else by the token's e-mail, but only when exactly one such account has that address. Microsoft doesn't consider the e-mail claim reliable for authorization, so an ambiguous address binds nothing.

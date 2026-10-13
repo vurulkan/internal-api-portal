@@ -203,6 +203,27 @@ func TestAzurePreregistration(t *testing.T) {
 	e.expect(http.MethodPost, "/api/admin/users/azure", root, map[string]any{"email": "not-an-email"}, http.StatusBadRequest)
 	e.expect(http.MethodPost, "/api/admin/users/azure", root, map[string]any{"email": "x@corp.com", "upn": "no-at-sign"}, http.StatusBadRequest)
 
+	// The same person already has an LDAP account (same name, same e-mail): the
+	// Azure AD account is a separate one, "<name>-2", and still binds at sign-in.
+	if _, err := e.store.CreateUser(ctx, models.User{Username: "murat.y", Email: "murat.y@corp.com", AuthSource: "ldap", IsActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	body = e.expect(http.MethodPost, "/api/admin/users/azure", root, map[string]any{"email": "murat.y@corp.com"}, http.StatusCreated)
+	if !strings.Contains(body, `"username":"murat.y-2"`) || !strings.Contains(body, `"sharesEmailWith":"murat.y (ldap)"`) {
+		t.Fatalf("next to an LDAP account: %s", body)
+	}
+	murat, _ := e.store.GetUserByUsername(ctx, "murat.y-2")
+	// At the first sign-in the UPN gives "murat.y"; without an e-mail claim the
+	// suffixed pre-registration is still found (and never the LDAP account).
+	if got, err := e.store.GetUnboundAzureUser(ctx, "", "murat.y"); err != nil || got.ID != murat.ID {
+		t.Fatalf("bind by sign-in name with a suffix: %v %v", got, err)
+	}
+	if got, err := e.store.GetUnboundAzureUser(ctx, "murat.y@corp.com", "someone-else"); err != nil || got.ID != murat.ID {
+		t.Fatalf("bind by e-mail: %v %v", got, err)
+	}
+	// A second Azure AD account for that address is a duplicate.
+	e.expect(http.MethodPost, "/api/admin/users/azure", root, map[string]any{"email": "murat.y@corp.com"}, http.StatusConflict)
+
 	_ = e.store.UpdateAzureADConfig(ctx, models.AzureADConfig{Enabled: false})
 	e.expect(http.MethodPost, "/api/admin/users/azure", root, map[string]any{"email": "late@corp.com"}, http.StatusBadRequest)
 }

@@ -12,6 +12,9 @@ resources:
 # Optional, review before adding to resources:
 #   - networkpolicy.example.yaml   restrict traffic to the ingress controller
 #   - ingress.example.yaml         TLS ingress
+# "latest" with imagePullPolicy Always: a restart picks up the newest release
+# (kubectl -n internal-api-portal rollout restart deployment/internal-api-portal).
+# To pin a release instead, put its version here, e.g. "2.2.1".
 images:
   - name: ghcr.io/vurulkan/internal-api-portal
-    newTag: "2.2.0"
+    newTag: "latest"
