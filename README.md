@@ -440,6 +440,7 @@ kubectl apply -k deploy/
 What they set up:
 
 - `Deployment` with **one replica** and `strategy: Recreate` (SQLite on a ReadWriteOnce volume: one writer; a rolling update would wait on the volume or run two writers)
+- `imagePullPolicy: Always`: each pod start checks the registry (a manifest request when the image is already on the node), so a node never runs a stale copy of a tag such as `latest`. Nodes need registry access at pod start; `ghcr.io/vurulkan/internal-api-portal` is public
 - pod security: non-root uid 100 / gid 101, `fsGroup: 101`, seccomp `RuntimeDefault`, no ServiceAccount token, all capabilities dropped, no privilege escalation, **read-only root filesystem** with an `emptyDir` for `/tmp`
 - startup, liveness (`/livez`) and readiness (`/readyz`) probes; CPU / memory requests and limits
 - nightly backups to `/data/backups` (`BACKUP_INTERVAL=24h`, 7 kept)
@@ -601,81 +602,168 @@ Every API error is JSON:
 
 `error` is safe to show to users; `code` is one of `bad_request`, `unauthorized`, `forbidden`, `not_found`, `method_not_allowed`, `conflict`, `payload_too_large`, `rate_limited`, `upstream_error`, `upstream_timeout`, `unavailable`, `internal_error`, or a more specific code a form acts on: `invalid_current_password` and `password_policy` (password change, both with status 400). Internal details (directory, identity provider, upstream errors) are logged under the request id instead of being returned, except on the administrator-only LDAP / Azure AD test endpoints and spec refresh, where the detail is needed to fix the configuration.
 
-## API Definition Management
+## Registering an API
 
-Each API definition includes:
+An API is registered with two internal addresses: the **OpenAPI document** (the portal fetches and indexes it) and the **base URL** (try-it requests go there). Both stay on the server; only the API's managers ever see them.
+
+### 1. Find the spec URL (not the Swagger UI page)
+
+A Swagger UI page (`…/swagger-ui/index.html`) is HTML; the portal needs the JSON or YAML document behind it. The usual places:
+
+| Framework | Swagger UI | OpenAPI document |
+|---|---|---|
+| Spring Boot + springdoc | `/swagger-ui/index.html` | `/v3/api-docs` (YAML: `/v3/api-docs.yaml`) |
+| Spring Boot + springfox (older) | `/swagger-ui/` | `/v2/api-docs` |
+| ASP.NET Core + Swashbuckle | `/swagger` | `/swagger/v1/swagger.json` |
+| FastAPI | `/docs` | `/openapi.json` |
+| NestJS (`SwaggerModule.setup('api', …)`) | `/api` | `/api-json` |
+| Go + swaggo | `/swagger/index.html` | `/swagger/doc.json` |
+
+A context path comes first: a Spring Boot service with `server.servlet.context-path=/orders-api` serves `/orders-api/v3/api-docs`. springdoc tells you the exact address: `GET /orders-api/v3/api-docs/swagger-config` returns `{"url":"/orders-api/v3/api-docs", …}`. If it lists several `urls` (groups), register each group as its own API.
+
+Check it from inside the cluster (the portal image is distroless, so use a throwaway pod):
+
+```bash
+kubectl run spec-check --rm -it --restart=Never --image=curlimages/curl -n <portal-namespace> -- \
+  curl -s http://orders.shop-dev/orders-api/v3/api-docs | head -c 300
+```
+
+Service addresses are `http://<service>.<namespace>` (port 80) or `http://<service>.<namespace>:<port>`; `<service>.<namespace>.svc.cluster.local` works too.
+
+### 2. Choose the base URL
+
+The portal **ignores the spec's `servers`** (and Swagger 2.0 `host` / `basePath`): a spec could otherwise point try-it anywhere. A try-it call goes to **base URL + the operation's path** from the spec, so the base URL holds whatever comes before those paths, usually the service address plus the context path:
+
+| Spec `paths` look like | Base URL |
+|---|---|
+| `/v1/orders/{id}` (springdoc with context path `/orders-api`) | `http://orders.shop-dev/orders-api` |
+| `/orders-api/v1/orders/{id}` (the paths already include it) | `http://orders.shop-dev` |
+| `/items/{sku}` (no context path, port 8080) | `http://inventory.platform:8080` |
+
+Wrong in either direction, try-it answers 404 from the upstream: the context path is missing, or doubled (`/orders-api/orders-api/v1/…`). *Preview spec* shows a few operation paths, which settles it.
+
+### 3. The wizard (Admin → API definitions → New API)
+
+**Source**
+- *Name* and *slug*. The slug follows the name until you edit it, and becomes the address (`/apis/<slug>`). Letters, digits, `.`, `-`, `_`.
+- *Internal OpenAPI URL* and *Internal base URL* (absolute `http(s)`).
+- **Preview spec** fetches the document from inside the portal pod, through the same network guard as the real fetch. It shows the title, version, format, operation count and a few operations. Nothing is saved. An empty name takes the spec's title.
+  - If it works, the spec URL is right and the portal can reach the service.
+  - If it fails, the message says why (see Troubleshooting).
+
+**Access & try-it**
+- *Owner team* (free text) and *Owner group*: the owner group's members manage this API. Only `api.manage` holders set it.
+- *Tags*, *Listed in the catalog*, *Try it*.
+- **Try-it policy:**
+  - *Allowed methods*: empty means every documented method.
+  - *Allowed path prefixes*: empty means every documented path. Matched against the spec's paths on segment boundaries (`/v1` allows `/v1/orders`, not `/v1-internal`). Don't put the context path here; it belongs to the base URL.
+  - *Rate limit* (calls per user per minute, 0 = 120) and *Timeout* (0 = `PROXY_TIMEOUT_SECONDS`).
+- **Headers:**
+  - *Headers users may send*, besides `Content-Type`, `Accept`, `Accept-Language` and `User-Agent`. E.g. `X-Tenant-Id`, or `Authorization` if users bring their own token.
+  - *Headers the portal adds* (e.g. a service key). The value is stored encrypted, never shown again, and overrides what a user sends.
+- **Access:** groups that may *view* or *view and invoke* this API, without a role (see RBAC Model).
+
+**Review** lists everything, header *names* only, and warns when the spec wasn't previewed or no group has access yet. *Create API* saves it; the spec is fetched right away and then every `SPEC_REFRESH_INTERVAL`.
+
+Start open and narrow it later: leave methods and prefixes empty, look at the operations in the catalog, then restrict.
+
+### Example: a Spring Boot service with a context path
+
+The service's Swagger UI is at `http://orders.shop-dev/orders-api/swagger-ui/index.html`, and its spec paths are `/v1/orders`, `/v1/orders/{id}` and `/v1/refunds`.
+
+| Field | Value |
+|---|---|
+| Name / slug | `Orders API` / `orders-api` |
+| Internal OpenAPI URL | `http://orders.shop-dev/orders-api/v3/api-docs` |
+| Internal base URL | `http://orders.shop-dev/orders-api` |
+| Allowed methods | `GET`, `POST` (no deletes from the portal) |
+| Allowed path prefixes | `/v1` |
+| Headers users may send | `X-Tenant-Id` |
+| Headers the portal adds | `X-Service-Key` = the service's key |
+| Owner group | `orders-team` |
+| Access | `orders-readers` → view, `checkout-devs` → invoke |
+
+A try-it call to `POST /v1/orders` then goes to `http://orders.shop-dev/orders-api/v1/orders` with the user's `X-Tenant-Id` and the portal's `X-Service-Key`.
+
+### Example: a FastAPI service on port 8080, no context path
+
+| Field | Value |
+|---|---|
+| Internal OpenAPI URL | `http://inventory.platform:8080/openapi.json` |
+| Internal base URL | `http://inventory.platform:8080` |
+| Allowed path prefixes | empty at first; later `/items` |
+
+### Example: registering from a script
+
+The admin API is the same one the console uses: a session cookie, plus the `X-CSRF-Protection` header on every request.
+
+```bash
+PORTAL=https://api-portal.example.com
+JAR=$(mktemp)
+H=(-H 'Content-Type: application/json' -H 'X-CSRF-Protection: 1' -b "$JAR" -c "$JAR")
+
+curl -s "${H[@]}" -X POST "$PORTAL/api/auth/login" \
+  -d '{"username":"automation","password":"…"}'
+
+# Optional: check the spec first (nothing is stored).
+curl -s "${H[@]}" -X POST "$PORTAL/api/admin/apis/spec-preview" \
+  -d '{"url":"http://orders.shop-dev/orders-api/v3/api-docs"}'
+
+ID=$(curl -s "${H[@]}" -X POST "$PORTAL/api/admin/apis" -d '{
+  "name": "Orders API",
+  "slug": "orders-api",
+  "description": "Orders and refunds.",
+  "internalOpenapiUrl": "http://orders.shop-dev/orders-api/v3/api-docs",
+  "internalBaseUrl": "http://orders.shop-dev/orders-api",
+  "isActive": true,
+  "tryItEnabled": true,
+  "allowedMethods": ["GET", "POST"],
+  "allowedPathPrefixes": ["/v1"],
+  "ownerTeam": "orders-team",
+  "tags": ["orders"],
+  "allowedRequestHeaders": ["X-Tenant-Id"],
+  "injectHeaders": [{"name": "X-Service-Key", "value": "…"}],
+  "rateLimitPerMinute": 0,
+  "timeoutSeconds": 0
+}' | jq .id)
+
+# Groups that may view / invoke it (group ids from GET /api/admin/groups).
+curl -s "${H[@]}" -X PUT "$PORTAL/api/admin/apis/$ID/access" \
+  -d '[{"groupId": 3, "level": "view"}, {"groupId": 4, "level": "invoke"}]'
+```
+
+The account needs `api.create` (or `api.manage`). Every call is audited (`api.spec_preview`, `api.create`, `api.access_set`). When updating with `PUT /api/admin/apis/{id}`, an injected header sent with an empty `value` keeps the stored value.
+
+### Troubleshooting
+
+| What you see | Usually | Fix |
+|---|---|---|
+| Preview: `dial tcp …: i/o timeout` | A NetworkPolicy blocks the portal's egress | Allow the service's namespace / range and port (`deploy/networkpolicy.example.yaml`, "Internal APIs") |
+| Preview: `no such host` | Wrong service or namespace name | `http://<service>.<namespace>`, or the full `.svc.cluster.local` name |
+| Preview: `status 404` | Wrong spec path or a missing context path | Find the address with `…/v3/api-docs/swagger-config` or the table above |
+| Preview: "neither an openapi nor a swagger field" | The URL is the Swagger UI page, or a group list | Use the JSON / YAML document |
+| Preview: `upstream address is not allowed` | Loopback, link-local or metadata addresses, or `PROXY_DENY_CIDRS` | Use the service's cluster address |
+| Try-it: 404 from the upstream | Context path missing from, or doubled in, the base URL | See step 2 |
+| Try-it: "outside the allowed paths" | Allowed path prefixes too narrow, or the context path put there | Prefixes match the spec's paths |
+| Try-it: "not forwarded" next to a header | The header isn't in *Headers users may send* | Add it, or let the portal add it |
+| Try-it: 401 / 403 from the upstream | The service wants credentials | Add them under *Headers the portal adds*, or allow users' `Authorization` |
+| *Spec error* in the catalog | The last background fetch failed; the previous spec is still served | Managers see the reason in the catalog tooltip and on the API's admin page; fix it and use *Refresh spec* |
+
+### Field reference
+
+Each API definition has:
 
 - `name`, `slug`, `description`, `tags`, `ownerTeam` (free text)
-- `internalOpenapiUrl`, `internalBaseUrl` (absolute http(s) URLs; never shown to non-managers)
+- `internalOpenapiUrl`, `internalBaseUrl`: absolute http(s) URLs, never shown to non-managers
 - `isActive`, `tryItEnabled`
-- `allowedMethods`, `allowedPathPrefixes` (see below)
+- `allowedMethods`, `allowedPathPrefixes`: empty means everything documented
 - `ownerGroupId`: members of this group manage the API (set by `api.manage` holders)
 - try-it header policy:
-  - `allowedRequestHeaders`: headers users may send besides `Content-Type`, `Accept`, `Accept-Language`, `User-Agent` (e.g. `Authorization`, `X-Tenant-Id`)
-  - `forwardAllXHeaders`: also forward any other `X-*` header — the behaviour before 1.5.0, kept on for APIs registered before the upgrade
-  - `injectHeaders`: headers the portal adds upstream, e.g. a service API key. Values are stored encrypted (see Encryption at Rest), never returned (`injectHeaderNames` lists them), override user headers, and never reach the audit log
-- `rateLimitPerMinute`: try-it calls per user per minute (0 = 120). Responses carry `X-RateLimit-Limit` / `X-RateLimit-Remaining`, the UI shows what's left, and a `429` says when to retry
+  - `allowedRequestHeaders`: headers users may send besides `Content-Type`, `Accept`, `Accept-Language`, `User-Agent`
+  - `forwardAllXHeaders`: also forward any other `X-*` header. This is the behaviour before 1.5.0, kept on for APIs registered before the upgrade.
+  - `injectHeaders`: headers the portal adds upstream. Values are stored encrypted (see Encryption at Rest) and never returned (`injectHeaderNames` lists them). They override user headers and never reach the audit log.
+- `rateLimitPerMinute`: try-it calls per user per minute (0 = 120). Responses carry `X-RateLimit-Limit` / `X-RateLimit-Remaining`, the UI shows what's left, and a `429` says when to retry.
 - `timeoutSeconds`: upstream timeout for this API (0 = `PROXY_TIMEOUT_SECONDS`)
-
-### Important: `internalBaseUrl` vs `allowedPathPrefixes`
-
-These are not the same thing.
-
-`internalBaseUrl` is the upstream base address used by the backend proxy.
-
-Example:
-
-```text
-https://order.vurulkan.com/order-invoice
-```
-
-`allowedPathPrefixes` applies to the documented operation path that comes from the OpenAPI / Swagger `paths` section.
-
-Example:
-
-If the spec contains:
-
-```text
-/v1/orders/{id}
-/v1/invoices/{id}
-```
-
-Then valid allowed path prefixes would be:
-
-- `/v1`
-- `/v1/orders`
-- `/v1/invoices`
-
-Not:
-
-- `/order-invoice`
-
-because `/order-invoice` belongs in `internalBaseUrl`, not in the operation path allowlist.
-
-### Safe Setup Recommendation
-
-For first registration:
-
-- set `internalBaseUrl`
-- set `internalOpenapiUrl`
-- leave `allowedPathPrefixes` empty
-- optionally set `allowedMethods`
-
-After validation:
-
-- inspect the documented operation paths
-- then tighten `allowedPathPrefixes`
-
-## Example API Registration
-
-Example:
-
-- Name: `Order Operations`
-- Slug: `order-operations`
-- Internal OpenAPI URL: `http://order-operations:8080/api/v3/api-docs`
-- Internal Base URL: `http://order-operations:8080/api`
-- Allowed Methods: `GET,POST`
-- Allowed Path Prefixes: leave empty first, then narrow based on actual spec paths
 
 ## OpenAPI / Swagger Support
 
