@@ -68,3 +68,14 @@ test('role drawer: templates, groups with the role, and what portal-wide scopes 
   await expect(confirm.getByText('Groups that get the role')).toBeVisible();
   await confirm.getByRole('button', { name: 'Cancel' }).click();
 });
+
+test('a group shows API access given on the API, which no role holds', async ({ page }) => {
+  await page.goto('/admin/groups');
+  await page.getByRole('button', { name: 'auditors' }).click();
+  const group = page.getByRole('dialog', { name: 'Edit auditors' });
+  await group.getByRole('tab', { name: 'Permissions' }).click();
+  const direct = group.locator('section[aria-labelledby="gp-direct"]');
+  await expect(direct.getByRole('link', { name: 'Payments API' })).toBeVisible();
+  await expect(direct.getByText('api:1:view')).toBeVisible();
+  await expect(group.locator('section[aria-labelledby="gp-roles"]').getByText('audit.view')).toBeVisible();
+});

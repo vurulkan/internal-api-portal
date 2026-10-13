@@ -173,8 +173,8 @@ export const adminEn = {
     added: 'Added',
     removed: 'Removed',
     viaRole: '{{group}} → {{role}}',
-    viaOwner: '{{group}} (owner group)',
-    viaAccess: '{{group}} (API access)',
+    viaOwner: '{{group}} → owner group of the API (no role)',
+    viaAccess: '{{group}} → direct API access (no role)',
     search: 'Search users',
     new: 'New user',
     edit: 'Edit {{name}}',
@@ -212,10 +212,20 @@ export const adminEn = {
     sessionsEnded_other: '{{count}} sessions ended.',
   },
   groups: {
+    permissionsIntro:
+      'Everything members get through this group. Roles are edited here (Details) or under Roles; direct API access is given on the API itself and is not part of any role.',
+    fromRoles: 'From its roles',
+    noRoleScopes: 'No permissions from roles: the group has no role, or its roles are empty.',
+    directApiAccess: 'Direct API access (without a role)',
+    directApiAccessHelp:
+      'Given on the API: API definitions → Access (view or invoke) or Owner group (manage). Change it there.',
+    noDirectAccess: 'No API gives this group access directly.',
+    ownerGroup: 'Owner group: manage',
     tabsLabel: 'Group details',
     tabs: {
       details: 'Details',
       members: 'Members',
+      permissions: 'Permissions',
     },
     members: 'Members',
     addMembers: 'Add members',
@@ -255,7 +265,7 @@ export const adminEn = {
   },
   roles: {
     perApiHelp:
-      'Rights on single APIs. Leave empty when the portal-wide API permissions above are enough: those cover every API.',
+      'Rights on single APIs. Leave empty when the portal-wide API permissions above are enough: those cover every API. A group can also get one API without any role, on the API itself (API definitions → Access, or as its owner group); that shows on the group’s Permissions tab, not here.',
     globalCovers:
       '{{scopes}} is selected above and already applies to every API; those boxes are shown checked. Per-API boxes add rights on single APIs only.',
     includedBy: 'included by {{scope}}',
@@ -408,7 +418,8 @@ export const adminEn = {
     timeout: 'Timeout (seconds)',
     timeoutHelper: '0 = portal default.',
     access: 'Access',
-    accessBody: 'Groups that may see (view) or call (invoke) this API, in addition to roles.',
+    accessBody:
+      'Gives a group view or invoke on this API directly, without a role: no role changes, and the grant shows on the group’s Permissions tab. Members also keep what their roles give.',
     noAccess: 'No group has access through this list.',
     accessLevel: 'Access of {{group}}',
     removeAccess: 'Remove access of {{group}}',

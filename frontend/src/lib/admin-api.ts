@@ -91,6 +91,8 @@ export const adminApi = {
     request<EffectivePermissions>(
       `/api/admin/users/${id}/permissions${groupIds ? `?groupIds=${groupIds.join(',')}` : ''}`,
     ),
+  groupPermissions: (id: number) =>
+    request<{ groupId: number; sources: PermissionSource[] }>(`/api/admin/groups/${id}/permissions`),
   userSessions: (id: number) => request<{ items: Session[] }>(`/api/admin/sessions?userId=${id}`),
   bulkUserStatus: (userIds: number[], active: boolean) =>
     request<{ changed: number[]; sessionsRevoked: number }>(

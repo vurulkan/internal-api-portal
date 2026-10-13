@@ -175,8 +175,8 @@ export const adminTr: Dictionary['admin'] = {
     added: 'Eklenen',
     removed: 'Kaldırılan',
     viaRole: '{{group}} → {{role}}',
-    viaOwner: '{{group}} (sahip grup)',
-    viaAccess: '{{group}} (API erişimi)',
+    viaOwner: '{{group}} → API’nin sahip grubu (rolsüz)',
+    viaAccess: '{{group}} → doğrudan API erişimi (rolsüz)',
     search: 'Kullanıcı ara',
     new: 'Yeni kullanıcı',
     edit: '{{name}} düzenle',
@@ -215,10 +215,20 @@ export const adminTr: Dictionary['admin'] = {
     sessionsEnded_other: '{{count}} oturum kapatıldı.',
   },
   groups: {
+    permissionsIntro:
+      'Üyelerin bu grup üzerinden aldığı her şey. Roller burada (Ayrıntılar) veya Roller ekranında düzenlenir; doğrudan API erişimi API’nin kendisinde verilir ve hiçbir rolün parçası değildir.',
+    fromRoles: 'Rollerinden gelenler',
+    noRoleScopes: 'Rollerden gelen yetki yok: grubun rolü yok ya da rolleri boş.',
+    directApiAccess: 'Doğrudan API erişimi (rolsüz)',
+    directApiAccessHelp:
+      'API’de verilir: API tanımları → Erişim (görüntüleme veya çağırma) ya da Sahip grup (yönetim). Değiştirmek için oraya gidin.',
+    noDirectAccess: 'Hiçbir API bu gruba doğrudan erişim vermiyor.',
+    ownerGroup: 'Sahip grup: yönetim',
     tabsLabel: 'Grup ayrıntıları',
     tabs: {
       details: 'Ayrıntılar',
       members: 'Üyeler',
+      permissions: 'Yetkiler',
     },
     members: 'Üyeler',
     addMembers: 'Üye ekle',
@@ -258,7 +268,7 @@ export const adminTr: Dictionary['admin'] = {
   },
   roles: {
     perApiHelp:
-      'Tek tek API’ler için yetkiler. Yukarıdaki portal geneli API yetkileri yetiyorsa boş bırakın: onlar tüm API’leri kapsar.',
+      'Tek tek API’ler için yetkiler. Yukarıdaki portal geneli API yetkileri yetiyorsa boş bırakın: onlar tüm API’leri kapsar. Bir grup tek bir API’ye rolsüz de erişebilir; bu API’nin kendisinde verilir (API tanımları → Erişim ya da sahip grup) ve burada değil, grubun Yetkiler sekmesinde görünür.',
     globalCovers:
       '{{scopes}} yukarıda seçili ve zaten tüm API’ler için geçerli; bu kutular işaretli gösterilir. API bazındaki kutular yalnız tek bir API’ye ek yetki verir.',
     includedBy: '{{scope}} kapsıyor',
@@ -410,7 +420,8 @@ export const adminTr: Dictionary['admin'] = {
     timeout: 'Zaman aşımı (saniye)',
     timeoutHelper: '0 = portal varsayılanı.',
     access: 'Erişim',
-    accessBody: 'Rollere ek olarak bu API’yi görebilen (görüntüleme) veya çağırabilen (çağırma) gruplar.',
+    accessBody:
+      'Bir gruba bu API’de doğrudan, rol olmadan görüntüleme veya çağırma verir: hiçbir rol değişmez ve verilen erişim grubun Yetkiler sekmesinde görünür. Üyeler rollerinden gelenleri de korur.',
     noAccess: 'Bu liste üzerinden erişimi olan grup yok.',
     accessLevel: '{{group}} erişimi',
     removeAccess: '{{group}} erişimini kaldır',

@@ -143,6 +143,7 @@ func (s *Server) Router() http.Handler {
 		r.With(a("group.update"), perm("group.manage")).Put("/api/admin/groups/{id}", s.handleUpdateGroup)
 		r.With(a("group.delete"), perm("group.manage")).Delete("/api/admin/groups/{id}", s.handleDeleteGroup)
 		r.With(perm("group.manage")).Get("/api/admin/groups/{id}/roles", s.handleGetGroupRoles)
+		r.With(perm("group.manage")).Get("/api/admin/groups/{id}/permissions", s.handleGroupPermissions)
 		r.With(a("group.roles_set"), perm("group.manage")).Put("/api/admin/groups/{id}/roles", s.handleSetGroupRoles)
 		// Membership is the user side of a group: it needs user.manage, like a user's groups.
 		r.With(a("group.members_add"), perm("user.manage")).Post("/api/admin/groups/{id}/members", s.handleAddGroupMembers)

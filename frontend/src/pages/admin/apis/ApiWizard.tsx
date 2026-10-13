@@ -79,7 +79,7 @@ function Wizard({
       return created.id;
     },
     success: t('admin.apis.created'),
-    invalidate: [queryKeys.admin.apis, queryKeys.catalog, queryKeys.admin.overview],
+    invalidate: [queryKeys.admin.apis, queryKeys.admin.groups, queryKeys.catalog, queryKeys.admin.overview],
     onSuccess: onCreated,
   });
 

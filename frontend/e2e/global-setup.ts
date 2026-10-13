@@ -74,6 +74,8 @@ export default async function globalSetup() {
   const auditor = await call('POST', '/api/admin/roles', { name: 'auditor', description: 'Read the audit log' });
   await call('PUT', `/api/admin/roles/${auditor.id}/permissions`, { scopes: ['audit.view'] });
   await call('PUT', `/api/admin/groups/${team.id}/roles`, [consumer.id]);
+  // Direct API access (no role): auditors may view the Payments API.
+  await call('PUT', `/api/admin/apis/${payments.id}/access`, [{ groupId: auditors.id, level: 'view' }]);
   await call('PUT', `/api/admin/groups/${auditors.id}/roles`, [auditor.id]);
   for (const name of ['bob', 'carol', 'dave']) {
     const user = await call('POST', '/api/admin/users', {
