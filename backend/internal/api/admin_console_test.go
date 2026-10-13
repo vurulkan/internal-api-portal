@@ -240,7 +240,7 @@ func TestAPIImpactAndSystemInfo(t *testing.T) {
 
 	body = e.expect(http.MethodGet, "/api/admin/system/info", root, nil, http.StatusOK)
 	info := decode[map[string]any](t, body)
-	if info["encryptionKeySource"] != "database" || info["version"] != "dev" || info["schemaVersion"] != float64(11) || info["databaseBytes"].(float64) <= 0 {
+	if info["encryptionKeySource"] != "database" || info["version"] != "dev" || info["schemaVersion"] != float64(12) || info["databaseBytes"].(float64) <= 0 {
 		t.Fatalf("system info: %s", body)
 	}
 }

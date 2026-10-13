@@ -111,6 +111,21 @@ for (const scheme of ['light', 'dark'] as const) {
           await page.waitForLoadState('networkidle');
           await expectAccessible(page, `user drawer ${tab}`);
         }
+        await page.keyboard.press('Escape');
+        await page.goto('/admin/users');
+        await settle(page);
+        await page.getByRole('button', { name: 'More ways to add users' }).click();
+        // Not scanned while open: a Radix menu hides the page (aria-hidden) and traps
+        // focus, which axe reports as aria-hidden-focus (the theme and language menus too).
+        await page.getByRole('menuitem', { name: 'From LDAP…' }).click();
+        await expect(page.getByRole('dialog', { name: 'Import from LDAP' })).toBeVisible();
+        await expectAccessible(page, 'LDAP import drawer');
+        await page.keyboard.press('Escape');
+        await page.getByRole('button', { name: 'More ways to add users' }).click();
+        await page.getByRole('menuitem', { name: 'Azure AD user…' }).click();
+        await expect(page.getByRole('dialog', { name: 'Add an Azure AD user' })).toBeVisible();
+        await expectAccessible(page, 'Azure AD pre-registration');
+        await page.keyboard.press('Escape');
         await page.goto('/admin/apis?new=1');
         const wizard = page.getByRole('dialog', { name: 'New API' });
         await wizard.getByLabel(/Internal OpenAPI URL/).fill('http://127.0.0.1:18096/openapi.json');

@@ -124,6 +124,7 @@ func (s *Server) Router() http.Handler {
 
 		r.With(perm("user.view")).Get("/api/admin/users", s.handleListUsers)
 		r.With(a("user.bulk_status"), perm("user.manage")).Post("/api/admin/users/bulk-status", s.handleBulkUserStatus)
+		r.With(a("user.azure_preregister"), perm("user.manage"), s.requireFeature("azureAd")).Post("/api/admin/users/azure", s.handlePreregisterAzureUser)
 		r.With(a("user.create"), perm("user.manage")).Post("/api/admin/users", s.handleCreateUser)
 		r.With(a("user.update"), perm("user.manage")).Put("/api/admin/users/{id}", s.handleUpdateUser)
 		r.With(a("user.delete"), perm("user.manage")).Delete("/api/admin/users/{id}", s.handleDeleteUser)
@@ -163,8 +164,10 @@ func (s *Server) Router() http.Handler {
 		r.With(a("idp.ldap_update"), perm("idp.manage"), ldap).Put("/api/admin/ldap", s.handleUpdateLDAP)
 		r.With(a("idp.ldap_test"), perm("idp.manage"), ldap).Post("/api/admin/ldap/test", s.handleTestLDAP)
 		r.With(a("idp.ldap_test_login"), perm("idp.manage"), ldap).Post("/api/admin/ldap/test-login", s.handleTestLDAPLogin)
-		r.With(a("idp.ldap_search"), perm("idp.manage"), ldap).Post("/api/admin/ldap/search", s.handleSearchLDAP)
-		r.With(a("idp.ldap_import"), perm("idp.manage"), ldap).Post("/api/admin/ldap/import", s.handleImportLDAP)
+		// Finding and importing directory users is user management too (user.manage);
+		// the settings themselves stay with idp.manage.
+		r.With(a("idp.ldap_search"), s.requireAnyPermission("user.manage", "idp.manage"), ldap).Post("/api/admin/ldap/search", s.handleSearchLDAP)
+		r.With(a("idp.ldap_import"), s.requireAnyPermission("user.manage", "idp.manage"), ldap).Post("/api/admin/ldap/import", s.handleImportLDAP)
 
 		azure := s.requireFeature("azureAd")
 		r.With(perm("idp.manage"), azure).Get("/api/admin/azure-ad", s.handleGetAzureAD)

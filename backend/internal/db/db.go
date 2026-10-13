@@ -249,6 +249,17 @@ var migrations = []migration{
 	{11, "users.last_login_at (2.0.0)", false, func(ctx context.Context, tx *sql.Tx) error {
 		return addColumn(ctx, tx, `ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP`)
 	}},
+	{12, "ldap_config auto-create at first sign-in (2.2.0)", false, func(ctx context.Context, tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE ldap_config ADD COLUMN auto_create INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE ldap_config ADD COLUMN auto_create_groups TEXT NOT NULL DEFAULT '[]'`,
+		} {
+			if err := addColumn(ctx, tx, stmt); err != nil {
+				return err
+			}
+		}
+		return nil
+	}},
 }
 
 // specHistory: every spec change (operations added / removed / changed, by a

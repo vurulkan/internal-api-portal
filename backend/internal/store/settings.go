@@ -12,9 +12,10 @@ func (s *Store) GetLDAPConfig(ctx context.Context) (*models.LDAPConfig, error) {
 	var cfg models.LDAPConfig
 	var enabled, useSSL, startTLS, skipVerify int
 	var bindPasswordEnc string
-	var userBaseDNSRaw string
-	err := s.conn.QueryRowContext(ctx, `SELECT enabled, url, host, port, use_ssl, start_tls, skip_verify, timeout_seconds, bind_dn, bind_password_enc, user_base_dn, user_base_dns, user_filter, username_attribute, display_name_attribute, email_attribute FROM ldap_config WHERE id = 1`).
-		Scan(&enabled, &cfg.URL, &cfg.Host, &cfg.Port, &useSSL, &startTLS, &skipVerify, &cfg.TimeoutSeconds, &cfg.BindDN, &bindPasswordEnc, &cfg.UserBaseDN, &userBaseDNSRaw, &cfg.UserFilter, &cfg.UsernameAttribute, &cfg.DisplayNameAttr, &cfg.EmailAttr)
+	var userBaseDNSRaw, autoCreateGroups string
+	var autoCreate int
+	err := s.conn.QueryRowContext(ctx, `SELECT enabled, url, host, port, use_ssl, start_tls, skip_verify, timeout_seconds, bind_dn, bind_password_enc, user_base_dn, user_base_dns, user_filter, username_attribute, display_name_attribute, email_attribute, auto_create, auto_create_groups FROM ldap_config WHERE id = 1`).
+		Scan(&enabled, &cfg.URL, &cfg.Host, &cfg.Port, &useSSL, &startTLS, &skipVerify, &cfg.TimeoutSeconds, &cfg.BindDN, &bindPasswordEnc, &cfg.UserBaseDN, &userBaseDNSRaw, &cfg.UserFilter, &cfg.UsernameAttribute, &cfg.DisplayNameAttr, &cfg.EmailAttr, &autoCreate, &autoCreateGroups)
 	if err != nil {
 		return nil, err
 	}
@@ -23,7 +24,12 @@ func (s *Store) GetLDAPConfig(ctx context.Context) (*models.LDAPConfig, error) {
 	cfg.StartTLS = startTLS == 1
 	cfg.SkipVerify = skipVerify == 1
 	cfg.PasswordConfigured = bindPasswordEnc != ""
+	cfg.AutoCreate = autoCreate == 1
 	_ = json.Unmarshal([]byte(userBaseDNSRaw), &cfg.UserBaseDNs)
+	_ = json.Unmarshal([]byte(autoCreateGroups), &cfg.AutoCreateGroups)
+	if cfg.AutoCreateGroups == nil {
+		cfg.AutoCreateGroups = []string{}
+	}
 	if bindPasswordEnc != "" {
 		cfg.BindPassword, _ = s.keys.decrypt(bindPasswordEnc)
 	}
@@ -32,6 +38,13 @@ func (s *Store) GetLDAPConfig(ctx context.Context) (*models.LDAPConfig, error) {
 
 func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) error {
 	raw, _ := json.Marshal(cfg.UserBaseDNs)
+	groups := []string{}
+	for _, dn := range cfg.AutoCreateGroups {
+		if dn = strings.TrimSpace(dn); dn != "" {
+			groups = append(groups, dn)
+		}
+	}
+	groupsRaw, _ := json.Marshal(groups)
 	password := cfg.BindPassword
 	if password == "" {
 		existing, err := s.GetLDAPConfig(ctx)
@@ -43,8 +56,8 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 	if err != nil {
 		return err
 	}
-	_, err = s.conn.ExecContext(ctx, `UPDATE ldap_config SET enabled = ?, url = ?, host = ?, port = ?, use_ssl = ?, start_tls = ?, skip_verify = ?, timeout_seconds = ?, bind_dn = ?, bind_password_enc = ?, user_base_dn = ?, user_base_dns = ?, user_filter = ?, username_attribute = ?, display_name_attribute = ?, email_attribute = ? WHERE id = 1`,
-		boolInt(cfg.Enabled), cfg.URL, cfg.Host, cfg.Port, boolInt(cfg.UseSSL), boolInt(cfg.StartTLS), boolInt(cfg.SkipVerify), cfg.TimeoutSeconds, cfg.BindDN, encoded, cfg.UserBaseDN, string(raw), cfg.UserFilter, cfg.UsernameAttribute, cfg.DisplayNameAttr, cfg.EmailAttr)
+	_, err = s.conn.ExecContext(ctx, `UPDATE ldap_config SET enabled = ?, url = ?, host = ?, port = ?, use_ssl = ?, start_tls = ?, skip_verify = ?, timeout_seconds = ?, bind_dn = ?, bind_password_enc = ?, user_base_dn = ?, user_base_dns = ?, user_filter = ?, username_attribute = ?, display_name_attribute = ?, email_attribute = ?, auto_create = ?, auto_create_groups = ? WHERE id = 1`,
+		boolInt(cfg.Enabled), cfg.URL, cfg.Host, cfg.Port, boolInt(cfg.UseSSL), boolInt(cfg.StartTLS), boolInt(cfg.SkipVerify), cfg.TimeoutSeconds, cfg.BindDN, encoded, cfg.UserBaseDN, string(raw), cfg.UserFilter, cfg.UsernameAttribute, cfg.DisplayNameAttr, cfg.EmailAttr, boolInt(cfg.AutoCreate), string(groupsRaw))
 	return err
 }
 

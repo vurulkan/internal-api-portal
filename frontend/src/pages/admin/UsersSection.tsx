@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, UserRound } from 'lucide-react';
+import { UserRound } from 'lucide-react';
 import { api, type User } from '@/lib/api';
 import { adminApi } from '@/lib/admin-api';
 import { formatRelative } from '@/lib/format';
@@ -21,6 +21,9 @@ import {
   type RowDelete,
 } from '@/components/ui';
 import { matches, SearchInput, SectionToolbar, TableSkeleton, useAdminMutation } from './common';
+import { AzurePreregisterDialog } from './users/AzurePreregisterDialog';
+import { LdapImportDrawer } from './users/LdapImportDrawer';
+import { NewUserMenu } from './users/NewUserMenu';
 import { UserBulkActions } from './users/UserBulkActions';
 import { UserDrawer } from './users/UserDrawer';
 import { userRules } from './users/rules';
@@ -47,6 +50,10 @@ export default function UsersSection() {
     setParams(next, { replace: true });
   };
   const [editing, setEditing] = useState<User | 'new' | null>(() => (params.get('new') && canManage ? 'new' : null));
+  // ?import=ldap (the link on Identity providers → LDAP) opens the import at once.
+  const [directory, setDirectory] = useState<'ldap' | 'azure' | null>(() =>
+    params.get('import') === 'ldap' && canManage ? 'ldap' : null,
+  );
   const [selected, setSelected] = useState<string[]>([]);
   const groupNames = useMemo(() => new Map((groups.data ?? []).map((g) => [g.id, g.name])), [groups.data]);
   const rules = userRules(users.data ?? [], me.data?.user.id, t);
@@ -211,10 +218,7 @@ export default function UsersSection() {
             <SectionToolbar
               actions={
                 canManage && (
-                  <Button variant="accent" onClick={() => setEditing('new')}>
-                    <Plus aria-hidden="true" />
-                    {t('admin.users.new')}
-                  </Button>
+                  <NewUserMenu onChoose={(kind) => (kind === 'local' ? setEditing('new') : setDirectory(kind))} />
                 )
               }
             >
@@ -274,6 +278,8 @@ export default function UsersSection() {
           )
         }
       />
+      {directory === 'ldap' && <LdapImportDrawer onClose={() => setDirectory(null)} />}
+      {directory === 'azure' && <AzurePreregisterDialog onClose={() => setDirectory(null)} />}
       {editing && (
         <UserDrawer
           key={editing === 'new' ? 'new' : editing.id}

@@ -61,6 +61,7 @@ var authzTable = []routeRule{
 	{"GET", "/api/admin/users", signedIn, "user.view"},
 	{"POST", "/api/admin/users", signedIn, "user.manage"},
 	{"POST", "/api/admin/users/bulk-status", signedIn, "user.manage"},
+	{"POST", "/api/admin/users/azure", signedIn, "user.manage"},
 	{"PUT", "/api/admin/users/{id}", signedIn, "user.manage"},
 	{"DELETE", "/api/admin/users/{id}", signedIn, "user.manage"},
 	{"GET", "/api/admin/users/{id}/groups", signedIn, "user.view"},
@@ -94,8 +95,8 @@ var authzTable = []routeRule{
 	{"PUT", "/api/admin/ldap", signedIn, "idp.manage"},
 	{"POST", "/api/admin/ldap/test", signedIn, "idp.manage"},
 	{"POST", "/api/admin/ldap/test-login", signedIn, "idp.manage"},
-	{"POST", "/api/admin/ldap/search", signedIn, "idp.manage"},
-	{"POST", "/api/admin/ldap/import", signedIn, "idp.manage"},
+	{"POST", "/api/admin/ldap/search", signedIn, "user.manage or idp.manage"},
+	{"POST", "/api/admin/ldap/import", signedIn, "user.manage or idp.manage"},
 
 	{"GET", "/api/admin/apis", signedIn, "api.manage"},
 	{"POST", "/api/admin/apis", signedIn, "api.manage"},

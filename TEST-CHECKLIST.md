@@ -16,6 +16,10 @@ Tick every line, or write down why it doesn't apply.
 - [ ] Local sign-in; wrong password five times locks the account temporarily (429 with `Retry-After`).
 - [ ] A user with *must change password* reaches only the change-password page.
 - [ ] LDAP sign-in with a directory account; **Identity providers → LDAP → Test a sign-in** shows each step.
+- [ ] Users → New user ▾ → From LDAP…: search, import two people into a group; a name typed into the request that isn't in the directory is reported as *not found*; a username that is a local account is skipped, not converted.
+- [ ] As a user manager (`user.view` + `user.manage`, no `idp.manage`): the import works; importing into a group that grants something the manager doesn't hold is refused; the LDAP settings stay closed.
+- [ ] LDAP *Create an account at the first sign-in* on, limited to one directory group: a member signs in and lands with an empty catalog (no groups), a non-member is refused, and a directory user whose name is a local account is refused.
+- [ ] Users → New user ▾ → Azure AD user…: pre-register someone whose UPN differs from their e-mail, with a group; at their first Microsoft sign-in they get that account (with the group), not a second one.
 - [ ] Azure AD sign-in (if configured); *Allowed groups* refuses a non-member with a message.
 - [ ] Idle timeout and maximum age end the session; the next action shows one "session ended" toast and returns to the same page after signing in.
 - [ ] **Account → Signed-in devices** ends another browser's session immediately.

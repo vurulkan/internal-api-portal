@@ -180,6 +180,10 @@ export type LdapConfig = {
   displayNameAttribute: string;
   emailAttribute: string;
   passwordConfigured: boolean;
+  /** Create an account at a directory user's first sign-in (2.2.0). */
+  autoCreate?: boolean;
+  /** When set, only members of these group DNs get one. */
+  autoCreateGroups?: string[];
 };
 export type SessionSettings = { sessionMinutes: number; maxHours: number };
 export type Session = {
@@ -474,11 +478,12 @@ export const api = {
   searchLdap: (query: string) =>
     request<LdapUser[]>('/api/admin/ldap/search', { method: 'POST', body: JSON.stringify({ query }) }),
   // skipped: usernames that already belong to a local or Azure AD account (left unchanged).
-  importLdap: (payload: LdapUser[]) =>
-    request<{ imported: number; skipped: string[] }>('/api/admin/ldap/import', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+  /** The server looks each username up in the directory; groupIds are a grant. */
+  importLdap: (usernames: string[], groupIds: number[] = []) =>
+    request<{ imported: number; skipped: string[]; missing: string[]; addedToGroups: number }>(
+      '/api/admin/ldap/import',
+      { method: 'POST', body: JSON.stringify({ usernames, groupIds }) },
+    ),
   azureAd: () => request<AzureADConfig>('/api/admin/azure-ad'),
   updateAzureAd: (payload: AzureADConfig) =>
     request('/api/admin/azure-ad', { method: 'PUT', body: JSON.stringify(payload) }),
