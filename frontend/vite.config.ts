@@ -23,5 +23,8 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     css: false,
+    // Flows like the API wizard type a lot; CI runners are slower than a laptop, and
+    // findBy* already waits up to 4 s (setup.ts), so 5 s per test (the default) is too tight.
+    testTimeout: 20_000,
   },
 });

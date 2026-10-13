@@ -20,7 +20,7 @@ import { Alert, Drawer, DrawerBody, IconButton, Tooltip } from '@/components/ui'
 import { CommandPalette } from './CommandPalette';
 import { ShortcutHelp } from './ShortcutHelp';
 import { GlobalSearch } from './GlobalSearch';
-import { ProjectLink } from './ProjectLink';
+import { RailProjectLink, VersionLine } from './ProjectLink';
 import { ShellContext } from './shell-context';
 import { LanguageMenu, ThemeMenu, UserMenu, useSignOut } from './TopBarMenus';
 
@@ -140,7 +140,8 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
             {nav.map((item) => (
               <RailLink key={item.to} item={item} />
             ))}
-            <div className="mt-auto">
+            <div className="mt-auto flex flex-col items-center gap-1">
+              <RailProjectLink />
               <IconButton
                 label={t('shell.help')}
                 shortcut="?"
@@ -164,8 +165,8 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
             <div ref={setPanelTarget} className="px-2 pb-4" />
           </aside>
         )}
-        <main ref={mainRef} id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col focus:outline-none">
-          <div className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-5 sm:px-6">
+        <main ref={mainRef} id="main" tabIndex={-1} className="min-w-0 flex-1 focus:outline-none">
+          <div className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6">
             {warnings.map((code) => (
               <Alert key={code} variant="warning" role="status" className="mb-4">
                 {t(`warnings.${code}`, { defaultValue: code })}
@@ -173,7 +174,6 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
             ))}
             <Outlet />
           </div>
-          <ProjectLink />
         </main>
       </div>
       {!isDesktop && (
@@ -209,6 +209,7 @@ export function AppShell({ restricted = false }: { restricted?: boolean }) {
                   <CircleHelp className="size-5" strokeWidth={1.75} aria-hidden="true" />
                   {t('shell.help')}
                 </button>
+                <VersionLine className="px-3 pt-2 pb-1" />
               </nav>
             )}
             {panel && (

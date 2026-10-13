@@ -306,3 +306,24 @@ func TestGroupPermissionsShowEverySource(t *testing.T) {
 	}
 	e.expect(http.MethodGet, "/api/admin/groups/9999/permissions", root, nil, http.StatusNotFound)
 }
+
+// The sign-in page learns whether to show the project link, but not the version;
+// signed-in users get both from /api/auth/me.
+func TestVersionOnlyForSignedInUsers(t *testing.T) {
+	e := newEnv(t)
+	e.srv.config.Version = "9.9.9"
+	e.srv.config.ShowProjectLink = true
+	body := e.expect(http.MethodGet, "/api/system/public", "", nil, http.StatusOK)
+	if strings.Contains(body, "9.9.9") || !strings.Contains(body, `"projectLink":true`) {
+		t.Fatalf("public settings: %s", body)
+	}
+	e.user("viewer", false)
+	body = e.expect(http.MethodGet, "/api/auth/me", e.login("viewer"), nil, http.StatusOK)
+	if !strings.Contains(body, `"version":"9.9.9"`) || !strings.Contains(body, `"projectLink":true`) {
+		t.Fatalf("me: %s", body)
+	}
+	e.srv.config.ShowProjectLink = false
+	if body := e.expect(http.MethodGet, "/api/system/public", "", nil, http.StatusOK); !strings.Contains(body, `"projectLink":false`) {
+		t.Fatalf("SHOW_PROJECT_LINK=false: %s", body)
+	}
+}

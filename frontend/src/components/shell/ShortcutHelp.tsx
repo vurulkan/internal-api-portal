@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { modKey } from '@/lib/shortcuts';
 import { Dialog, Kbd } from '@/components/ui';
+import { VersionLine } from './ProjectLink';
 
 type Row = { label: string; keys: ReactNode };
 
@@ -81,6 +82,7 @@ export function ShortcutHelp({ open, onOpenChange }: { open: boolean; onOpenChan
           </section>
         ))}
         <p className="text-xs text-muted-foreground">{t('help.layoutNote')}</p>
+        <VersionLine className="border-t border-border pt-3" />
       </div>
     </Dialog>
   );

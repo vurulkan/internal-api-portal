@@ -17,6 +17,11 @@ import (
 // LDAPAuthenticate binds as the user and returns the DNs of the groups the entry
 // lists in memberOf (used to sync mapped portal groups).
 func LDAPAuthenticate(cfg models.LDAPConfig, username, password string) ([]string, error) {
+	// An empty password would be an unauthenticated bind, which many directories
+	// accept as "success". go-ldap refuses it too; this doesn't depend on that.
+	if password == "" {
+		return nil, errors.New("empty password")
+	}
 	conn, err := dialLDAP(cfg)
 	if err != nil {
 		return nil, err

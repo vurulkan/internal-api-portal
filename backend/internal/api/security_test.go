@@ -242,6 +242,44 @@ func TestUnknownUserAndAzureAccountsCannotUsePasswordLogin(t *testing.T) {
 	e.expect(http.MethodPost, "/api/auth/login", "", map[string]string{"username": "azure-ann", "password": ""}, http.StatusUnauthorized)
 }
 
+// The account's source decides how it signs in, and only that way: there is no
+// "try the local password first, then LDAP". A directory account that still has a
+// valid local password hash (left over, or written by hand) can't sign in with it.
+func TestDirectoryAccountsNeverUseALocalPassword(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	hash, err := auth.HashPassword(testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"ldap", "azuread"} {
+		name := source + "-user"
+		if _, err := e.store.CreateUser(ctx, models.User{Username: name, PasswordHash: hash, AuthSource: source, IsActive: true}); err != nil {
+			t.Fatal(err)
+		}
+		e.expect(http.MethodPost, "/api/auth/login", "", map[string]string{"username": name, "password": testPassword}, http.StatusUnauthorized)
+	}
+	// The audit trail shows which path refused it: the directory, never the local hash.
+	var reasons []string
+	rows, err := e.dbConn.QueryContext(ctx, `SELECT error_message FROM audit_logs WHERE action = 'auth.login.denied' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r string
+		_ = rows.Scan(&r)
+		reasons = append(reasons, r)
+	}
+	if len(reasons) != 2 || !strings.HasPrefix(reasons[0], "ldap") || !strings.Contains(reasons[1], "azure ad account") {
+		t.Fatalf("refusal reasons: %q", reasons)
+	}
+	// An empty password is never an LDAP bind (it would be an unauthenticated one).
+	if _, err := auth.LDAPAuthenticate(models.LDAPConfig{Enabled: true, Host: "127.0.0.1", Port: 1}, "ldap-user", ""); err == nil || err.Error() != "empty password" {
+		t.Fatalf("empty password: %v", err)
+	}
+}
+
 // ─── Delegated administration ────────────────────────────────────────────────
 
 func TestUserManagerCannotEscalate(t *testing.T) {

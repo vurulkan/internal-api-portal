@@ -35,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: portal
-          image: ghcr.io/vurulkan/internal-api-portal:2.1.3
+          image: ghcr.io/vurulkan/internal-api-portal:2.1.4
           # Always: every pod start checks the registry (only the manifest, when the
           # image is already on the node), so a node never runs a stale copy of a tag.
           imagePullPolicy: Always
@@ -75,6 +75,11 @@ spec:
               value: json
             - name: SERVICE_ENVIRONMENT
               value: prod
+            # Link to the project's GitHub page (sign-in page, navigation, shortcuts).
+            # Shown while this stays commented out; uncomment to hide it, e.g. for a
+            # portal offered under its own name.
+            # - name: SHOW_PROJECT_LINK
+            #   value: "false"
             # ── Network ───────────────────────────────────────────────────────
             # The ingress controller's pod CIDR, so audit IPs and the login lockout
             # see the real client address, e.g. "10.244.0.0/16".

@@ -60,6 +60,7 @@ export const tr: Dictionary = {
   language: { en: 'English', tr: 'Türkçe' },
   authSource: { local: 'Yerel', ldap: 'LDAP', azuread: 'Azure AD' },
   help: {
+    version: 'Sürüm {{version}}',
     title: 'Klavye kısayolları',
     description: 'Her şey klavyeyle kullanılabilir. Tek tuşlu kısayollar bir alana yazarken devre dışıdır.',
     everywhere: 'Her yerde',

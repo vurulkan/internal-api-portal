@@ -82,6 +82,10 @@ type Config struct {
 
 	// Version is the build's version, set by main (not read from the environment).
 	Version string
+
+	// ShowProjectLink shows the link to the project's GitHub page (sign-in page,
+	// navigation, shortcuts). Off for portals offered under their own name.
+	ShowProjectLink bool
 }
 
 type Features struct {
@@ -127,6 +131,7 @@ func Load() Config {
 		BootstrapAdminPassword: envSecret("BOOTSTRAP_ADMIN_PASSWORD"),
 		PasswordMinLength:      envInt("PASSWORD_MIN_LENGTH", 12),
 		AuditExportMaxRows:     envInt("AUDIT_EXPORT_MAX_ROWS", 100000),
+		ShowProjectLink:        envBool("SHOW_PROJECT_LINK", true),
 		Features: Features{
 			TryIt:       envBool("FEATURE_TRY_IT", true),
 			LDAP:        envBool("FEATURE_LDAP", true),
