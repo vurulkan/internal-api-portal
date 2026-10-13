@@ -1,5 +1,8 @@
 #!/bin/sh
-# Installs the internal-api-portal log templates into Elasticsearch (8.13 or newer).
+# Installs the internal-api-portal log templates into Elasticsearch (8.13 or newer;
+# also tested with 9.5). On 9.x, lines that can't be indexed are kept in the failure
+# store and still acknowledged; check that this finds nothing after setting up:
+#   GET logs-portal*::failures/_search
 # Idempotent: re-running updates everything in place.
 #
 #   ES_URL=https://es.example:9200 ES_AUTH=elastic:changeme ./setup.sh
