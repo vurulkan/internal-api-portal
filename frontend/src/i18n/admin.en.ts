@@ -254,6 +254,16 @@ export const adminEn = {
     deleteBody: 'Members lose the roles they had through this group.',
   },
   roles: {
+    perApiHelp:
+      'Rights on single APIs. Leave empty when the portal-wide API permissions above are enough: those cover every API.',
+    globalCovers:
+      '{{scopes}} is selected above and already applies to every API; those boxes are shown checked. Per-API boxes add rights on single APIs only.',
+    includedBy: 'included by {{scope}}',
+    applyTemplate: 'Apply a template',
+    groupsWithRole: 'Groups with this role',
+    groupsWithRoleHelper: 'Their members get this role’s permissions. The same as Groups → Roles.',
+    groupsAdded: 'Groups that get the role',
+    groupsRemoved: 'Groups that lose the role',
     scopes: 'Permissions',
     usedByColumn: 'Used by',
     unusedShort: 'Unused',
@@ -487,7 +497,7 @@ export const adminEn = {
       'Group object IDs, one per line. When set, only members may sign in (needs the groups claim in the token configuration).',
     note: 'LDAP and local accounts keep working; Microsoft sign-in is an additional way in.',
     test: 'Test',
-    testOk: 'The configuration is valid.',
+    testOk: 'Tenant found, and the client ID and secret were accepted.',
     testFailed: 'The test failed.',
     saved: 'Azure AD settings saved.',
   },

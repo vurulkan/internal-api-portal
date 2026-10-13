@@ -61,16 +61,16 @@
 
 .dark {
   color-scheme: dark;
-  --background: #020617;
+  --background: #0c1222;
   --foreground: #f8fafc;
-  --card: #0e1223;
+  --card: #141b2d;
   --card-foreground: #f8fafc;
-  --muted: #1a1e2f;
-  --muted-foreground: #94a3b8;
-  --border: #1e293b;
+  --muted: #1e2639;
+  --muted-foreground: #a1aec0;
+  --border: #2a3448;
   --input: #64748b;
   --primary: #f8fafc;
-  --primary-foreground: #020617;
+  --primary-foreground: #0c1222;
   --accent: #22c55e;
   --accent-foreground: #0f172a;
   --link: #60a5fa;
@@ -97,7 +97,7 @@
   --method-patch-foreground: #c4b5fd;
   --method-delete: #450a0a;
   --method-delete-foreground: #fca5a5;
-  --overlay: rgb(0 0 0 / 0.6);
+  --overlay: rgb(2 6 23 / 0.6);
   --syntax-key: #93c5fd;
   --syntax-string: #86efac;
   --syntax-number: #fcd34d;

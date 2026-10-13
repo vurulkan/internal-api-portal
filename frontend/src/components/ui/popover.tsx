@@ -18,7 +18,7 @@ export function PopoverContent({
         align={align}
         sideOffset={4}
         data-animate
-        className={cn('z-40 rounded-md border border-border bg-card p-2 text-card-foreground shadow-lg', className)}
+        className={cn('z-55 rounded-md border border-border bg-card p-2 text-card-foreground shadow-lg', className)}
         {...props}
       >
         {children}

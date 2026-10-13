@@ -185,8 +185,8 @@ export function DataTable<T>({
 
   return (
     <div className={cn('min-w-0 space-y-2', className)}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">{toolbar}</div>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{toolbar}</div>
         <IconButton
           size="icon-sm"
           label={density === 'compact' ? t('table.comfortable') : t('table.compact')}
