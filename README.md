@@ -596,7 +596,7 @@ Fields the portal adds beyond ECS live under `portal.*`, so they never collide w
 
 #### Shipping to Elasticsearch
 
-[`deploy/logging/`](deploy/logging) has everything for Elasticsearch 8.13 or newer:
+[`deploy/logging/`](deploy/logging) has everything for Elasticsearch 8.13 or newer (also tested with 9.5):
 
 | File | |
 |---|---|
@@ -605,6 +605,20 @@ Fields the portal adds beyond ECS live under `portal.*`, so they never collide w
 | `filebeat.example.yaml` | The same with Filebeat (use one of the two) |
 
 The shipper writes every line to `logs-portal-default`; the `portal-route` pipeline moves it to `logs-portal.audit-default`, `logs-portal.http-default` or `logs-portal.app-default` by `event.dataset`, so each dataset gets its own retention (ILM `portal-audit` 400 days, `portal-http` 30 days, `portal-app` 14 days; change them in `elasticsearch/ilm-*.json`) and its own access rights: grant auditors `read` on `logs-portal.audit-*` only. The shipper's role needs `create_doc` and `auto_configure` on `logs-portal*-*`. `portal.details` is mapped as `flattened`, so arbitrary detail keys never grow the mapping.
+
+No grok or other parsing rules are needed: the shipper only decodes the JSON line. The ingest pipeline is for routing (separate retention and access per dataset), not for parsing. Without `setup.sh`, the lines still land in `logs-portal-default` with the right ECS types (Elasticsearch's built-in `logs-*-*` template), but all three datasets share one stream and the default `logs` lifecycle, and `portal.details` is mapped dynamically.
+
+Elasticsearch 9.x:
+
+- `logs-*-*` data streams use `logsdb` index mode; the portal's templates work with it unchanged.
+- The failure store is on for these streams. A line that can't be indexed, for example because the `portal-route` pipeline is missing or `@timestamp` doesn't parse, is still acknowledged: `201`, with `"failure_store": "used"` in the response. The shipper sees no error. The line goes to the stream's failure store (`<stream>::failures`) and is missing from normal searches. 8.x rejects such a line instead.
+- `setup.sh` installs the pipeline before the templates, and Elasticsearch won't delete a pipeline an index still uses. After setting up, and after changing the templates, check that this returns no hits:
+
+  ```
+  GET logs-portal*::failures/_search
+  ```
+
+  Each hit's `error.message` says why the line was refused. Reading failure stores needs the `read_failure_store` index privilege. Values of the wrong type (e.g. a malformed IP) are not failures: `logs@settings` ignores them per field (`_ignored`) and keeps the line.
 
 Example queries (Kibana KQL on the `logs-portal.audit-*` data view):
 
