@@ -190,6 +190,7 @@ describe('audit', () => {
     const from = new URL(last.url, 'http://x').searchParams.get('from')!;
     expect(Date.now() - Date.parse(from)).toBeGreaterThan(23.9 * 3600_000);
     expect(Date.now() - Date.parse(from)).toBeLessThan(24.1 * 3600_000);
-    expect(screen.queryByLabelText(/^From/)).not.toBeInTheDocument();
+    // The date fields stay (disabled) so the form doesn't jump.
+    expect(screen.getByLabelText(/^From/)).toBeDisabled();
   });
 });

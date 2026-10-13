@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Boxes, Clock, LayoutGrid, List, Play, Plus, RotateCw, SearchX, Star, TriangleAlert, X } from 'lucide-react';
@@ -11,6 +11,8 @@ import {
   filtersToParams,
   hasFilters,
   parseFilters,
+  rememberLayout,
+  rememberedLayout,
   sortApis,
   specHealth,
   STATUS_FILTERS,
@@ -56,7 +58,24 @@ export default function CatalogPage() {
 
   // Each filter change is a history entry, so Back undoes it (typing in the search
   // box replaces its entry instead, see GlobalSearch).
+  // Entering the catalog without a view / sort in the URL: put the remembered ones
+  // there (replacing the entry, so Back still undoes later changes one by one).
+  const entered = useRef(false);
+  useEffect(() => {
+    if (entered.current) return;
+    entered.current = true;
+    if (params.has('view') && params.has('sort')) return;
+    const remembered = rememberedLayout();
+    const next = {
+      ...filters,
+      view: params.has('view') ? filters.view : remembered.view,
+      sort: params.has('sort') ? filters.sort : remembered.sort,
+    };
+    if (next.view !== filters.view || next.sort !== filters.sort) setParams(filtersToParams(next), { replace: true });
+  }, [params, filters, setParams]);
+
   function update(patch: Partial<CatalogFilters>) {
+    rememberLayout(patch);
     setParams(filtersToParams({ ...filters, ...patch }));
   }
   function toggle<K extends 'tags' | 'owners' | 'status'>(key: K, value: CatalogFilters[K][number], on: boolean) {

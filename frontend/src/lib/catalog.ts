@@ -1,6 +1,12 @@
 // Catalog filtering. The state lives in the URL (?q=&tag=&owner=&status=&sort=&view=)
-// so a filtered view is a shareable link and the back button works.
+// so a filtered view is a shareable link and the back button works. The view (cards /
+// list) and the sort order are also remembered in this browser: opening the catalog
+// without them in the URL adds the last choice (see CatalogPage).
 import type { ApiSummary } from './api';
+import { readPref, writePref } from './storage';
+
+const VIEW_KEY = 'portal.catalog.view';
+const SORT_KEY = 'portal.catalog.sort';
 
 /** A spec older than this is shown as stale. */
 export const STALE_DAYS = 7;
@@ -20,15 +26,31 @@ export type CatalogFilters = {
   view: View;
 };
 
+/** Remembers the view and sort order chosen last. */
+export function rememberLayout(patch: Partial<Pick<CatalogFilters, 'view' | 'sort'>>) {
+  if (patch.view) writePref(VIEW_KEY, patch.view);
+  if (patch.sort) writePref(SORT_KEY, patch.sort);
+}
+
+/** The view and sort chosen last in this browser (defaults when none). */
+export function rememberedLayout(): Pick<CatalogFilters, 'view' | 'sort'> {
+  const sort = readPref(SORT_KEY);
+  return {
+    view: readPref(VIEW_KEY) === 'list' ? 'list' : 'grid',
+    sort: (SORTS as readonly string[]).includes(sort ?? '') ? (sort as Sort) : 'name',
+  };
+}
+
 export function parseFilters(params: URLSearchParams): CatalogFilters {
   const sort = params.get('sort');
+  const view = params.get('view');
   return {
     q: params.get('q') ?? '',
     tags: params.getAll('tag'),
     owners: params.getAll('owner'),
     status: params.getAll('status').filter((s): s is StatusFilter => (STATUS_FILTERS as readonly string[]).includes(s)),
     sort: (SORTS as readonly string[]).includes(sort ?? '') ? (sort as Sort) : 'name',
-    view: params.get('view') === 'list' ? 'list' : 'grid',
+    view: view === 'list' ? 'list' : 'grid',
   };
 }
 

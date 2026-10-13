@@ -538,6 +538,8 @@ export const adminEn = {
     empty: 'No active sessions.',
   },
   audit: {
+    setByPeriod: 'Set by the period.',
+    untilNow: 'Until now.',
     period: 'Period',
     presets: {
       '1h': 'Last hour',

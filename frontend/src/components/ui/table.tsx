@@ -8,14 +8,12 @@ import {
   type ThHTMLAttributes,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Rows3, Rows4 } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { pressed } from '@/lib/shortcuts';
-import { readPref, writePref } from '@/lib/storage';
 import { Button } from './button';
 import { Checkbox } from './checkbox';
 import { AlertDialog } from './dialog';
-import { IconButton } from './icon-button';
 import { Select } from './select';
 import { useScrollFocus } from './use-scroll-focus';
 
@@ -86,12 +84,9 @@ export type Column<T> = {
   headerClassName?: string;
 };
 
-type Density = 'compact' | 'comfortable';
-const DENSITY_KEY = 'portal.tableDensity';
-
 /**
  * Client-side table: sorting (aria-sort), pagination, optional row selection,
- * density (remembered), sticky header and an empty state.
+ * sticky header and an empty state.
  */
 export function DataTable<T>({
   rows,
@@ -135,9 +130,6 @@ export function DataTable<T>({
   const [sort, setSort] = useState<{ id: string; dir: 'asc' | 'desc' } | null>(null);
   const [pageSize, setPageSize] = useState(pageSizes[0]);
   const [page, setPage] = useState(0);
-  const [density, setDensityState] = useState<Density>(() =>
-    readPref(DENSITY_KEY) === 'comfortable' ? 'comfortable' : 'compact',
-  );
 
   const sorted = useMemo(() => {
     if (!sort) return rows;
@@ -163,11 +155,6 @@ export function DataTable<T>({
     setSort((prev) => (prev?.id !== id ? { id, dir: 'asc' } : prev.dir === 'asc' ? { id, dir: 'desc' } : null));
   }
 
-  function setDensity(next: Density) {
-    writePref(DENSITY_KEY, next);
-    setDensityState(next);
-  }
-
   function toggleRow(key: string, on: boolean) {
     const next = new Set(selectedSet);
     if (on) next.add(key);
@@ -181,19 +168,11 @@ export function DataTable<T>({
     onSelectedChange?.(Array.from(next));
   }
 
-  const rowHeight = density === 'compact' ? 'h-9' : 'h-11';
+  const rowHeight = 'h-10';
 
   return (
     <div className={cn('min-w-0 space-y-2', className)}>
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{toolbar}</div>
-        <IconButton
-          size="icon-sm"
-          label={density === 'compact' ? t('table.comfortable') : t('table.compact')}
-          icon={density === 'compact' ? <Rows3 aria-hidden="true" /> : <Rows4 aria-hidden="true" />}
-          onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
-        />
-      </div>
+      {toolbar && <div className="flex min-w-0 flex-wrap items-center gap-2">{toolbar}</div>}
       <TableContainer className="max-h-[70vh]">
         <Table>
           <caption className="sr-only">{caption}</caption>
