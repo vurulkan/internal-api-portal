@@ -36,7 +36,9 @@ spec:
       containers:
         - name: portal
           image: ghcr.io/vurulkan/internal-api-portal:2.1.2
-          imagePullPolicy: IfNotPresent
+          # Always: every pod start checks the registry (only the manifest, when the
+          # image is already on the node), so a node never runs a stale copy of a tag.
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080
