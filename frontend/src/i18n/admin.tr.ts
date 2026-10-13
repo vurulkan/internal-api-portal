@@ -464,6 +464,8 @@ export const adminTr: Dictionary['admin'] = {
     emailRequired: 'Kullanıcının e-posta adresini girin.',
     submit: 'Kullanıcıyı ekle',
     created: '{{name}} eklendi; hesap ilk Microsoft girişinde bağlanır.',
+    createdBeside:
+      '{{name}} eklendi; ilk Microsoft girişinde bağlanır. {{other}} hesabından ayrı bir hesaptır, gruplarını ayrıca verin.',
   },
   ldap: {
     autoCreateTitle: 'İlk girişte hesap',

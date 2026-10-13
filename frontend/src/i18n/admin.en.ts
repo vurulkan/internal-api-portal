@@ -462,6 +462,8 @@ export const adminEn = {
     emailRequired: 'Enter the user’s e-mail address.',
     submit: 'Add user',
     created: '{{name}} added; the account is bound at the first Microsoft sign-in.',
+    createdBeside:
+      '{{name}} added; it is bound at the first Microsoft sign-in. It is separate from {{other}}, so give it its own groups.',
   },
   ldap: {
     autoCreateTitle: 'Accounts at first sign-in',

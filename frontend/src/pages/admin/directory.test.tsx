@@ -89,6 +89,26 @@ describe('New user', () => {
     });
   });
 
+  it('says when the Azure AD account sits beside an LDAP account of the same person', async () => {
+    mockFetch({
+      ...base,
+      'GET /api/auth/providers': { local: true, ldap: true, azureAd: true },
+      'POST /api/admin/users/azure': () => json({ id: 10, username: 'carol-2', sharesEmailWith: 'carol (ldap)' }, 201),
+    });
+    const user = userEvent.setup();
+    renderApp('/admin/users');
+    await user.click(await screen.findByRole('button', { name: 'More ways to add users' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Azure AD user…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add an Azure AD user' });
+    await user.type(within(dialog).getByLabelText(/^Email/), 'carol@corp.com');
+    await user.click(within(dialog).getByRole('button', { name: 'Add user' }));
+    expect(
+      await screen.findByText(
+        'carol-2 added; it is bound at the first Microsoft sign-in. It is separate from carol (ldap), so give it its own groups.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('?import=ldap (the link on Identity providers) opens the import', async () => {
     mockFetch({ ...base, 'GET /api/auth/providers': { local: true, ldap: true, azureAd: false } });
     renderApp('/admin/users?import=ldap');

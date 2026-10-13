@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"api-portal/backend/internal/models"
@@ -40,12 +41,25 @@ func (s *Store) GetUnboundAzureUser(ctx context.Context, email, username string)
 		if user, err := scanUser(row); err == nil {
 			return user, nil
 		}
+		// A pre-registration whose name was taken by another account got "<name>-2"
+		// (as a first sign-in would): accept that form when exactly one exists.
+		if user, err := s.uniqueUnboundAzure(ctx, `username LIKE ? ESCAPE '\'`, escapeLike(username)+"-%", func(u *models.User) bool {
+			return isNumericSuffix(strings.TrimPrefix(u.Username, username+"-"))
+		}); err == nil {
+			return user, nil
+		}
 	}
 	if email == "" {
 		return nil, sql.ErrNoRows
 	}
+	return s.uniqueUnboundAzure(ctx, `lower(email) = lower(?)`, email, nil)
+}
+
+// uniqueUnboundAzure returns the one never-bound Azure AD account matching where
+// (and keep, if given); none or several is sql.ErrNoRows.
+func (s *Store) uniqueUnboundAzure(ctx context.Context, where string, arg any, keep func(*models.User) bool) (*models.User, error) {
 	rows, err := s.conn.QueryContext(ctx, `SELECT `+userColumns+` FROM users
-		WHERE auth_source = 'azuread' AND external_id = '' AND lower(email) = lower(?) LIMIT 2`, email)
+		WHERE auth_source = 'azuread' AND external_id = '' AND `+where+` LIMIT 20`, arg)
 	if err != nil {
 		return nil, err
 	}
@@ -56,12 +70,32 @@ func (s *Store) GetUnboundAzureUser(ctx context.Context, email, username string)
 		if err != nil {
 			return nil, err
 		}
-		found = append(found, user)
+		if keep == nil || keep(user) {
+			found = append(found, user)
+		}
 	}
 	if len(found) != 1 {
 		return nil, sql.ErrNoRows
 	}
 	return found[0], nil
+}
+
+func isNumericSuffix(v string) bool {
+	if v == "" {
+		return false
+	}
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// GetAzureUserByEmail finds an Azure AD account (bound or not) with this address.
+func (s *Store) GetAzureUserByEmail(ctx context.Context, email string) (*models.User, error) {
+	row := s.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE auth_source = 'azuread' AND lower(email) = lower(?) LIMIT 1`, email)
+	return scanUser(row)
 }
 
 func (s *Store) SetUserExternalID(ctx context.Context, userID int, externalID string) error {

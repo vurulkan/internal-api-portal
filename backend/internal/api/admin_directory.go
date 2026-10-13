@@ -163,18 +163,30 @@ func (s *Server) handlePreregisterAzureUser(w http.ResponseWriter, r *http.Reque
 		writeError(w, r, http.StatusBadRequest, "Microsoft sign-in is not enabled")
 		return
 	}
-	username := sanitizeUsername(firstNonBlank(payload.UPN, payload.Email))
-	if username == "" {
+	base := sanitizeUsername(firstNonBlank(payload.UPN, payload.Email))
+	if base == "" {
 		writeError(w, r, http.StatusBadRequest, "no usable sign-in name")
 		return
 	}
-	if _, err := s.store.GetUserByUsername(r.Context(), username); err == nil {
-		writeError(w, r, http.StatusConflict, "an account named "+strconv.Quote(username)+" already exists; give the user's sign-in name (UPN) if it differs")
+	// One person may have an LDAP or local account and an Azure AD one: they are
+	// separate accounts. Only another Azure AD account is a duplicate.
+	if existing, err := s.store.GetAzureUserByEmail(r.Context(), payload.Email); err == nil {
+		writeError(w, r, http.StatusConflict, "an Azure AD account with this e-mail already exists: "+existing.Username)
 		return
 	}
-	if existing, err := s.store.GetUserByEmail(r.Context(), payload.Email); err == nil {
-		writeError(w, r, http.StatusConflict, "an account with this e-mail already exists ("+existing.Username+", "+existing.AuthSource+")")
-		return
+	username := base
+	if existing, err := s.store.GetUserByUsername(r.Context(), base); err == nil {
+		if existing.AuthSource == "azuread" {
+			writeError(w, r, http.StatusConflict, "an Azure AD account named "+strconv.Quote(base)+" already exists")
+			return
+		}
+		// Taken by an LDAP or local account: the next free "<name>-N", as a first
+		// Microsoft sign-in would choose (and bind to, see GetUnboundAzureUser).
+		username = uniqueUsername(r.Context(), s.store, base)
+	}
+	sharesEmail := ""
+	if other, err := s.store.GetUserByEmail(r.Context(), payload.Email); err == nil && other.AuthSource != "azuread" {
+		sharesEmail = other.Username + " (" + other.AuthSource + ")"
 	}
 	for _, id := range payload.GroupIDs {
 		if _, err := s.store.GetGroup(r.Context(), id); err != nil {
@@ -200,8 +212,8 @@ func (s *Server) handlePreregisterAzureUser(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	auditTarget(r, "user", strconv.Itoa(id), username)
-	auditDetails(r, map[string]any{"email": payload.Email, "upnGiven": payload.UPN != "", "groupIds": payload.GroupIDs})
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "username": username})
+	auditDetails(r, map[string]any{"email": payload.Email, "upnGiven": payload.UPN != "", "groupIds": payload.GroupIDs, "sharesEmailWith": sharesEmail})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "username": username, "sharesEmailWith": sharesEmail})
 }
 
 func uniqueTrimmed(values []string) []string {
