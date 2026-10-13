@@ -110,6 +110,10 @@ export const adminEn = {
     system: 'The name and logo shown in the portal.',
   },
   users: {
+    newFrom: 'More ways to add users',
+    newLocal: 'Local user…',
+    newLdap: 'From LDAP…',
+    newAzure: 'Azure AD user…',
     tabsLabel: 'User details',
     tabs: {
       profile: 'Profile',
@@ -438,7 +442,40 @@ export const adminEn = {
     deleteTitle: 'Delete {{name}}?',
     deleteBody: 'Its permissions and access grants are removed too. Audit entries stay.',
   },
+  ldapImport: {
+    title: 'Import from LDAP',
+    body: 'Find people in the directory and add them before their first sign-in. Each account takes its name and e-mail from the directory.',
+    groups: 'Add them to groups',
+    groupsHelper: 'Optional. Groups whose permissions you don’t hold yourself are refused.',
+    importedToGroups_one: '{{count}} user imported; {{added}} group memberships added.',
+    importedToGroups_other: '{{count}} users imported; {{added}} group memberships added.',
+    notImported: 'Not everyone was imported',
+    skipped: 'Already a local or Azure AD account (not converted): {{names}}.',
+    missing: 'Not found in the directory: {{names}}.',
+  },
+  azurePre: {
+    title: 'Add an Azure AD user',
+    body: 'The account waits for the person’s first Microsoft sign-in, so you can put it in groups now. Without this, accounts are created at the first sign-in, with no groups.',
+    upn: 'Sign-in name (UPN)',
+    upnHelper:
+      'If it differs from the e-mail, e.g. jdoe@corp.onmicrosoft.com. The first sign-in is matched by this name, else by the e-mail.',
+    emailRequired: 'Enter the user’s e-mail address.',
+    submit: 'Add user',
+    created: '{{name}} added; the account is bound at the first Microsoft sign-in.',
+  },
   ldap: {
+    autoCreateTitle: 'Accounts at first sign-in',
+    autoCreateBody: 'Instead of importing everyone first, directory users can get an account when they first sign in.',
+    autoCreate: 'Create an account at the first sign-in',
+    autoCreateHelper:
+      'Only after the directory accepts the password. The account has no groups and no permissions until you give them, except through groups mapped to directory groups. An existing local or Azure AD account with the same name is never taken over.',
+    autoCreateGroups: 'Only members of these directory groups',
+    autoCreateGroupsHelper:
+      'Group DNs, one per line, matched against the user’s memberOf. Empty: every user the user filter finds.',
+    autoCreateEveryone:
+      'Every directory user the user filter finds can get an account (without permissions). Add groups above to limit it.',
+    importMoved: 'Importing directory users is in Users → New user → From LDAP, with the groups to put them in.',
+    importOpen: 'Import users',
     alreadyImported: 'Already imported',
     otherAccount: 'Exists as {{source}}: skipped',
     connection: 'Connection',

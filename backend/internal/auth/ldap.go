@@ -15,33 +15,80 @@ import (
 )
 
 // LDAPAuthenticate binds as the user and returns the DNs of the groups the entry
-// lists in memberOf (used to sync mapped portal groups).
+// belongs to (memberOf).
 func LDAPAuthenticate(cfg models.LDAPConfig, username, password string) ([]string, error) {
+	_, groups, err := LDAPAuthenticateUser(cfg, username, password)
+	return groups, err
+}
+
+// LDAPAuthenticateUser binds as the user and returns the directory entry (username
+// as the directory spells it, display name, email, DN) and its groups.
+func LDAPAuthenticateUser(cfg models.LDAPConfig, username, password string) (models.LDAPUser, []string, error) {
 	// An empty password would be an unauthenticated bind, which many directories
 	// accept as "success". go-ldap refuses it too; this doesn't depend on that.
 	if password == "" {
-		return nil, errors.New("empty password")
+		return models.LDAPUser{}, nil, errors.New("empty password")
 	}
 	conn, err := dialLDAP(cfg)
 	if err != nil {
-		return nil, err
+		return models.LDAPUser{}, nil, err
 	}
 	defer conn.Close()
 
 	if cfg.BindDN != "" {
 		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
-			return nil, err
+			return models.LDAPUser{}, nil, err
 		}
 	}
 
 	userDN, entry, err := findLDAPUser(conn, cfg, username)
 	if err != nil {
-		return nil, err
+		return models.LDAPUser{}, nil, err
 	}
 	if err := conn.Bind(userDN, password); err != nil {
-		return nil, err
+		return models.LDAPUser{}, nil, err
 	}
-	return entry.GetAttributeValues("memberOf"), nil
+	return entryUser(cfg, entry), entry.GetAttributeValues("memberOf"), nil
+}
+
+// LookupLDAPUsers finds each username in the directory (with the service account)
+// and returns the entries as the directory has them; missing lists the names that
+// don't resolve to exactly one entry. Import uses it, so an account can only be
+// created for someone who exists in the directory.
+func LookupLDAPUsers(cfg models.LDAPConfig, usernames []string) (found []models.LDAPUser, missing []string, err error) {
+	conn, err := dialLDAP(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close()
+	if cfg.BindDN != "" {
+		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, name := range usernames {
+		_, entry, err := findLDAPUser(conn, cfg, name)
+		if err != nil {
+			missing = append(missing, name)
+			continue
+		}
+		u := entryUser(cfg, entry)
+		if u.Username == "" {
+			missing = append(missing, name)
+			continue
+		}
+		found = append(found, u)
+	}
+	return found, missing, nil
+}
+
+func entryUser(cfg models.LDAPConfig, entry *ldap.Entry) models.LDAPUser {
+	return models.LDAPUser{
+		Username:    firstValue(entry, cfg.UsernameAttribute, "uid", "sAMAccountName", "cn"),
+		DisplayName: firstValue(entry, cfg.DisplayNameAttr, "displayName", "cn"),
+		Email:       firstValue(entry, cfg.EmailAttr, "mail"),
+		DN:          entry.DN,
+	}
 }
 
 func TestLDAPConnection(cfg models.LDAPConfig) error {
@@ -221,7 +268,8 @@ func findLDAPUser(conn *ldap.Conn, cfg models.LDAPConfig, username string) (stri
 	var found *ldap.Entry
 	for _, baseDN := range userBaseDNs(cfg) {
 		// Size limit 2: enough to detect an ambiguous filter without listing the directory.
-		req := ldap.NewSearchRequest(baseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false, filter, []string{"dn", attr, "memberOf"}, nil)
+		attrs := nonEmpty("dn", attr, "memberOf", cfg.DisplayNameAttr, cfg.EmailAttr, "uid", "sAMAccountName", "cn", "displayName", "mail")
+		req := ldap.NewSearchRequest(baseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false, filter, attrs, nil)
 		result, err := conn.Search(req)
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded) {
 			return "", nil, ErrLDAPAmbiguousUser
@@ -308,4 +356,18 @@ func LDAPTestLogin(cfg models.LDAPConfig, username, password string) []LDAPStep 
 	}
 	add("user bind", conn.Bind(userDN, password), "password accepted")
 	return steps
+}
+
+// nonEmpty drops blank and repeated attribute names (an unset attribute setting
+// must not reach the search request).
+func nonEmpty(values ...string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" && !seen[strings.ToLower(v)] {
+			seen[strings.ToLower(v)] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }

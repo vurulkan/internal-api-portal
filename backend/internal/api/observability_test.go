@@ -151,27 +151,6 @@ func TestOversizedJSONBodyIs413(t *testing.T) {
 	}
 }
 
-func TestLDAPImportDoesNotConvertLocalAccounts(t *testing.T) {
-	e := newEnv(t)
-	e.user("root", true)
-	token := e.login("root")
-	out := e.expect(http.MethodPost, "/api/admin/ldap/import", token, []models.LDAPUser{{Username: "root"}, {Username: "new-ldap-user"}}, http.StatusOK)
-	var resp struct {
-		Imported int
-		Skipped  []string
-	}
-	_ = json.Unmarshal([]byte(out), &resp)
-	if resp.Imported != 1 || len(resp.Skipped) != 1 || resp.Skipped[0] != "root" {
-		t.Fatalf("import result = %+v", resp)
-	}
-	root, _ := e.store.GetUserByUsername(context.Background(), "root")
-	if root.AuthSource != "local" {
-		t.Fatalf("local admin was converted to %q", root.AuthSource)
-	}
-	// The local admin can still sign in with the local password.
-	e.login("root")
-}
-
 func TestDeletingAPIRemovesItsScopedPermissions(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

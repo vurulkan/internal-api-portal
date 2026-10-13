@@ -65,6 +65,11 @@ type LDAPConfig struct {
 	DisplayNameAttr    string   `json:"displayNameAttribute"`
 	EmailAttr          string   `json:"emailAttribute"`
 	PasswordConfigured bool     `json:"passwordConfigured"`
+	// AutoCreate creates an account at a directory user's first successful sign-in
+	// (no groups, no permissions until given). AutoCreateGroups, when set, limits it
+	// to members of these group DNs.
+	AutoCreate       bool     `json:"autoCreate"`
+	AutoCreateGroups []string `json:"autoCreateGroups"`
 }
 
 type AzureADConfig struct {

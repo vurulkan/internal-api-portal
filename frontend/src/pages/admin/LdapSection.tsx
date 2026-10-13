@@ -1,23 +1,22 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { CircleCheck, CircleX, PlugZap, Search, UserPlus } from 'lucide-react';
-import { api, type LdapConfig, type LdapLoginStep, type LdapUser } from '@/lib/api';
+import { CircleCheck, CircleX, PlugZap, UserPlus } from 'lucide-react';
+import { api, type LdapConfig, type LdapLoginStep } from '@/lib/api';
 import { queryKeys } from '@/lib/query';
 import { useAdminSections } from '@/hooks/queries';
 import {
   Alert,
-  Badge,
   Button,
   Card,
   CardContent,
   CardFooter,
   CardHeader,
   Checkbox,
-  DataTable,
-  EmptyState,
   ErrorState,
   Field,
+  Fieldset,
   Input,
   LoadingRegion,
   notifyError,
@@ -26,7 +25,6 @@ import {
   Skeleton,
   Switch,
   Textarea,
-  type Column,
 } from '@/components/ui';
 import { splitList, useAdminMutation } from './common';
 
@@ -52,7 +50,7 @@ export default function LdapSection() {
         initial={{ ...config.data, bindPassword: '', userBaseDns: config.data.userBaseDns ?? [] }}
       />
       <LoginTest />
-      <UserImport />
+      <ImportMoved />
     </div>
   );
 }
@@ -207,6 +205,33 @@ function ConnectionCard({ initial }: { initial: LdapConfig }) {
             />
           </div>
           {insecure && <Alert variant="warning">{t('admin.ldap.skipVerifyWarning')}</Alert>}
+          <Fieldset legend={t('admin.ldap.autoCreateTitle')} description={t('admin.ldap.autoCreateBody')}>
+            <Switch
+              label={t('admin.ldap.autoCreate')}
+              description={t('admin.ldap.autoCreateHelper')}
+              checked={!!form.autoCreate}
+              onCheckedChange={(v) => set('autoCreate', v)}
+            />
+            {form.autoCreate && (
+              <Field
+                label={t('admin.ldap.autoCreateGroups')}
+                id="ldap-auto-groups"
+                optional
+                helper={t('admin.ldap.autoCreateGroupsHelper')}
+              >
+                <Textarea
+                  rows={2}
+                  className="font-mono text-[13px]"
+                  placeholder="CN=API Users,OU=Groups,DC=corp,DC=example"
+                  value={(form.autoCreateGroups ?? []).join('\n')}
+                  onChange={(e) => set('autoCreateGroups', e.target.value.split('\n'))}
+                />
+              </Field>
+            )}
+            {form.autoCreate && (form.autoCreateGroups ?? []).filter((g) => g.trim()).length === 0 && (
+              <Alert variant="warning">{t('admin.ldap.autoCreateEveryone')}</Alert>
+            )}
+          </Fieldset>
         </CardContent>
         <CardFooter>
           <Button onClick={() => test.mutate(form)} loading={test.isPending}>
@@ -289,119 +314,23 @@ function LoginTest() {
   );
 }
 
-function UserImport() {
+/** Importing moved to Users → New user → From LDAP (one place for creating accounts). */
+function ImportMoved() {
   const { t } = useTranslation();
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<LdapUser[] | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
-  const search = useMutation({
-    mutationFn: () => api.searchLdap(query.trim()),
-    onSuccess: (users) => {
-      setResults(users ?? []);
-      setSelected([]);
-    },
-    onError: (error) => notifyError(error, t('admin.ldap.searchFailed')),
-  });
-  // Accounts already in the portal are marked (an LDAP one is refreshed, others are skipped).
   const canSeeUsers = useAdminSections().includes('users');
-  const portalUsers = useQuery({
-    queryKey: queryKeys.admin.users,
-    queryFn: async () => (await api.users()) ?? [],
-    enabled: canSeeUsers && results !== null,
-  });
-  const existing = new Map((portalUsers.data ?? []).map((u) => [u.username, u.authSource]));
-  const importUsers = useAdminMutation({
-    mutationFn: (users: LdapUser[]) => api.importLdap(users),
-    success: (r) =>
-      r.skipped?.length
-        ? t('admin.ldap.importedSkipped', { count: r.imported, skipped: r.skipped.join(', ') })
-        : t('admin.ldap.imported', { count: r.imported }),
-    invalidate: [queryKeys.admin.users],
-    onSuccess: () => setSelected([]),
-  });
-
-  const columns: Column<LdapUser>[] = [
-    {
-      id: 'username',
-      header: t('admin.users.username'),
-      sortValue: (u) => u.username,
-      cell: (u) => (
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span className="font-medium">{u.username}</span>
-          {existing.has(u.username) && (
-            <Badge variant={existing.get(u.username) === 'ldap' ? 'outline' : 'warning'}>
-              {existing.get(u.username) === 'ldap'
-                ? t('admin.ldap.alreadyImported')
-                : t('admin.ldap.otherAccount', {
-                    source: t(`authSource.${existing.get(u.username)}`, { defaultValue: existing.get(u.username) }),
-                  })}
-            </Badge>
-          )}
-        </span>
-      ),
-    },
-    {
-      id: 'name',
-      header: t('admin.users.displayName'),
-      sortValue: (u) => u.displayName,
-      cell: (u) => u.displayName || '–',
-    },
-    { id: 'email', header: t('admin.users.email'), cell: (u) => u.email || '–', className: 'text-muted-foreground' },
-    {
-      id: 'dn',
-      header: 'DN',
-      cell: (u) => <span className="font-mono text-xs break-token">{u.dn}</span>,
-      className: 'max-w-sm text-muted-foreground',
-    },
-  ];
-
   return (
     <Card>
-      <CardHeader title={t('admin.ldap.import')} description={t('admin.ldap.importBody')} />
-      <CardContent className="space-y-3">
-        <form
-          role="search"
-          aria-label={t('admin.ldap.import')}
-          className="flex flex-wrap items-end gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            search.mutate();
-          }}
-        >
-          <Field label={t('admin.ldap.searchQuery')} id="ldap-query" className="min-w-56 flex-1">
-            <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} />
-          </Field>
-          <Button type="submit" loading={search.isPending}>
-            <Search aria-hidden="true" />
-            {t('admin.ldap.search')}
+      <CardHeader title={t('admin.ldap.import')} description={t('admin.ldap.importMoved')} />
+      {canSeeUsers && (
+        <CardFooter>
+          <Button asChild>
+            <Link to="/admin/users?import=ldap">
+              <UserPlus aria-hidden="true" />
+              {t('admin.ldap.importOpen')}
+            </Link>
           </Button>
-        </form>
-        {results !== null && (
-          <DataTable
-            caption={t('admin.ldap.results')}
-            rows={results}
-            columns={columns}
-            rowKey={(u) => u.username}
-            rowLabel={(u) => u.username}
-            selectable
-            selected={selected}
-            onSelectedChange={setSelected}
-            toolbar={
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={selected.length === 0}
-                loading={importUsers.isPending}
-                onClick={() => importUsers.mutate(results.filter((u) => selected.includes(u.username)))}
-              >
-                <UserPlus aria-hidden="true" />
-                {t('admin.ldap.importSelected', { count: selected.length })}
-              </Button>
-            }
-            empty={<EmptyState title={t('admin.ldap.noResults')} description={t('admin.ldap.noResultsBody')} />}
-          />
-        )}
-      </CardContent>
+        </CardFooter>
+      )}
     </Card>
   );
 }

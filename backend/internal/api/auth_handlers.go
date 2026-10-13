@@ -35,7 +35,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusTooManyRequests, "too many failed sign-in attempts; try again in a few minutes")
 		return
 	}
-	user, reason, directoryGroups := s.authenticate(r.Context(), payload.Username, payload.Password)
+	user, reason, directoryGroups, created := s.authenticate(r.Context(), payload.Username, payload.Password)
 	if user == nil {
 		s.metrics.Logins.Inc("password", "failed")
 		// auth.login.denied: wrong credentials, unknown or disabled account.
@@ -47,6 +47,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditActor(r, user.Username, user.AuthSource)
+	if created {
+		// Created now, at the first LDAP sign-in (auto-create is on).
+		auditDetail(r, "accountCreated", true)
+	}
 	if user.AuthSource == "ldap" {
 		s.syncDirectoryGroups(r, user, "ldap", directoryGroups)
 	}
@@ -62,40 +66,105 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // authenticate checks a username/password login. On failure it returns a nil user and
 // the reason for the audit log (never shown to the caller). For LDAP users it also
-// returns the directory groups (memberOf).
-func (s *Server) authenticate(ctx context.Context, username, password string) (*models.User, string, []string) {
+// returns the directory groups (memberOf); created is true when the account was made
+// just now (LDAP auto-create).
+func (s *Server) authenticate(ctx context.Context, username, password string) (*models.User, string, []string, bool) {
 	user, err := s.store.GetUserByUsername(ctx, username)
 	if err != nil {
+		if found, reason, groups, created, tried := s.autoCreateLDAPUser(ctx, username, password); tried {
+			return found, reason, groups, created
+		}
 		_ = auth.ComparePassword(s.dummyHash, password)
-		return nil, "user not found", nil
+		return nil, "user not found", nil, false
 	}
 	if !user.IsActive {
 		_ = auth.ComparePassword(s.dummyHash, password)
-		return nil, "user inactive", nil
+		return nil, "user inactive", nil, false
 	}
 	switch user.AuthSource {
 	case "ldap":
 		if !s.config.Features.LDAP {
-			return nil, "ldap sign-in is turned off (FEATURE_LDAP=false)", nil
+			return nil, "ldap sign-in is turned off (FEATURE_LDAP=false)", nil, false
 		}
 		cfg, err := s.store.GetLDAPConfig(ctx)
 		if err != nil {
-			return nil, "ldap config unavailable", nil
+			return nil, "ldap config unavailable", nil, false
 		}
 		groups, err := auth.LDAPAuthenticate(*cfg, username, password)
 		if err != nil {
-			return nil, "ldap auth failed: " + err.Error(), nil
+			return nil, "ldap auth failed: " + err.Error(), nil, false
 		}
-		return user, "", groups
+		return user, "", groups, false
 	case "azuread":
 		_ = auth.ComparePassword(s.dummyHash, password)
-		return nil, "azure ad account; password login not allowed", nil
+		return nil, "azure ad account; password login not allowed", nil, false
 	default:
 		if err := auth.ComparePassword(user.PasswordHash, password); err != nil {
-			return nil, "local auth failed", nil
+			return nil, "local auth failed", nil, false
 		}
 	}
-	return user, "", nil
+	return user, "", nil, false
+}
+
+// autoCreateLDAPUser handles a sign-in with an unknown username when LDAP has
+// "create accounts at first sign-in" on: the directory checks the password, the
+// entry must be in one of the allowed groups (when any are set), and the account is
+// created with the directory's spelling of the username, no groups and no rights.
+// tried is false when auto-create doesn't apply (the caller treats the user as unknown).
+func (s *Server) autoCreateLDAPUser(ctx context.Context, username, password string) (user *models.User, reason string, groups []string, created, tried bool) {
+	if !s.config.Features.LDAP {
+		return nil, "", nil, false, false
+	}
+	cfg, err := s.store.GetLDAPConfig(ctx)
+	if err != nil || !cfg.Enabled || !cfg.AutoCreate {
+		return nil, "", nil, false, false
+	}
+	entry, memberOf, err := auth.LDAPAuthenticateUser(*cfg, username, password)
+	if err != nil {
+		return nil, "ldap auth failed (auto-create): " + err.Error(), nil, false, true
+	}
+	if len(cfg.AutoCreateGroups) > 0 && !memberOfAny(memberOf, cfg.AutoCreateGroups) {
+		return nil, "ldap user is not in an auto-create group", nil, false, true
+	}
+	name := strings.TrimSpace(entry.Username)
+	if name == "" {
+		name = strings.TrimSpace(username)
+	}
+	// The directory's spelling may differ from what was typed ("Bob" / "bob"): an
+	// existing LDAP account is used, a local or Azure AD one is never taken over.
+	if existing, err := s.store.GetUserByUsername(ctx, name); err == nil {
+		if existing.AuthSource != "ldap" {
+			return nil, "username belongs to a " + existing.AuthSource + " account; not auto-created", nil, false, true
+		}
+		if !existing.IsActive {
+			return nil, "user inactive", nil, false, true
+		}
+		return existing, "", memberOf, false, true
+	}
+	id, err := s.store.CreateUser(ctx, models.User{
+		Username: name, DisplayName: entry.DisplayName, Email: entry.Email,
+		AuthSource: "ldap", IsActive: true,
+	})
+	if err != nil {
+		return nil, "auto-create failed", nil, false, true
+	}
+	account, err := s.store.GetUserByID(ctx, id)
+	if err != nil {
+		return nil, "auto-create failed", nil, false, true
+	}
+	slog.InfoContext(ctx, "user.auto_created", "user", account.Username, "source", "ldap")
+	return account, "", memberOf, true, true
+}
+
+func memberOfAny(memberOf, allowed []string) bool {
+	for _, m := range memberOf {
+		for _, a := range allowed {
+			if strings.EqualFold(strings.TrimSpace(m), strings.TrimSpace(a)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // syncDirectoryGroups mirrors the user's directory groups into the portal groups

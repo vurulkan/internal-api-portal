@@ -83,26 +83,6 @@ func (s *Server) handleSearchLDAP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, users)
 }
 
-func (s *Server) handleImportLDAP(w http.ResponseWriter, r *http.Request) {
-	var payload []models.LDAPUser
-	if !decodeJSON(w, r, &payload) {
-		return
-	}
-	skipped, err := s.store.ImportLDAPUsers(r.Context(), payload)
-	if err != nil {
-		writeError(w, r, http.StatusBadRequest, "failed to import users")
-		return
-	}
-	if skipped == nil {
-		skipped = []string{}
-	}
-	auditTarget(r, "ldap", "", "")
-	auditDetails(r, map[string]any{"requested": len(payload), "skipped": skipped})
-	// skipped lists usernames that already belong to a local or Azure AD account;
-	// those accounts are not converted to LDAP.
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "imported": len(payload) - len(skipped), "skipped": skipped})
-}
-
 func (s *Server) handleGetAzureAD(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetAzureADConfig(r.Context())
 	if err != nil {

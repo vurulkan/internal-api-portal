@@ -178,11 +178,11 @@ When to use which:
 | `api:<id>:view` / `:invoke` | read / write | The same for one API |
 | `api:<id>:manage` | write | Edit and refresh one API, manage who may view / call it (not delete it, not change its owner group) |
 | `api:<id>:delete` | destructive | Delete one API |
-| `user.view` / `user.manage` | read / write | See users; create / edit / deactivate / delete non-administrators, reset passwords |
+| `user.view` / `user.manage` | read / write | See users; create / edit / deactivate / delete non-administrators, reset passwords, import LDAP users, pre-register Azure AD users |
 | `group.manage` | write | Groups, their roles and directory mappings |
 | `role.manage` | write | Roles and their permissions |
 | `session.manage` | destructive | See and end anyone's sessions |
-| `idp.manage` | write | LDAP and Azure AD configuration, LDAP import. **Security-sensitive:** whoever configures the identity providers can make the portal accept any LDAP / Azure AD sign-in; give it to administrators only |
+| `idp.manage` | write | LDAP and Azure AD configuration (and LDAP import). **Security-sensitive:** whoever configures the identity providers can make the portal accept any LDAP / Azure AD sign-in; give it to administrators only |
 | `settings.manage` | write | Session timeouts, branding |
 | `audit.view` / `audit.export` | read | Read the audit log / export it as CSV |
 
@@ -226,7 +226,7 @@ A portal group can be mapped to an Azure AD group (object id) or an LDAP group (
 
 ### LDAP Users
 
-- LDAP users are imported into the local catalog; sign-in is an LDAP bind.
+- LDAP users get an account by import (Users → New user → From LDAP…) or, with auto-create on, at their first sign-in; sign-in is an LDAP bind.
 - Username, display name and e-mail come from the directory and can't be edited in the portal; the password is changed in the directory.
 - **Admin → Identity providers → LDAP → Test a sign-in** runs the login steps (connect, service bind, user search with the effective filter, user bind) for a username / password and shows where it fails, without changing anything.
 
@@ -368,7 +368,7 @@ Published to GHCR by CI for every release tag, for `linux/amd64` and `linux/arm6
 
 | Tag | Points to |
 |---|---|
-| `X.Y.Z` (e.g. `2.1.4`) | that release |
+| `X.Y.Z` (e.g. `2.2.0`) | that release |
 | `latest` | the newest release |
 
 Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requests are built, not published. CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access*).
@@ -376,7 +376,7 @@ Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requ
 Each image carries an SBOM and SLSA provenance (inside the image index) and is signed with cosign (keyless, GitHub OIDC); the signature sits next to the image as a `sha256-<digest>.sig` tag. Verify before deploying:
 
 ```bash
-cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.4 \
+cosign verify ghcr.io/vurulkan/internal-api-portal:2.2.0 \
   --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -453,6 +453,15 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
+
+### Upgrading to 2.2.0
+
+- **Migration 12** adds the LDAP *create an account at the first sign-in* setting (off).
+- **Importing LDAP users moved** to `Users → New user ▾ → From LDAP…`, with groups; the LDAP page links there. It now needs `user.manage` *or* `idp.manage` (before: `idp.manage` only).
+- **Import checks every name against the directory.** Display name and e-mail come from there; names the directory doesn't know are refused. Scripts that posted made-up users get them reported as `missing`.
+- **Azure AD pre-registration** under `Users → New user ▾ → Azure AD user…`.
+- **Binding a first Microsoft sign-in to an existing Azure AD account:** sign-in name first, then a *unique* e-mail. Before, the oldest account matching either was taken.
+- New audit action: `user.azure_preregister`.
 
 ### Upgrading to 2.1.4
 
@@ -556,7 +565,7 @@ A try-it call produces two lines with the same `http.request.id`:
 
 ```json
 {"@timestamp":"2026-10-12T06:58:25.354331203Z","log":{"level":"info"},"message":"root api.invoke success api Payments API",
- "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.4","environment":"prod","type":"api-portal"},
+ "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.2.0","environment":"prod","type":"api-portal"},
  "event":{"dataset":"portal.audit","kind":"event","category":["web"],"type":["access"],"action":"api.invoke","outcome":"success","duration":150000000},
  "user":{"name":"root","domain":"local"},"source":{"ip":"10.244.3.17"},"user_agent":{"original":"Mozilla/5.0 …"},
  "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"response":{"status_code":201}},"url":{"path":"/v1/charges"},
@@ -910,6 +919,7 @@ The 1.x addresses (`/admin/ldap`, `/admin/azure-ad`, `/admin/session-settings`, 
 
 - **Overview:** active APIs and failing specs, active users and sign-ins in the last 24 hours, active sessions, try-it calls and denied requests in the last 24 hours. *Needs attention* lists failing, missing or stale specs, an encryption key kept in the database and LDAP with TLS verification off, each with a link to where it is fixed. Every block appears only for the matching permission, and spec error texts only for the API's managers. `GET /api/admin/overview`.
 - **Users:**
+  - *New user* adds a local account. When LDAP or Microsoft sign-in is enabled, its menu also offers *From LDAP…* (search the directory, pick people, choose groups, import) and *Azure AD user…* (pre-register by e-mail). See LDAP Setup and Azure AD Behavior.
   - The table shows source, groups, **last sign-in** and status. Filters (search, source, status, group) are in the URL.
   - The active switch in the row applies at once and flips back if the server refuses.
   - Bulk actions on the selection: activate, deactivate, add to a group, and export as CSV. Without a selection, the filtered list can be exported.
@@ -939,12 +949,25 @@ Admin flow:
 
 1. Open `Admin → Identity providers → LDAP`
 2. Configure host, port, bind DN, bind password, search bases, filter, and attribute mappings
-3. Test the connection
-4. Save
-5. Search LDAP users
-6. Import selected users into the local catalog
+3. Test the connection (and *Test a sign-in*), then Save
+4. Give directory users accounts, in one of two ways:
+   - **Import** them: `Admin → Users → New user ▾ → From LDAP…` (or *Import users* on the LDAP page). Search, select, optionally choose groups, import.
+   - Or turn on **Create an account at the first sign-in** (below).
 
-Importing never converts an existing local or Azure AD account: a username that already belongs to one is skipped and reported (before 1.2.0 the import turned it into an LDAP account, so the directory account of that name could sign in as it).
+A directory user without a portal account can't sign in (unless auto-create is on).
+
+**Import**
+- Needs `user.manage` (or `idp.manage`). The LDAP *settings* stay with `idp.manage`.
+- The server looks every selected name up in the directory again, with the service account. The account gets the directory's spelling of the username, its display name and e-mail; a name the directory doesn't know is refused ("Not found in the directory"). So nobody can prepare an account for a name that isn't in the directory yet.
+- Groups chosen in the import are a grant: a delegated manager can only add people to groups whose permissions they hold, and only administrators change administrators' groups.
+- Importing never converts an existing local or Azure AD account: a username that already belongs to one is skipped and reported. Before 1.2.0 the import turned it into an LDAP account, so the directory account of that name could sign in as it.
+- `POST /api/admin/ldap/import` takes `{"usernames": [...], "groupIds": [...]}`. The 2.1 form, an array of `{username, …}`, is still accepted; anything in it besides the username is ignored.
+
+**Create an account at the first sign-in** (`autoCreate`, off by default)
+- An unknown username is checked against the directory (user filter, then a bind with the typed password). Only then is an LDAP account created, with the directory's username, display name and e-mail.
+- The new account has no groups and no permissions: an empty catalog until someone puts it in groups. The exception is groups mapped to directory groups (Admin → Groups → Directory mapping), which it joins at that sign-in as usual.
+- *Only members of these directory groups* (group DNs, one per line, matched against `memberOf`) limits who gets an account. Empty means every user the user filter finds; the settings page warns about it.
+- An existing local or Azure AD account with the directory's username is never taken over; that sign-in is refused. The audit entry of the sign-in that created an account has `accountCreated: true`.
 
 ### Common Active Directory Starting Values
 
@@ -1013,7 +1036,12 @@ This first phase does not require Microsoft Graph permissions.
 ### Azure AD Behavior
 
 - The login page shows `Sign in with Microsoft` only when Azure AD is enabled.
-- Users are matched on their Azure identity (tenant id + object id) only, never to local or LDAP accounts. Azure AD accounts created before 1.1.0 are bound once, on their next sign-in, by e-mail (or username).
+- Users are matched on their Azure identity (tenant id + object id) only, never to local or LDAP accounts.
+- **Pre-registration** (`Admin → Users → New user ▾ → Azure AD user…`, `user.manage`): creates an Azure AD account before the person's first Microsoft sign-in, so it can be put in groups now (a grant, as above). Give the e-mail and, if it differs, the sign-in name (UPN). `POST /api/admin/users/azure` takes `{email, upn, displayName, groupIds}`.
+- At a first sign-in, an account that has **never been bound** and is an **Azure AD account** is bound:
+  - by sign-in name first (`preferred_username`, usually the UPN)
+  - else by the token's e-mail, but only when exactly one such account has that address. Microsoft doesn't consider the e-mail claim reliable for authorization, so an ambiguous address binds nothing.
+  - Local and LDAP accounts are never bound this way, and an account bound once is never re-bound. Accounts created before 1.1.0 follow the same rule.
 - If no matching Azure AD account exists, the portal creates one with `authSource = azuread`. If a local or LDAP account has the same e-mail, a separate account is created and the server logs `azure.link.skipped`; move that person's group memberships to the new account.
 - Disabled accounts, and users outside the allowed groups (when configured), can't sign in; the login page says why.
 - Group and role assignment still happens in the portal admin UI.

@@ -26,15 +26,42 @@ func (s *Store) GetAzureUserByExternalID(ctx context.Context, externalID string)
 	return scanUser(row)
 }
 
-// GetUnboundAzureUser finds an Azure AD account created before external ids were
-// stored (matched on e-mail, else on the username it was created with) so it can be
-// bound once. Local and LDAP accounts are never returned.
+// GetUnboundAzureUser finds the Azure AD account to bind at a first Microsoft
+// sign-in: a pre-registered (or pre-1.1.0) account that has never been bound to an
+// Azure identity. Only Azure AD accounts are considered, never local or LDAP ones.
+// The sign-in name (preferred_username, usually the UPN) is tried first; the e-mail
+// claim only when no account has that name, and only when exactly one unbound
+// account has that address (the e-mail claim isn't reliable enough to choose
+// between accounts).
 func (s *Store) GetUnboundAzureUser(ctx context.Context, email, username string) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users
-		WHERE auth_source = 'azuread' AND external_id = ''
-		  AND ((? <> '' AND lower(email) = lower(?)) OR (? <> '' AND username = ?))
-		ORDER BY id LIMIT 1`, email, email, username, username)
-	return scanUser(row)
+	if username != "" {
+		row := s.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users
+			WHERE auth_source = 'azuread' AND external_id = '' AND username = ?`, username)
+		if user, err := scanUser(row); err == nil {
+			return user, nil
+		}
+	}
+	if email == "" {
+		return nil, sql.ErrNoRows
+	}
+	rows, err := s.conn.QueryContext(ctx, `SELECT `+userColumns+` FROM users
+		WHERE auth_source = 'azuread' AND external_id = '' AND lower(email) = lower(?) LIMIT 2`, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var found []*models.User
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		found = append(found, user)
+	}
+	if len(found) != 1 {
+		return nil, sql.ErrNoRows
+	}
+	return found[0], nil
 }
 
 func (s *Store) SetUserExternalID(ctx context.Context, userID int, externalID string) error {

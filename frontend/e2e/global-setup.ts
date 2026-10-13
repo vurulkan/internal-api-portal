@@ -97,6 +97,33 @@ export default async function globalSetup() {
     bodyBase64: '',
   });
 
+  // Both identity providers on (nothing listens there), so Users → New user offers
+  // "From LDAP…" and "Azure AD user…" for the accessibility checks.
+  await call('PUT', '/api/admin/ldap', {
+    enabled: true,
+    host: '127.0.0.1',
+    port: 1,
+    timeoutSeconds: 2,
+    bindDn: '',
+    userBaseDn: 'dc=example',
+    userBaseDns: [],
+    userFilter: '(objectClass=person)',
+    usernameAttribute: 'uid',
+    displayNameAttribute: 'displayName',
+    emailAttribute: 'mail',
+    useSsl: false,
+    startTls: false,
+    sslSkipVerify: false,
+  });
+  await call('PUT', '/api/admin/azure-ad', {
+    enabled: true,
+    tenantId: 'e2e-tenant',
+    clientId: 'e2e-client',
+    clientSecret: 'e2e-secret',
+    redirectUrl: 'http://127.0.0.1:18095/api/auth/azure/callback',
+    allowedGroups: [],
+  });
+
   mkdirSync('e2e/.auth', { recursive: true });
   await api.storageState({ path: 'e2e/.auth/admin.json' });
   await api.dispose();

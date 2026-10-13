@@ -112,6 +112,10 @@ export const adminTr: Dictionary['admin'] = {
     system: 'Portalda görünen ad ve logo.',
   },
   users: {
+    newFrom: 'Kullanıcı eklemenin diğer yolları',
+    newLocal: 'Local kullanıcı…',
+    newLdap: 'LDAP’tan…',
+    newAzure: 'Azure AD kullanıcısı…',
     tabsLabel: 'Kullanıcı ayrıntıları',
     tabs: {
       profile: 'Profil',
@@ -440,7 +444,41 @@ export const adminTr: Dictionary['admin'] = {
     deleteTitle: '{{name}} silinsin mi?',
     deleteBody: 'Yetkileri ve erişim kayıtları da kaldırılır. Denetim kayıtları kalır.',
   },
+  ldapImport: {
+    title: 'LDAP’tan import',
+    body: 'Dizindeki kişileri bulun ve ilk girişlerinden önce ekleyin. Her hesap adını ve e-postasını dizinden alır.',
+    groups: 'Gruplara ekle',
+    groupsHelper: 'İsteğe bağlı. Yetkilerine kendiniz sahip olmadığınız gruplar reddedilir.',
+    importedToGroups_one: '{{count}} kullanıcı import edildi; {{added}} grup üyeliği eklendi.',
+    importedToGroups_other: '{{count}} kullanıcı import edildi; {{added}} grup üyeliği eklendi.',
+    notImported: 'Hepsi import edilmedi',
+    skipped: 'Zaten local veya Azure AD hesabı (dönüştürülmedi): {{names}}.',
+    missing: 'Dizinde bulunamadı: {{names}}.',
+  },
+  azurePre: {
+    title: 'Azure AD kullanıcısı ekle',
+    body: 'Hesap kişinin ilk Microsoft girişini bekler; böylece şimdiden gruplara koyabilirsiniz. Bu yapılmazsa hesaplar ilk girişte, grupsuz açılır.',
+    upn: 'Oturum açma adı (UPN)',
+    upnHelper:
+      'E-postadan farklıysa, ör. jdoe@corp.onmicrosoft.com. İlk giriş önce bu adla, yoksa e-postayla eşleştirilir.',
+    emailRequired: 'Kullanıcının e-posta adresini girin.',
+    submit: 'Kullanıcıyı ekle',
+    created: '{{name}} eklendi; hesap ilk Microsoft girişinde bağlanır.',
+  },
   ldap: {
+    autoCreateTitle: 'İlk girişte hesap',
+    autoCreateBody: 'Herkesi önce import etmek yerine, dizin kullanıcılarına ilk girişlerinde hesap açılabilir.',
+    autoCreate: 'İlk girişte hesap oluştur',
+    autoCreateHelper:
+      'Yalnızca dizin parolayı kabul ettikten sonra. Hesabın siz verene kadar grubu ve yetkisi olmaz (dizin gruplarına eşlenmiş gruplar hariç). Aynı adlı mevcut bir local veya Azure AD hesabı asla devralınmaz.',
+    autoCreateGroups: 'Yalnızca bu dizin gruplarının üyeleri',
+    autoCreateGroupsHelper:
+      'Grup DN’leri, satır başına bir tane; kullanıcının memberOf değeriyle karşılaştırılır. Boş: kullanıcı filtresinin bulduğu herkes.',
+    autoCreateEveryone:
+      'Kullanıcı filtresinin bulduğu her dizin kullanıcısı (yetkisiz) bir hesap alabilir. Sınırlamak için yukarıya grup ekleyin.',
+    importMoved:
+      'Dizin kullanıcılarını import etmek Kullanıcılar → Yeni kullanıcı → LDAP’tan bölümünde; konacakları gruplarla birlikte.',
+    importOpen: 'Kullanıcı import et',
     alreadyImported: 'Zaten içe aktarılmış',
     otherAccount: '{{source}} hesabı var: atlanır',
     connection: 'Bağlantı',
