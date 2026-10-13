@@ -449,7 +449,7 @@ What they set up:
 
 Secrets: the Deployment mounts the optional Secret `internal-api-portal-secrets` at `/etc/portal-secrets` for `DATA_ENCRYPTION_KEY_FILE` and `BOOTSTRAP_ADMIN_PASSWORD_FILE`. Create it as shown in [deploy/secret.example.yaml](deploy/secret.example.yaml) (it isn't part of the kustomization, so a re-apply never overwrites it). Without it the pod still starts: the key stays in the database and the generated bootstrap password is in the pod log.
 
-The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (`images.newTag`); bump it to upgrade. Optional examples, not applied by default:
+The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (`images.newTag`): `latest`, so with `imagePullPolicy: Always` a `kubectl -n internal-api-portal rollout restart deployment/internal-api-portal` upgrades to the newest release (read *Upgrading to …* first). To stay on a release, put its version (e.g. `2.2.1`) there. Optional examples, not applied by default:
 
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
