@@ -257,6 +257,16 @@ export const adminTr: Dictionary['admin'] = {
     deleteBody: 'Üyeler bu grup üzerinden aldıkları rolleri kaybeder.',
   },
   roles: {
+    perApiHelp:
+      'Tek tek API’ler için yetkiler. Yukarıdaki portal geneli API yetkileri yetiyorsa boş bırakın: onlar tüm API’leri kapsar.',
+    globalCovers:
+      '{{scopes}} yukarıda seçili ve zaten tüm API’ler için geçerli; bu kutular işaretli gösterilir. API bazındaki kutular yalnız tek bir API’ye ek yetki verir.',
+    includedBy: '{{scope}} kapsıyor',
+    applyTemplate: 'Şablon uygula',
+    groupsWithRole: 'Bu role sahip gruplar',
+    groupsWithRoleHelper: 'Üyeleri bu rolün yetkilerini alır. Gruplar → Roller ile aynı şey.',
+    groupsAdded: 'Rolü alacak gruplar',
+    groupsRemoved: 'Rolü kaybedecek gruplar',
     scopes: 'Yetkiler',
     usedByColumn: 'Kullanan',
     unusedShort: 'Kullanılmıyor',
@@ -489,7 +499,7 @@ export const adminTr: Dictionary['admin'] = {
       'Grup nesne kimlikleri, her satıra bir tane. Doluysa yalnız üyeler giriş yapabilir (token yapılandırmasında groups claim’i gerekir).',
     note: 'LDAP ve yerel hesaplar çalışmaya devam eder; Microsoft girişi ek bir yoldur.',
     test: 'Test et',
-    testOk: 'Yapılandırma geçerli.',
+    testOk: 'Tenant bulundu; client ID ve secret kabul edildi.',
     testFailed: 'Test başarısız oldu.',
     saved: 'Azure AD ayarları kaydedildi.',
   },

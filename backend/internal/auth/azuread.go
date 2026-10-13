@@ -4,14 +4,20 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	oidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 
 	"api-portal/backend/internal/models"
 )
+
+// azureAuthority is Microsoft Entra ID's sign-in host (tests point it elsewhere).
+var azureAuthority = "https://login.microsoftonline.com"
 
 type AzureADUser struct {
 	Subject string
@@ -98,9 +104,64 @@ func AzureADExchangeCode(ctx context.Context, cfg models.AzureADConfig, code, ex
 	}, nil
 }
 
+// TestAzureADConnection checks what a sign-in needs, without a user: the tenant's
+// OpenID configuration loads, and the client ID and secret are accepted by the
+// token endpoint (a client-credentials request; the token is thrown away). A wrong
+// or expired secret fails here instead of at the first sign-in.
 func TestAzureADConnection(ctx context.Context, cfg models.AzureADConfig) error {
-	_, _, _, err := azureProvider(ctx, cfg)
-	return err
+	switch {
+	case strings.TrimSpace(cfg.TenantID) == "":
+		return errors.New("tenant ID is required")
+	case strings.TrimSpace(cfg.ClientID) == "":
+		return errors.New("client ID is required")
+	case strings.TrimSpace(cfg.ClientSecret) == "":
+		return errors.New("client secret is required")
+	}
+	if u, err := url.Parse(strings.TrimSpace(cfg.RedirectURL)); err != nil || u.Host == "" ||
+		(u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) {
+		return errors.New("redirect URL must be an absolute https URL (http only for localhost), e.g. https://portal.example.com/api/auth/azure/callback")
+	}
+	provider, _, _, err := azureProvider(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("tenant: the OpenID configuration could not be loaded, check the tenant ID (%v)", err)
+	}
+	credentials := clientcredentials.Config{
+		ClientID:     strings.TrimSpace(cfg.ClientID),
+		ClientSecret: strings.TrimSpace(cfg.ClientSecret),
+		TokenURL:     provider.Endpoint().TokenURL,
+		Scopes:       []string{"https://graph.microsoft.com/.default"},
+		AuthStyle:    oauth2.AuthStyleInParams,
+	}
+	if _, err := credentials.Token(ctx); err != nil {
+		return explainTokenError(err)
+	}
+	return nil
+}
+
+// explainTokenError turns the token endpoint's refusal into what to fix. Azure's
+// descriptions carry trace and correlation ids; only the first sentence is kept.
+func explainTokenError(err error) error {
+	var re *oauth2.RetrieveError
+	if !errors.As(err, &re) {
+		return fmt.Errorf("token endpoint: %v", err)
+	}
+	desc := re.ErrorDescription
+	if i := strings.Index(desc, "\r\n"); i > 0 {
+		desc = desc[:i]
+	}
+	if i := strings.Index(desc, "\n"); i > 0 {
+		desc = desc[:i]
+	}
+	desc = strings.TrimSpace(desc)
+	switch {
+	case strings.Contains(desc, "AADSTS7000215"), strings.Contains(desc, "AADSTS7000222"):
+		return fmt.Errorf("client secret rejected: it is wrong or has expired; use the secret's Value (not its ID) (%s)", desc)
+	case strings.Contains(desc, "AADSTS700016"), re.ErrorCode == "unauthorized_client":
+		return fmt.Errorf("client ID not found in this tenant (%s)", desc)
+	case re.ErrorCode == "invalid_client":
+		return fmt.Errorf("client ID or secret rejected (%s)", firstNonEmpty(desc, re.ErrorCode))
+	}
+	return fmt.Errorf("token endpoint refused the client: %s", firstNonEmpty(desc, re.ErrorCode, err.Error()))
 }
 
 func RandomState() (string, error) {
@@ -115,7 +176,7 @@ func azureProvider(ctx context.Context, cfg models.AzureADConfig) (*oidc.Provide
 	if !cfg.Enabled {
 		return nil, nil, nil, fmt.Errorf("azure ad disabled")
 	}
-	issuer := fmt.Sprintf("https://login.microsoftonline.com/%s/v2.0", strings.TrimSpace(cfg.TenantID))
+	issuer := fmt.Sprintf("%s/%s/v2.0", azureAuthority, strings.TrimSpace(cfg.TenantID))
 	provider, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
 		return nil, nil, nil, err

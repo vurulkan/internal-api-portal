@@ -142,8 +142,8 @@ export const tr: Dictionary = {
     remove: '{{item}} kaldır',
   },
   table: {
-    compact: 'Sık satırlar',
-    comfortable: 'Geniş satırlar',
+    compact: 'Satırları sıklaştır (ekrana daha çok sığar)',
+    comfortable: 'Satırları genişlet (okuması ve tıklaması kolay)',
     selectAll: 'Bu sayfadaki tüm satırları seç',
     selectRow: '{{row}} seç',
     rowsPerPage: 'Sayfa başına satır',

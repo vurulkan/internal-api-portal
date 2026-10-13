@@ -123,7 +123,7 @@ export default function RolesSection() {
           key={editing === 'new' ? 'new' : editing.id}
           role={editing}
           roles={roles.data ?? []}
-          groupNames={groupNames}
+          groups={groups.data ?? []}
           onClose={() => setEditing(null)}
         />
       )}

@@ -24,7 +24,7 @@ export function DropdownMenuContent({
         sideOffset={6}
         data-animate
         className={cn(
-          'z-40 min-w-48 rounded-md border border-border bg-card p-1 text-card-foreground shadow-lg',
+          'z-55 min-w-48 rounded-md border border-border bg-card p-1 text-card-foreground shadow-lg',
           className,
         )}
       >
@@ -101,7 +101,7 @@ export function DropdownMenuSubContent({ children }: { children: ReactNode }) {
       <MenuPrimitive.SubContent
         sideOffset={4}
         data-animate
-        className="z-40 min-w-40 rounded-md border border-border bg-card p-1 text-card-foreground shadow-lg"
+        className="z-55 min-w-40 rounded-md border border-border bg-card p-1 text-card-foreground shadow-lg"
       >
         {children}
       </MenuPrimitive.SubContent>

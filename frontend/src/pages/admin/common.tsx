@@ -41,9 +41,10 @@ export function useAdminMutation<TVariables, TResult = unknown>({
 /** Two-column toolbar row above a table: search on the left, actions on the right. */
 export function SectionToolbar({ children, actions }: { children?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="flex w-full flex-wrap items-center justify-between gap-2">
+    // Actions stay on the first row (top-aligned) when the filters wrap.
+    <div className="flex w-full flex-wrap items-start justify-between gap-2">
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

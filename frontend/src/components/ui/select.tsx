@@ -58,7 +58,7 @@ export const Select = forwardRef<HTMLButtonElement, Props>(function Select(
           position="popper"
           sideOffset={4}
           data-animate
-          className="z-40 max-h-[min(var(--radix-select-content-available-height),320px)] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-border bg-card text-card-foreground shadow-lg"
+          className="z-55 max-h-[min(var(--radix-select-content-available-height),320px)] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-border bg-card text-card-foreground shadow-lg"
         >
           <SelectPrimitive.Viewport className="p-1">
             {options.map((option) => (

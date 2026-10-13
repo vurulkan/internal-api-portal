@@ -211,7 +211,7 @@ export const MultiCombobox = forwardRef<HTMLInputElement, Props>(function MultiC
             }
           }}
           data-animate
-          className="z-40 w-[var(--radix-popover-trigger-width)] min-w-56 rounded-md border border-border bg-card p-1 text-card-foreground shadow-lg"
+          className="z-55 w-[var(--radix-popover-trigger-width)] min-w-56 rounded-md border border-border bg-card p-1 text-card-foreground shadow-lg"
         >
           <ul
             id={listId}

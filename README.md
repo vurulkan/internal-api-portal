@@ -356,7 +356,7 @@ Published to GHCR by CI for every release tag, for `linux/amd64` and `linux/arm6
 
 | Tag | Points to |
 |---|---|
-| `X.Y.Z` (e.g. `2.1.0`) | that release |
+| `X.Y.Z` (e.g. `2.1.1`) | that release |
 | `latest` | the newest release |
 
 Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requests are built, not published. CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access*).
@@ -364,7 +364,7 @@ Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requ
 Each image carries an SBOM and SLSA provenance (inside the image index) and is signed with cosign (keyless, GitHub OIDC); the signature sits next to the image as a `sha256-<digest>.sig` tag. Verify before deploying:
 
 ```bash
-cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.0 \
+cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.1 \
   --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -440,6 +440,10 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
+
+### Upgrading to 2.1.1
+
+- Fixes only: pickers in drawers (allowed methods, path prefixes, headers, groups, roles, templates, owner group) opened behind the drawer and couldn't be clicked; the Azure AD *Test* now checks the client secret; the users toolbar is aligned. The dark theme is a shade lighter. No migration, no configuration change.
 
 ### Upgrading to 2.1.0
 
@@ -517,7 +521,7 @@ A try-it call produces two lines with the same `http.request.id`:
 
 ```json
 {"@timestamp":"2026-10-12T06:58:25.354331203Z","log":{"level":"info"},"message":"root api.invoke success api Payments API",
- "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.0","environment":"prod","type":"api-portal"},
+ "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.1","environment":"prod","type":"api-portal"},
  "event":{"dataset":"portal.audit","kind":"event","category":["web"],"type":["access"],"action":"api.invoke","outcome":"success","duration":150000000},
  "user":{"name":"root","domain":"local"},"source":{"ip":"10.244.3.17"},"user_agent":{"original":"Mozilla/5.0 …"},
  "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"response":{"status_code":201}},"url":{"path":"/v1/charges"},
@@ -792,9 +796,11 @@ The 1.x addresses (`/admin/ldap`, `/admin/azure-ad`, `/admin/session-settings`, 
 - **Groups:** member and role counts; members are added and removed in the editor, each change audited and checked like a grant (`POST /api/admin/groups/{id}/members`, `DELETE …/members/{userId}`).
 - **Roles:**
   - The table shows the scope count and the groups that use the role.
-  - A new role can start from a template (Viewer, API consumer, API owner, Auditor, Delegated administrator) or copy another role's scopes.
-  - Changing the scopes of a role in use asks first, with the added and removed scopes and how many groups it affects.
+  - A template (Viewer, API consumer, API owner, Auditor, Delegated administrator) can be applied, or another role's scopes copied.
+  - *Groups with this role* assigns the role to groups from the role itself (the same as Groups → Roles; needs `group.manage`).
+  - Changing the scopes or groups of a role in use asks first, with what is added and removed and how many groups it affects.
   - The permission matrix is keyboard-usable, and every checkbox is named ("Payments API: Invoke").
+  - Portal-wide `api.view`, `api.invoke`, `api.manage` and `api.delete` already apply to **every** API: the per-API boxes they cover are shown checked and locked ("included by api.invoke"). Per-API boxes only add rights on single APIs, so leave them empty when the portal-wide ones are enough. On one API, *manage* includes *invoke*, and *invoke* includes *view*.
 - **API definitions:**
   - A new API is registered in three steps: source, then access & try-it, then review.
   - *Preview spec* fetches the URL through the same guarded client as a refresh and shows the title, version, operation count and a few operations. Nothing is stored (`POST /api/admin/apis/spec-preview`, audited as `api.spec_preview`).
@@ -867,7 +873,7 @@ Admin flow:
 1. Open `Admin → Identity providers → Azure AD` (copy the redirect URL with the button next to it)
 2. Enable Azure AD
 3. Enter the tenant ID, client ID, redirect URL, and client secret
-4. Test the connection
+4. **Test**: loads the tenant's OpenID configuration and asks the token endpoint for a client-credentials token, so a wrong tenant, an unknown client ID or a wrong or expired secret fails here (with the reason) instead of at the first sign-in. The redirect URL must be https (http only for localhost).
 5. Save
 
 ### Azure App Registration Requirements

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
-import { api, type ApiDefinition, type Role, type ScopeDef } from '@/lib/api';
+import { api, type ApiDefinition, type Group, type Role, type ScopeDef } from '@/lib/api';
 import { queryKeys } from '@/lib/query';
 import { useAdminSections } from '@/hooks/queries';
 import {
@@ -15,6 +15,7 @@ import {
   ErrorState,
   Field,
   Input,
+  MultiSelect,
   notifyError,
   Select,
   Textarea,
@@ -23,18 +24,19 @@ import { EditorDrawer, FormSkeleton, sameValue, useAdminMutation, useDirty, useR
 import { PermissionMatrix } from './PermissionMatrix';
 import { ROLE_TEMPLATES, scopeDiff } from './templates';
 
-type Form = { id?: number; name: string; description: string; scopes: string[] };
-const EMPTY: Form = { name: '', description: '', scopes: [] };
+type Form = { id?: number; name: string; description: string; scopes: string[]; groupIds: number[] };
+const EMPTY: Form = { name: '', description: '', scopes: [], groupIds: [] };
 
 export function RoleDrawer({
   role,
   roles,
-  groupNames,
+  groups,
   onClose,
 }: {
   role: Role | 'new';
   roles: Role[];
-  groupNames: Map<number, string>;
+  /** Every group with its roles (the admin list), to show and change who has the role. */
+  groups: Group[];
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -76,6 +78,7 @@ export function RoleDrawer({
                   name: existing.name,
                   description: existing.description ?? '',
                   scopes: (permissions.data ?? []).map((p) => p.scope).sort(),
+                  groupIds: [...(existing.groupIds ?? [])].sort((a, b) => a - b),
                 }
               : EMPTY
           }
@@ -83,7 +86,7 @@ export function RoleDrawer({
           apis={apis.data ?? []}
           apisLoading={apis.isPending && canSeeApis}
           roles={roles.filter((r) => r.id !== existing?.id)}
-          usedBy={(existing?.groupIds ?? []).map((id) => groupNames.get(id) ?? `#${id}`)}
+          groups={groups}
           onClose={onClose}
         />
       ) : (
@@ -100,7 +103,7 @@ function RoleForm({
   apis,
   apisLoading,
   roles,
-  usedBy,
+  groups,
   onClose,
 }: {
   existing: Role | null;
@@ -109,12 +112,18 @@ function RoleForm({
   apis: ApiDefinition[];
   apisLoading: boolean;
   roles: Role[];
-  usedBy: string[];
+  groups: Group[];
   onClose: () => void;
 }) {
   const { t } = useTranslation();
   const requestClose = useRequestClose();
   const [form, setForm] = useState<Form>(initial);
+  // Groups get roles in group.manage; others see who has the role, read-only.
+  const canEditGroups = useAdminSections().includes('groups');
+  const groupName = (id: number) => groups.find((g) => g.id === id)?.name ?? `#${id}`;
+  const usedBy = form.groupIds.map(groupName);
+  const groupsAdded = form.groupIds.filter((id) => !initial.groupIds.includes(id));
+  const groupsRemoved = initial.groupIds.filter((id) => !form.groupIds.includes(id));
   const [nameError, setNameError] = useState('');
   const [confirm, setConfirm] = useState<'delete' | 'save' | null>(null);
   const [copying, setCopying] = useState(false);
@@ -146,9 +155,25 @@ function RoleForm({
       const id = f.id ?? (await api.createRole(payload)).id;
       if (f.id) await api.updateRole(f.id, payload);
       if (!f.id || !sameValue(f.scopes, initial.scopes)) await api.replacePermissions(id, f.scopes);
+      // Each group whose membership of this role changed gets its role list rewritten.
+      for (const groupId of f.groupIds.filter((g) => !initial.groupIds.includes(g))) {
+        const current = groups.find((g) => g.id === groupId)?.roleIds ?? [];
+        await api.setGroupRoles(groupId, Array.from(new Set([...current, id])));
+      }
+      for (const groupId of initial.groupIds.filter((g) => !f.groupIds.includes(g))) {
+        const current = groups.find((g) => g.id === groupId)?.roleIds ?? [];
+        await api.setGroupRoles(
+          groupId,
+          current.filter((r) => r !== id),
+        );
+      }
     },
     success: (_r, f) => (f.id ? t('admin.roles.updated') : t('admin.roles.created')),
-    invalidate: (f) => [queryKeys.admin.roles, ...(f.id ? [queryKeys.admin.rolePermissions(f.id)] : [])],
+    invalidate: (f) => [
+      queryKeys.admin.roles,
+      queryKeys.admin.groups,
+      ...(f.id ? [queryKeys.admin.rolePermissions(f.id)] : []),
+    ],
     onSuccess: onClose,
   });
   const remove = useAdminMutation({
@@ -170,7 +195,8 @@ function RoleForm({
           return;
         }
         // Changing the scopes of a role in use affects every member of its groups: confirm with the diff.
-        if (existing && (diff.added.length || diff.removed.length)) setConfirm('save');
+        if (existing && (diff.added.length || diff.removed.length || groupsAdded.length || groupsRemoved.length))
+          setConfirm('save');
         else save.mutate(form);
       }}
     >
@@ -188,23 +214,25 @@ function RoleForm({
           </Field>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          {!existing && (
-            <Field label={t('admin.roles.template')} id="role-template" helper={t('admin.roles.templateHelper')}>
-              <Select
-                value=""
-                placeholder={t('admin.roles.chooseTemplate')}
-                onValueChange={(id) => {
-                  const tpl = ROLE_TEMPLATES.find((x) => x.id === id);
-                  if (tpl) setForm((f) => ({ ...f, scopes: [...tpl.scopes].sort() }));
-                }}
-                options={ROLE_TEMPLATES.map((tpl) => ({
-                  value: tpl.id,
-                  label: t(`admin.roles.templates.${tpl.id}`),
-                  description: tpl.scopes.join(', '),
-                }))}
-              />
-            </Field>
-          )}
+          <Field
+            label={existing ? t('admin.roles.applyTemplate') : t('admin.roles.template')}
+            id="role-template"
+            helper={t('admin.roles.templateHelper')}
+          >
+            <Select
+              value=""
+              placeholder={t('admin.roles.chooseTemplate')}
+              onValueChange={(id) => {
+                const tpl = ROLE_TEMPLATES.find((x) => x.id === id);
+                if (tpl) setForm((f) => ({ ...f, scopes: [...tpl.scopes].sort() }));
+              }}
+              options={ROLE_TEMPLATES.map((tpl) => ({
+                value: tpl.id,
+                label: t(`admin.roles.templates.${tpl.id}`),
+                description: tpl.scopes.join(', '),
+              }))}
+            />
+          </Field>
           {roles.length > 0 && (
             <Field label={t('admin.roles.copyFrom')} id="role-copy" helper={t('admin.roles.copyFromHelper')}>
               <Select
@@ -217,21 +245,35 @@ function RoleForm({
             </Field>
           )}
         </div>
-        {existing && (
-          <p className="text-[13px] text-muted-foreground">
-            {usedBy.length ? (
-              <>
-                {t('admin.roles.usedBy')}{' '}
-                {usedBy.map((name) => (
-                  <Badge key={name} variant="outline" className="mr-1">
-                    {name}
-                  </Badge>
-                ))}
-              </>
-            ) : (
-              t('admin.roles.unused')
-            )}
-          </p>
+        {canEditGroups ? (
+          <Field
+            label={t('admin.roles.groupsWithRole')}
+            id="role-groups"
+            helper={t('admin.roles.groupsWithRoleHelper')}
+          >
+            <MultiSelect
+              options={groups.map((g) => ({ value: g.id, label: g.name }))}
+              value={form.groupIds}
+              onChange={(ids) => setForm({ ...form, groupIds: [...ids].sort((a, b) => a - b) })}
+            />
+          </Field>
+        ) : (
+          existing && (
+            <p className="text-[13px] text-muted-foreground">
+              {usedBy.length ? (
+                <>
+                  {t('admin.roles.usedBy')}{' '}
+                  {usedBy.map((name) => (
+                    <Badge key={name} variant="outline" className="mr-1">
+                      {name}
+                    </Badge>
+                  ))}
+                </>
+              ) : (
+                t('admin.roles.unused')
+              )}
+            </p>
+          )
         )}
         {form.scopes.includes('ldap.manage') && <Alert variant="info">{t('admin.roles.legacyLdap')}</Alert>}
         <PermissionMatrix defs={defs} apis={apis} apisLoading={apisLoading} scopes={form.scopes} onToggle={toggle} />
@@ -282,6 +324,12 @@ function RoleForm({
           >
             <ScopeList title={t('admin.roles.diffAdded')} scopes={diff.added} variant="success" />
             <ScopeList title={t('admin.roles.diffRemoved')} scopes={diff.removed} variant="destructive" />
+            <ScopeList title={t('admin.roles.groupsAdded')} scopes={groupsAdded.map(groupName)} variant="success" />
+            <ScopeList
+              title={t('admin.roles.groupsRemoved')}
+              scopes={groupsRemoved.map(groupName)}
+              variant="destructive"
+            />
           </AlertDialog>
         </>
       )}

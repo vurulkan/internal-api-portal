@@ -132,8 +132,8 @@ export const en = {
     remove: 'Remove {{item}}',
   },
   table: {
-    compact: 'Compact rows',
-    comfortable: 'Comfortable rows',
+    compact: 'Show compact rows (more on screen)',
+    comfortable: 'Show taller rows (easier to read and click)',
     selectAll: 'Select all rows on this page',
     selectRow: 'Select {{row}}',
     rowsPerPage: 'Rows per page',
