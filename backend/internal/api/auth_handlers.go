@@ -372,6 +372,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"warnings":       warnings,
 		"capabilities":   s.capabilitiesFor(rbac.New(identity.User.IsAdmin, identity.Permissions)),
 		"features":       s.config.Features,
+		"version":        defaultVersion(s.config.Version),
+		"projectLink":    s.config.ShowProjectLink,
 	})
 }
 
@@ -434,5 +436,18 @@ func (s *Server) handlePublicSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "failed to load settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, settings)
+	// Public (the sign-in page reads it): the version is left out on purpose, it is
+	// for signed-in users only (/api/auth/me).
+	writeJSON(w, http.StatusOK, map[string]any{
+		"brandTitle":  settings.BrandTitle,
+		"logoDataUrl": settings.LogoDataURL,
+		"projectLink": s.config.ShowProjectLink,
+	})
+}
+
+func defaultVersion(v string) string {
+	if v == "" {
+		return "dev"
+	}
+	return v
 }

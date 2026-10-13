@@ -50,6 +50,7 @@ export const en = {
   language: { en: 'English', tr: 'Türkçe' },
   authSource: { local: 'Local', ldap: 'LDAP', azuread: 'Azure AD' },
   help: {
+    version: 'Version {{version}}',
     title: 'Keyboard shortcuts',
     description: 'Everything works with the keyboard. Single-key shortcuts are off while you type in a field.',
     everywhere: 'Everywhere',

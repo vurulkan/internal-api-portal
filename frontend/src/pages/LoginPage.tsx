@@ -177,9 +177,9 @@ export default function LoginPage() {
               </Button>
             </form>
           </div>
+          <ProjectLink className="mt-6" />
         </div>
       </main>
-      <ProjectLink />
     </div>
   );
 }

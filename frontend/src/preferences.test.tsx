@@ -47,25 +47,58 @@ describe('remembered preferences', () => {
 });
 
 describe('shell', () => {
-  it('the keyboard icon opens the shortcuts; the project link is at the bottom', async () => {
-    mockFetch(routes);
+  it('the rail links to the project with the version; the shortcuts window shows it too', async () => {
+    mockFetch({ ...routes, 'GET /api/auth/me': meResponse({}, { version: '2.1.4', projectLink: true }) });
     const user = userEvent.setup();
     renderApp('/');
     await screen.findByRole('heading', { level: 1, name: 'API Catalog' });
-    const link = within(screen.getByRole('main')).getByRole('link', {
-      name: /github\.com\/vurulkan\/internal-api-portal/,
-    });
+    const rail = screen.getByRole('navigation', { name: 'Main navigation' });
+    const link = within(rail).getByRole('link', { name: /Internal API Portal 2\.1\.4 · GitHub/ });
     expect(link).toHaveAttribute('href', 'https://github.com/vurulkan/internal-api-portal');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    // Nothing at the bottom of the page any more.
+    expect(within(screen.getByRole('main')).queryByRole('link', { name: /GitHub/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
-    expect(await screen.findByRole('dialog', { name: 'Keyboard shortcuts' })).toBeInTheDocument();
+    const help = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
+    expect(within(help).getByText('Version 2.1.4')).toBeInTheDocument();
+    expect(within(help).getByRole('link', { name: /GitHub/ })).toBeInTheDocument();
     await expectNoA11yViolations();
   });
 
-  it('the sign-in page links to the project too', async () => {
-    mockFetch({ ...publicRoutes, 'GET /api/auth/me': () => new Response('{}', { status: 401 }) });
+  it('SHOW_PROJECT_LINK=false hides the link; the version stays in the shortcuts window', async () => {
+    mockFetch({ ...routes, 'GET /api/auth/me': meResponse({}, { version: '2.1.4', projectLink: false }) });
+    const user = userEvent.setup();
+    renderApp('/');
+    await screen.findByRole('heading', { level: 1, name: 'API Catalog' });
+    expect(screen.queryByRole('link', { name: /GitHub/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
+    const help = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
+    expect(within(help).getByText('Version 2.1.4')).toBeInTheDocument();
+    expect(within(help).queryByRole('link', { name: /GitHub/ })).not.toBeInTheDocument();
+  });
+
+  it('the sign-in page links to the project under the form, without a version', async () => {
+    mockFetch({
+      ...publicRoutes,
+      'GET /api/system/public': { brandTitle: 'Acme API Portal', logoDataUrl: '', projectLink: true },
+      'GET /api/auth/me': () => new Response('{}', { status: 401 }),
+    });
     renderApp('/login');
-    expect(await screen.findByRole('link', { name: /github\.com\/vurulkan\/internal-api-portal/ })).toBeInTheDocument();
+    const link = await screen.findByRole('link', { name: /Internal API Portal · GitHub/ });
+    expect(link.textContent).not.toMatch(/\d+\.\d+/);
+  });
+
+  it('the sign-in page hides it with SHOW_PROJECT_LINK=false', async () => {
+    mockFetch({
+      ...publicRoutes,
+      'GET /api/system/public': { brandTitle: 'Acme API Portal', logoDataUrl: '', projectLink: false },
+      'GET /api/auth/me': () => new Response('{}', { status: 401 }),
+    });
+    renderApp('/login');
+    await screen.findByRole('button', { name: 'Sign in' });
+    // Once the public settings are in (the brand title shows), still no link.
+    await screen.findByText('Acme API Portal');
+    expect(screen.queryByRole('link', { name: /GitHub/ })).not.toBeInTheDocument();
   });
 });
 

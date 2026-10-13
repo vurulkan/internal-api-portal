@@ -195,7 +195,12 @@ export type Session = {
   current?: boolean;
 };
 export type LdapLoginStep = { name: string; ok: boolean; detail: string };
-export type SystemSettings = { brandTitle: string; logoDataUrl: string };
+export type SystemSettings = {
+  brandTitle: string;
+  logoDataUrl: string;
+  /** Public settings only: SHOW_PROJECT_LINK. */
+  projectLink?: boolean;
+};
 export type AzureADConfig = {
   enabled: boolean;
   tenantId: string;
@@ -221,6 +226,9 @@ export type MeResponse = {
   warnings?: string[];
   capabilities?: Capabilities;
   features?: Features;
+  /** The build's version (signed-in users only). */
+  version?: string;
+  projectLink?: boolean;
 };
 export type InvokeResponse = {
   statusCode: number;

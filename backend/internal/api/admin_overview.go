@@ -141,16 +141,12 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	size, _ := s.store.DatabaseSize(ctx)
 	schema, _ := s.store.SchemaVersion(ctx)
-	version := s.config.Version
-	if version == "" {
-		version = "dev"
-	}
 	keySource := "environment"
 	if s.store.KeyInDatabase() {
 		keySource = "database"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":             version,
+		"version":             defaultVersion(s.config.Version),
 		"goVersion":           runtime.Version(),
 		"startedAt":           s.started,
 		"databaseBytes":       size,

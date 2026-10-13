@@ -290,6 +290,7 @@ The LDAP bind password and the Azure AD client secret are stored encrypted (AES-
 | `METRICS_ENABLED` | `true` | Serve Prometheus metrics |
 | `METRICS_ADDR` | _(empty)_ | Serve metrics on a separate listener (e.g. `:9090`) instead of `/metrics` on the main port |
 | `HSTS_ENABLED` | `false` | Send `Strict-Transport-Security`; enable only when the portal is reached exclusively over HTTPS |
+| `SHOW_PROJECT_LINK` | `true` | The link to the project's GitHub page: under the sign-in form, at the bottom of the navigation, and in the shortcuts window (with the version, for signed-in users only). `false` hides it, e.g. for a portal offered under its own name. The link makes no request by itself |
 | `AUDIT_PURGE_INTERVAL` | `1h` | How often old audit entries are purged (Go duration, at least `1m`); the first purge runs at startup |
 
 ## Local Development
@@ -367,7 +368,7 @@ Published to GHCR by CI for every release tag, for `linux/amd64` and `linux/arm6
 
 | Tag | Points to |
 |---|---|
-| `X.Y.Z` (e.g. `2.1.3`) | that release |
+| `X.Y.Z` (e.g. `2.1.4`) | that release |
 | `latest` | the newest release |
 
 Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requests are built, not published. CI publishes only when the repository variable `PUBLISH_IMAGES` is `true` and the GHCR package grants this repository write access (package settings → *Manage Actions access*).
@@ -375,7 +376,7 @@ Nothing else is tagged (apart from the cosign `.sig` tags): `main` and pull requ
 Each image carries an SBOM and SLSA provenance (inside the image index) and is signed with cosign (keyless, GitHub OIDC); the signature sits next to the image as a `sha256-<digest>.sig` tag. Verify before deploying:
 
 ```bash
-cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.3 \
+cosign verify ghcr.io/vurulkan/internal-api-portal:2.1.4 \
   --certificate-identity-regexp '^https://github.com/vurulkan/internal-api-portal/\.github/workflows/ci\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -453,6 +454,15 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 - [deploy/ingress.example.yaml](deploy/ingress.example.yaml): TLS ingress. With an ingress, set `TRUSTED_PROXIES` to the ingress controller's pod CIDR and, once HTTPS is the only way in, `HSTS_ENABLED=true`.
 - [deploy/networkpolicy.example.yaml](deploy/networkpolicy.example.yaml): only the ingress controller may connect; egress limited to DNS and your API networks.
 
+### Upgrading to 2.1.4
+
+- No migration.
+- The GitHub link moved:
+  - sign-in page: right under the form, without a version
+  - signed in: the navigation rail's foot (the version in its tooltip), the mobile menu, and the shortcuts window (with the version)
+- New setting `SHOW_PROJECT_LINK` (default `true`; `deploy/deployment.yaml` has it commented out) hides the link. `/api/auth/me` now returns `version`; `/api/system/public` doesn't.
+- LDAP sign-in refuses an empty password before contacting the directory.
+
 ### Upgrading to 2.1.3
 
 - No migration and no configuration change.
@@ -460,7 +470,7 @@ The image tag is set in [deploy/kustomization.yaml](deploy/kustomization.yaml) (
 - The audit log's date fields stay in place (disabled) when a period is chosen.
 - A keyboard icon in the top bar opens the shortcuts.
 - The table row-density switch is gone (rows have one height).
-- The sign-in page and the app link to the project on GitHub at the bottom.
+- The sign-in page and the app link to the project on GitHub (moved in 2.1.4).
 
 ### Upgrading to 2.1.2
 
@@ -546,7 +556,7 @@ A try-it call produces two lines with the same `http.request.id`:
 
 ```json
 {"@timestamp":"2026-10-12T06:58:25.354331203Z","log":{"level":"info"},"message":"root api.invoke success api Payments API",
- "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.3","environment":"prod","type":"api-portal"},
+ "ecs":{"version":"8.11.0"},"service":{"name":"internal-api-portal","version":"2.1.4","environment":"prod","type":"api-portal"},
  "event":{"dataset":"portal.audit","kind":"event","category":["web"],"type":["access"],"action":"api.invoke","outcome":"success","duration":150000000},
  "user":{"name":"root","domain":"local"},"source":{"ip":"10.244.3.17"},"user_agent":{"original":"Mozilla/5.0 …"},
  "http":{"request":{"id":"KaZnM7ypNtriJ0vc","method":"POST"},"response":{"status_code":201}},"url":{"path":"/v1/charges"},
